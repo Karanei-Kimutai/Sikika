@@ -11,7 +11,8 @@ app.get("/api/hello", (req, res) => {
 });
 
 // Import your database connection
-const db = require('./models'); // Adjust the path if necessary
+const db = require('./src/models'); // Adjust the path if necessary
+const authRoutes = require('./src/routes/authRoutes');
 
 // Sync the database
 db.sequelize.sync({ alter: true })
@@ -27,7 +28,7 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
-const authRoutes = require('./routes/authRoutes');
+const authRoutes = require('./src/routes/authRoutes');
 
 // This tells Express to use the auth routes
 app.use('/api/auth', authRoutes);
