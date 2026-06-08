@@ -44,9 +44,9 @@ const requestOTP = async (req, res) => {
 
         res.status(200).json({ message: "OTP sent successfully to your phone." });
     } catch (error) {
-        console.error("SMS Sending Error:", error);
-        res.status(500).json({ error: "Failed to send OTP. Please try again." });
-    }
+    console.error("SMS Sending Error:", error); // This will show the full error details
+    res.status(500).json({ error: "Failed to send OTP", details: error.message });
+}
 };
 
 // VERIFY OTP & ISSUE JWT
