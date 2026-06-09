@@ -58,7 +58,7 @@ function normalizePhoneNumber(phoneNumber) {
 
 function issueAuthToken(user) {
     return jwt.sign(
-        { id: user.userId, role: getCanonicalRole(user) },
+        { id: user.userId, userId: user.userId, role: getCanonicalRole(user) },
         process.env.JWT_SECRET,
         { expiresIn: '2h' }
     );
@@ -157,6 +157,7 @@ const verifyOTP = async (req, res) => {
         res.status(200).json({ 
             message: "Login successful!",
             token: token,
+            userId: user.userId,
             role: getCanonicalRole(user)
         });
 
@@ -192,6 +193,7 @@ const loginWithPassword = async (req, res) => {
         return res.status(200).json({
             message: 'Password login successful!',
             token,
+            userId: user.userId,
             role: getCanonicalRole(user)
         });
     } catch (error) {
