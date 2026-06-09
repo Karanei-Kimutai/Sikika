@@ -74,6 +74,26 @@ Development mode (auto-reload):
 npm run dev
 ```
 
+If startup fails with `Access denied for user`, update `DB_USER` and `DB_PASSWORD` in `.env` to match a real MySQL user. The server creates `DB_NAME` automatically if that user has permission.
+
+## OTP SMS Curl
+
+Start the backend, then request an OTP through Africa's Talking:
+
+```bash
+curl -X POST http://localhost:5000/api/auth/request-otp ^
+  -H "Content-Type: application/json" ^
+  -d "{\"phoneNumber\":\"+2547XXXXXXXX\"}"
+```
+
+Verify the OTP:
+
+```bash
+curl -X POST http://localhost:5000/api/auth/verify-otp ^
+  -H "Content-Type: application/json" ^
+  -d "{\"phoneNumber\":\"+2547XXXXXXXX\",\"otp\":\"1234\"}"
+```
+
 ## Project Commands Summary
 
 - `npm install` - install dependencies
