@@ -4,6 +4,18 @@ const mysql = require("mysql2/promise");
 require("dotenv").config();
 const authMiddleware = require("./src/middleware/authMiddleware");
 
+/**
+ * Backend bootstrap file.
+ *
+ * Responsibilities:
+ * - Load environment/configuration
+ * - Configure middleware and routes
+ * - Validate required environment variables
+ * - Ensure MySQL database exists
+ * - Connect and sync Sequelize models
+ * - Start HTTP server
+ */
+
 for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]) {
   if (process.env[key] === "http://127.0.0.1:9") {
     delete process.env[key];
@@ -78,10 +90,12 @@ function validateEnv() {
   }
 }
 
+// Safely quote DB identifiers to avoid SQL syntax issues and injection risks.
 function quoteIdentifier(identifier) {
   return `\`${identifier.replace(/`/g, "``")}\``;
 }
 
+// Create the configured database if it does not yet exist.
 async function ensureDatabaseExists() {
   const connection = await mysql.createConnection({
     host: process.env.DB_HOST || "localhost",
@@ -99,6 +113,7 @@ async function ensureDatabaseExists() {
   }
 }
 
+// Validate config, initialize DB, then start the Express server.
 async function startServer() {
   try {
     validateEnv();

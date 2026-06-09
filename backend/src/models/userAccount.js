@@ -76,10 +76,19 @@ const UserAccount = sequelize.define('userAccount', {
     comment:   'Role-based access control role — drives permissions across all modules'
   },
 
+  /**
+   * Compatibility role used by auth responses and existing frontend logic.
+   * Mirrors userRole semantics in a lowercase/free-text form.
+   */
   role: {
     type: DataTypes.STRING,
     defaultValue: 'survivor'
 },
+
+  /**
+   * Compatibility status consumed by older auth/account flows.
+   * accountStatus remains the authoritative RBAC/account lifecycle field.
+   */
   status: {
     type: DataTypes.STRING,
     defaultValue: 'active'
