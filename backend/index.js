@@ -16,6 +16,11 @@ const authMiddleware = require("./src/middleware/authMiddleware");
  * - Start HTTP server
  */
 
+/**
+ * Some local execution environments inject proxy variables that point to an
+ * intentionally closed proxy address. Removing those placeholders prevents
+ * third-party SDKs, such as Africa's Talking, from trying to use a dead proxy.
+ */
 for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]) {
   if (process.env[key] === "http://127.0.0.1:9") {
     delete process.env[key];
@@ -24,25 +29,36 @@ for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "http
 
 const app = express();
 
+/**
+ * FRONTEND_ORIGIN is a backend setting even though it names the frontend:
+ * Express needs it to decide which browser origin is allowed to call this API.
+ */
 const frontendOrigin = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
 
+// CORS is configured before routes so every endpoint receives the same policy.
 app.use(cors({
   origin: frontendOrigin,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
+
+// Parse JSON request bodies before route handlers access req.body.
 app.use(express.json());
 
 const authRoutes = require("./src/routes/authRoutes");
+const resourceRoutes = require("./src/routes/resourceRoutes");
 
+// Lightweight API smoke-test endpoint.
 app.get("/api/hello", (req, res) => {
   res.json({ message: "Hello from Express backend!" });
 });
 
+// Process-level health check. This confirms Express is reachable.
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
+// Database health check. This is useful when Express starts but MySQL is uncertain.
 app.get("/api/health/db", async (req, res) => {
   try {
     const db = require("./src/models");
@@ -53,8 +69,16 @@ app.get("/api/health/db", async (req, res) => {
   }
 });
 
+// Public and auth routes are mounted after shared middleware.
 app.use("/api/auth", authRoutes);
+app.use("/api/resources", resourceRoutes);
 
+/**
+ * Session inspection endpoint.
+ *
+ * authMiddleware verifies the JWT and attaches decoded user information to
+ * req.user. The route simply reports the authenticated session payload.
+ */
 app.get("/api/auth/session", authMiddleware, (req, res) => {
   res.json({
     authenticated: true,
@@ -72,6 +96,13 @@ const requiredEnv = [
   "JWT_SECRET"
 ];
 
+/**
+ * Validate required configuration before opening the HTTP port.
+ *
+ * Failing fast here is easier to debug than letting the server start with a
+ * missing DB connection, missing SMS provider credentials, or unsafe production
+ * SMS settings.
+ */
 function validateEnv() {
   const missing = requiredEnv.filter((key) => !process.env[key]);
 
@@ -90,12 +121,22 @@ function validateEnv() {
   }
 }
 
-// Safely quote DB identifiers to avoid SQL syntax issues and injection risks.
+/**
+ * Safely quote DB identifiers to avoid SQL syntax issues and injection risks.
+ * This is used only for database names, not for values. Values still belong in
+ * parameterized queries.
+ */
 function quoteIdentifier(identifier) {
   return `\`${identifier.replace(/`/g, "``")}\``;
 }
 
-// Create the configured database if it does not yet exist.
+/**
+ * Create the configured database if it does not yet exist.
+ *
+ * Sequelize connects to DB_NAME later. This helper first connects to the MySQL
+ * server itself so new developers do not have to manually create the database
+ * before starting the backend.
+ */
 async function ensureDatabaseExists() {
   const connection = await mysql.createConnection({
     host: process.env.DB_HOST || "localhost",
@@ -113,7 +154,15 @@ async function ensureDatabaseExists() {
   }
 }
 
-// Validate config, initialize DB, then start the Express server.
+/**
+ * Validate config, initialize DB, then start the Express server.
+ *
+ * Boot order matters:
+ * 1. Validate env so startup fails with a clear message.
+ * 2. Create DB_NAME when the MySQL user has permission.
+ * 3. Authenticate Sequelize against the configured database.
+ * 4. Sync models, then listen for HTTP traffic.
+ */
 async function startServer() {
   try {
     validateEnv();
