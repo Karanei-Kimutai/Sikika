@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
 const { UserAccount } = require('../models'); // Importing your actual Sequelize model
 
 // Initialize Africa's Talking
@@ -19,6 +20,14 @@ function getSafeErrorMessage(error) {
         error.code ||
         error.message ||
         'Unknown error';
+}
+
+function issueAuthToken(user) {
+    return jwt.sign(
+        { id: user.userId, role: user.role || user.userRole },
+        process.env.JWT_SECRET,
+        { expiresIn: '2h' }
+    );
 }
 
 // GENERATE AND SEND OTP
@@ -105,12 +114,7 @@ const verifyOTP = async (req, res) => {
         user.isOtpVerified = true;
         await user.save();
 
-        // Generate a JWT Token to keep them logged in for 2 hours
-        const token = jwt.sign(
-            { id: user.userId, role: user.role || user.userRole }, 
-            process.env.JWT_SECRET,
-            { expiresIn: '2h' } 
-        );
+        const token = issueAuthToken(user);
 
         // Send the token back to the React frontend
         res.status(200).json({ 
@@ -125,4 +129,59 @@ const verifyOTP = async (req, res) => {
     }
 };
 
-module.exports = { requestOTP, verifyOTP };
+const loginWithPassword = async (req, res) => {
+    const { phoneNumber, password } = req.body;
+
+    try {
+        if (!phoneNumber || !password) {
+            return res.status(400).json({ error: 'Phone number and password are required.' });
+        }
+
+        const user = await UserAccount.findOne({ where: { phoneNumber } });
+
+        if (!user || !user.hashedPassword) {
+            return res.status(401).json({ error: 'Invalid credentials.' });
+        }
+
+        const passwordMatches = await bcrypt.compare(password, user.hashedPassword);
+        if (!passwordMatches) {
+            return res.status(401).json({ error: 'Invalid credentials.' });
+        }
+
+        const token = issueAuthToken(user);
+
+        return res.status(200).json({
+            message: 'Password login successful!',
+            token,
+            role: user.role || user.userRole
+        });
+    } catch (error) {
+        console.error('Password Login Error:', error);
+        return res.status(500).json({ error: 'Server error during password login.' });
+    }
+};
+
+const setPassword = async (req, res) => {
+    const { password } = req.body;
+
+    try {
+        if (!password || password.length < 8) {
+            return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+        }
+
+        const user = await UserAccount.findByPk(req.user.id);
+        if (!user) {
+            return res.status(404).json({ error: 'User not found.' });
+        }
+
+        user.hashedPassword = await bcrypt.hash(password, 10);
+        await user.save();
+
+        return res.status(200).json({ message: 'Password set successfully.' });
+    } catch (error) {
+        console.error('Set Password Error:', error);
+        return res.status(500).json({ error: 'Server error while setting password.' });
+    }
+};
+
+module.exports = { requestOTP, verifyOTP, loginWithPassword, setPassword };

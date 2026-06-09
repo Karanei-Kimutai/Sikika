@@ -8,8 +8,10 @@ const QUICK_EXIT_URL = "https://www.google.com";
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(localStorage.getItem("authToken")));
   const [step, setStep] = useState("phone");
+  const [loginMethod, setLoginMethod] = useState("otp");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [otp, setOtp] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -18,6 +20,7 @@ function App() {
 
   const canSubmitPhone = useMemo(() => phoneNumber.trim().length >= 10, [phoneNumber]);
   const canSubmitOtp = useMemo(() => otp.trim().length === 4, [otp]);
+  const canSubmitPassword = useMemo(() => password.trim().length >= 8, [password]);
 
   const clearMessages = () => {
     setErrorMessage("");
@@ -91,6 +94,29 @@ function App() {
     }
   };
 
+  const loginWithPassword = async () => {
+    if (!canSubmitPhone || !canSubmitPassword) {
+      setErrorMessage("Enter your mobile number and password (minimum 8 characters).");
+      return;
+    }
+
+    clearMessages();
+    setLoading(true);
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/login-password`, {
+        phoneNumber: phoneNumber.trim(),
+        password: password.trim()
+      });
+
+      finalizeLogin(response.data.token, "Password login successful. You can now continue safely.");
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Password login failed. Try OTP or check your password.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const resendCode = async () => {
     setOtp("");
     await requestOtp();
@@ -100,8 +126,10 @@ function App() {
     localStorage.removeItem("authToken");
     setIsAuthenticated(false);
     setStep("phone");
+    setLoginMethod("otp");
     setPhoneNumber("");
     setOtp("");
+    setPassword("");
     setTokenPreview("");
     clearMessages();
     window.location.replace(QUICK_EXIT_URL);
@@ -111,7 +139,9 @@ function App() {
     localStorage.removeItem("authToken");
     setIsAuthenticated(false);
     setStep("phone");
+    setLoginMethod("otp");
     setOtp("");
+    setPassword("");
     setTokenPreview("");
     setSuccessMessage("You have been signed out safely.");
   };
@@ -164,13 +194,44 @@ function App() {
                 onChange={(event) => setPhoneNumber(event.target.value)}
                 autoComplete="tel"
               />
+
+              {loginMethod === "password" && (
+                <>
+                  <label htmlFor="password">Password</label>
+                  <input
+                    id="password"
+                    type="password"
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    autoComplete="current-password"
+                  />
+                </>
+              )}
+
               <button
                 type="button"
                 className="primary-btn"
-                onClick={requestOtp}
-                disabled={loading || !canSubmitPhone}
+                onClick={loginMethod === "otp" ? requestOtp : loginWithPassword}
+                disabled={loading || !canSubmitPhone || (loginMethod === "password" && !canSubmitPassword)}
               >
-                {loading ? "Sending..." : "Send Access Code"}
+                {loading
+                  ? "Please wait..."
+                  : loginMethod === "otp"
+                    ? "Send Access Code"
+                    : "Login With Password"}
+              </button>
+
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => {
+                  clearMessages();
+                  setLoginMethod((current) => (current === "otp" ? "password" : "otp"));
+                }}
+                disabled={loading}
+              >
+                {loginMethod === "otp" ? "Use Password Instead" : "Use OTP Instead"}
               </button>
             </div>
           ) : (
