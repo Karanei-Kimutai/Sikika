@@ -1,6 +1,8 @@
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2/promise");
+const http = require("http");
+const { Server } = require("socket.io");
 require("dotenv").config();
 const authMiddleware = require("./src/middleware/authMiddleware");
 
@@ -13,6 +15,7 @@ const authMiddleware = require("./src/middleware/authMiddleware");
  * - Validate required environment variables
  * - Ensure MySQL database exists
  * - Connect and sync Sequelize models
+ * - Configure Websocket relay for E2EE chat
  * - Start HTTP server
  */
 
@@ -30,11 +33,28 @@ for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "http
 const app = express();
 
 /**
+ * We wrap the Express app in a standard Node HTTP server.
+ * This allows both Express (REST) and Socket.io (WebSockets) to 
+ * share the exact same port and runtime instance.
+ */
+const server = http.createServer(app);
+
+/**
  * FRONTEND_ORIGIN is a backend setting even though it names the frontend:
  * Express needs it to decide which browser origin is allowed to call this API.
  */
 const frontendOrigin = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
 
+// Configure Socket.io with the same CORS policy as Express
+const io = new Server(server, {
+  cors: {
+    origin: frontendOrigin,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+  }
+});
+
+// Initialize the WebSocket event listeners for the chat relay
+require("./src/sockets/chatSocket")(io);
 // CORS is configured before routes so every endpoint receives the same policy.
 app.use(cors({
   origin: frontendOrigin,
@@ -47,6 +67,7 @@ app.use(express.json());
 
 const authRoutes = require("./src/routes/authRoutes");
 const resourceRoutes = require("./src/routes/resourceRoutes");
+const chatRoutes = require("./src/routes/chatRoutes");
 
 // Lightweight API smoke-test endpoint.
 app.get("/api/hello", (req, res) => {
@@ -72,6 +93,7 @@ app.get("/api/health/db", async (req, res) => {
 // Public and auth routes are mounted after shared middleware.
 app.use("/api/auth", authRoutes);
 app.use("/api/resources", resourceRoutes);
+app.use("/api/chat", chatRoutes);
 
 /**
  * Session inspection endpoint.
@@ -177,7 +199,8 @@ async function startServer() {
     console.log("Database tables synced successfully!");
 
     const PORT = Number(process.env.PORT || 5000);
-    app.listen(PORT, () => {
+    //We use server.listen, not app.listen, because Socket.io is attached to the server instance.
+    server.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
   } catch (err) {
