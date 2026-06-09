@@ -1,5 +1,14 @@
 const jwt = require("jsonwebtoken");
 
+/**
+ * JWT authentication middleware.
+ *
+ * Expects Authorization header in the form:
+ *   Bearer <token>
+ *
+ * On success, decoded claims are attached to req.user.
+ */
+
 function authMiddleware(req, res, next) {
   const header = req.headers.authorization;
 

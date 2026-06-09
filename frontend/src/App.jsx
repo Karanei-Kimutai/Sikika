@@ -2,10 +2,21 @@ import { useMemo, useState } from "react";
 import axios from "axios";
 import "./App.css";
 
+/**
+ * Authentication landing page for Community Connect.
+ *
+ * Flow summary:
+ * 1) User enters phone number.
+ * 2) User chooses OTP or password login.
+ * 3) On success, JWT is stored in localStorage.
+ * 4) Quick Exit immediately clears local auth state and redirects away.
+ */
+
 const API_BASE_URL = "http://localhost:5000";
 const QUICK_EXIT_URL = "https://www.google.com";
 
 function App() {
+  // Session and step state for the combined OTP/password authentication flow.
   const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(localStorage.getItem("authToken")));
   const [step, setStep] = useState("phone");
   const [loginMethod, setLoginMethod] = useState("otp");
@@ -28,6 +39,7 @@ function App() {
     setDevOtpHint("");
   };
 
+  // Persist token, expose a small preview in UI, and switch into authenticated state.
   const finalizeLogin = (token, message) => {
     localStorage.setItem("authToken", token);
     setTokenPreview(`${token.slice(0, 18)}...`);
@@ -35,6 +47,7 @@ function App() {
     setIsAuthenticated(true);
   };
 
+  // OTP request path. In local/dev mode, backend can return an OTP that is auto-verified.
   const requestOtp = async () => {
     if (!canSubmitPhone) {
       setErrorMessage("Enter a valid mobile number including country code.");
@@ -71,6 +84,7 @@ function App() {
     }
   };
 
+  // Verify user-provided OTP and establish authenticated session.
   const verifyOtp = async () => {
     if (!canSubmitOtp) {
       setErrorMessage("Enter the 4-digit code sent to your phone.");
@@ -94,6 +108,7 @@ function App() {
     }
   };
 
+  // Password login path for users who already configured a password.
   const loginWithPassword = async () => {
     if (!canSubmitPhone || !canSubmitPassword) {
       setErrorMessage("Enter your mobile number and password (minimum 8 characters).");
@@ -122,6 +137,7 @@ function App() {
     await requestOtp();
   };
 
+  // Safety action: clear local session and move user off the app immediately.
   const quickExit = () => {
     localStorage.removeItem("authToken");
     setIsAuthenticated(false);
@@ -135,6 +151,7 @@ function App() {
     window.location.replace(QUICK_EXIT_URL);
   };
 
+  // Standard sign-out while staying within the app shell.
   const logout = () => {
     localStorage.removeItem("authToken");
     setIsAuthenticated(false);

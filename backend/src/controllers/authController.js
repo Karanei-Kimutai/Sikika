@@ -2,6 +2,16 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const { UserAccount } = require('../models'); // Importing your actual Sequelize model
 
+/**
+ * Authentication controller
+ *
+ * Responsibilities:
+ * - Request and verify OTP login flows
+ * - Password-based login
+ * - Password setup for authenticated users
+ * - JWT issuance for stateless API auth
+ */
+
 // Initialize Africa's Talking
 const credentials = {
     apiKey: process.env.AFRICASTALKING_API_KEY,
@@ -30,7 +40,7 @@ function issueAuthToken(user) {
     );
 }
 
-// GENERATE AND SEND OTP
+// Generate and send OTP, creating a default survivor account when needed.
 const requestOTP = async (req, res) => {
     const { phoneNumber } = req.body;
 
@@ -48,7 +58,8 @@ const requestOTP = async (req, res) => {
             defaults: { 
                 userRole: 'SURVIVOR',
                 role: 'survivor',
-                status: 'active'
+                status: 'active',
+                accountStatus: 'ACTIVE'
             } 
         });
 
@@ -96,7 +107,7 @@ const requestOTP = async (req, res) => {
     }
 };
 
-// VERIFY OTP & ISSUE JWT
+// Verify OTP and issue a JWT for authenticated API access.
 const verifyOTP = async (req, res) => {
     const { phoneNumber, otp } = req.body;
 
@@ -129,6 +140,7 @@ const verifyOTP = async (req, res) => {
     }
 };
 
+// Log in using phone number + password (for users who already set one).
 const loginWithPassword = async (req, res) => {
     const { phoneNumber, password } = req.body;
 
@@ -161,6 +173,7 @@ const loginWithPassword = async (req, res) => {
     }
 };
 
+// Set or reset password for a logged-in user identified by JWT middleware.
 const setPassword = async (req, res) => {
     const { password } = req.body;
 
