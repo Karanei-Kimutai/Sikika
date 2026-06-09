@@ -4,3 +4,4 @@ backend/config.json
 .vscode/
 frontend/node_modules/
 frontend/dist/
+backend/*.log
