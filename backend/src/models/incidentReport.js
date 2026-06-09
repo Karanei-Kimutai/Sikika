@@ -93,12 +93,17 @@ const IncidentReport = sequelize.define('incidentReport', {
     type:      DataTypes.ENUM(
       'SUBMITTED',
       'UNDER_REVIEW',
+      'ACTIVE_SUPPORT',
+      'UNDER_INVESTIGATION',
+      'LEGAL_REVIEW',
+      'ESCALATED_TO_LEGAL_CASE',
       'IN_PROGRESS',
       'ESCALATED',
       'RESOLVED',
       'WITHDRAWN'
     ),
     allowNull: false,
+    defaultValue: 'SUBMITTED',
     comment:   'Current position in the report lifecycle state machine'
   },
  

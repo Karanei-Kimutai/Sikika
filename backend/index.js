@@ -47,6 +47,7 @@ app.use(express.json());
 
 const authRoutes = require("./src/routes/authRoutes");
 const resourceRoutes = require("./src/routes/resourceRoutes");
+const reportRoutes = require("./src/routes/reportRoutes");
 
 // Lightweight API smoke-test endpoint.
 app.get("/api/hello", (req, res) => {
@@ -72,6 +73,7 @@ app.get("/api/health/db", async (req, res) => {
 // Public and auth routes are mounted after shared middleware.
 app.use("/api/auth", authRoutes);
 app.use("/api/resources", resourceRoutes);
+app.use("/api/reports", reportRoutes);
 
 /**
  * Session inspection endpoint.
