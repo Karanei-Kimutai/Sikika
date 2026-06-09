@@ -727,3 +727,293 @@ input:focus {
     flex: 1 1 140px;
   }
 }
+
+.wa-page {
+  /* Outer page frame keeps chat shell centered within app layout. */
+  min-height: calc(100vh - 5rem);
+  width: min(1200px, calc(100% - 2rem));
+  margin: 1.5rem auto;
+}
+
+.wa-shell {
+  /* Two-pane messenger layout: contacts/channels + active conversation. */
+  height: calc(100vh - 8rem);
+  min-height: 620px;
+  border: 1px solid rgba(139, 94, 60, 0.2);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 14px 40px rgba(69, 45, 26, 0.18);
+  background: var(--warm-white);
+  display: grid;
+  grid-template-columns: 320px 1fr;
+}
+
+.wa-sidebar {
+  /* Left rail for chat channels. */
+  border-right: 1px solid rgba(139, 94, 60, 0.16);
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+}
+
+.wa-sidebar-header {
+  background: var(--cream);
+  padding: 1rem;
+  border-bottom: 1px solid rgba(139, 94, 60, 0.16);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.wa-sidebar-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-family: var(--font-body);
+  color: var(--brown-dark);
+}
+
+.wa-sidebar-header span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.wa-chat-list {
+  /* Dedicated scroll area so long channel lists stay usable. */
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.wa-chat-item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.8rem 0.95rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(139, 94, 60, 0.08);
+}
+
+.wa-chat-item:hover {
+  background: var(--warm-white);
+}
+
+.wa-chat-item.active {
+  background: var(--cream);
+}
+
+.wa-avatar {
+  /* Small identity chips inspired by messaging apps. */
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  color: #ffffff;
+  background: var(--brown);
+  flex: 0 0 auto;
+}
+
+.wa-avatar.muted {
+  background: var(--tan);
+}
+
+.wa-chat-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.wa-chat-text strong {
+  color: var(--brown-dark);
+  font-size: 0.95rem;
+}
+
+.wa-chat-text small {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wa-main {
+  /* Right pane for active chat content. */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--warm-white);
+}
+
+.wa-main-header {
+  min-height: 60px;
+  background: var(--cream);
+  border-bottom: 1px solid rgba(139, 94, 60, 0.16);
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+}
+
+.wa-header-title {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.wa-header-title strong {
+  display: block;
+  color: var(--brown-dark);
+  font-size: 0.95rem;
+}
+
+.wa-header-title small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.wa-messages {
+  /* Independent scrolling message stack with subtle paper-like texture. */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1.25rem;
+  background-image:
+    radial-gradient(circle at 25px 25px, rgba(139, 94, 60, 0.08) 1.6px, transparent 0),
+    radial-gradient(circle at 75px 75px, rgba(139, 94, 60, 0.06) 1.6px, transparent 0);
+  background-size: 100px 100px;
+}
+
+.wa-row {
+  display: flex;
+  margin-bottom: 0.35rem;
+}
+
+.wa-row.mine {
+  /* Outgoing messages align right, like common messenger conventions. */
+  justify-content: flex-end;
+}
+
+.wa-row.theirs {
+  /* Incoming messages align left. */
+  justify-content: flex-start;
+}
+
+.wa-bubble {
+  max-width: min(72%, 560px);
+  border-radius: 7.5px;
+  padding: 0.5rem 0.65rem;
+  position: relative;
+  box-shadow: 0 1px 0.5px rgba(69, 45, 26, 0.12);
+}
+
+.wa-bubble p {
+  margin: 0;
+  line-height: 1.4;
+  color: var(--brown-dark);
+}
+
+.wa-bubble.mine {
+  /* Outgoing bubble uses warm tan tint from the site's brown palette. */
+  background: #e8d5b7;
+}
+
+.wa-bubble.theirs {
+  background: #ffffff;
+  border: 1px solid rgba(139, 94, 60, 0.14);
+}
+
+.wa-composer {
+  /* Sticky bottom composer with input and send action. */
+  background: var(--cream);
+  border-top: 1px solid rgba(139, 94, 60, 0.16);
+  padding: 0.7rem 1rem;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.65rem;
+}
+
+.wa-composer input {
+  width: 100%;
+  border: 1px solid rgba(139, 94, 60, 0.25);
+  border-radius: 999px;
+  background: #ffffff;
+  min-height: 42px;
+  padding: 0 1rem;
+  color: var(--brown-dark);
+}
+
+.wa-composer input:focus {
+  /* Keep focus ring visible for keyboard accessibility. */
+  outline: 2px solid rgba(139, 94, 60, 0.22);
+  border-color: var(--brown);
+}
+
+.wa-composer button {
+  border: 0;
+  border-radius: 999px;
+  min-width: 88px;
+  padding: 0 1rem;
+  font-weight: 800;
+  color: #ffffff;
+  background: var(--brown);
+}
+
+.wa-composer button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.wa-composer button:not(:disabled):hover {
+  background: var(--brown-hover);
+}
+
+.wa-error {
+  margin: 0.8rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  color: #842029;
+  background: #f8d7da;
+  border: 1px solid #f1aeb5;
+  font-size: 0.85rem;
+}
+
+.wa-empty-list,
+.wa-empty-state,
+.wa-empty-main {
+  color: var(--muted);
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.wa-empty-list {
+  padding: 1rem;
+}
+
+.wa-empty-state {
+  margin-top: 3rem;
+}
+
+.wa-empty-main {
+  margin: auto;
+}
+
+@media (max-width: 960px) {
+  /* Collapse to vertical stacking on narrower devices. */
+  .wa-page {
+    width: calc(100% - 1rem);
+    margin: 0.5rem auto;
+  }
+
+  .wa-shell {
+    height: calc(100vh - 6.5rem);
+    min-height: 560px;
+    grid-template-columns: 1fr;
+  }
+
+  .wa-sidebar {
+    max-height: 34%;
+  }
+}
