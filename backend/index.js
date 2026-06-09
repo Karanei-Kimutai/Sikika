@@ -1,34 +1,114 @@
 const express = require("express");
 const cors = require("cors");
-require('dotenv').config();
+const mysql = require("mysql2/promise");
+require("dotenv").config();
+
+for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]) {
+  if (process.env[key] === "http://127.0.0.1:9") {
+    delete process.env[key];
+  }
+}
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
+const authRoutes = require("./src/routes/authRoutes");
+
 app.get("/api/hello", (req, res) => {
   res.json({ message: "Hello from Express backend!" });
 });
 
-// Import your database connection
-const db = require('./src/models'); // Adjust the path if necessary
-
-// Sync the database
-db.sequelize.sync({ alter: true })
-    .then(() => {
-        console.log("Database tables synced successfully!");
-    })
-    .catch((err) => {
-        console.error("Error syncing database:", err);
-    });
-
-const PORT = 5000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok" });
 });
 
-const authRoutes = require('./src/routes/authRoutes');
+app.get("/api/health/db", async (req, res) => {
+  try {
+    const db = require("./src/models");
+    await db.sequelize.authenticate();
+    res.json({ status: "ok", database: process.env.DB_NAME });
+  } catch (err) {
+    res.status(500).json({ status: "error", error: err.message });
+  }
+});
 
-// This tells Express to use the auth routes
-app.use('/api/auth', authRoutes);
+app.use("/api/auth", authRoutes);
+
+const requiredEnv = [
+  "DB_HOST",
+  "DB_PORT",
+  "DB_NAME",
+  "DB_USER",
+  "AFRICASTALKING_API_KEY",
+  "AFRICASTALKING_USERNAME",
+  "JWT_SECRET"
+];
+
+function validateEnv() {
+  const missing = requiredEnv.filter((key) => !process.env[key]);
+
+  if (missing.length > 0) {
+    throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    if (process.env.AFRICASTALKING_USERNAME === "sandbox") {
+      throw new Error("Invalid production config: AFRICASTALKING_USERNAME cannot be 'sandbox' in production.");
+    }
+
+    if (process.env.SKIP_SMS_IN_DEV === "true") {
+      throw new Error("Invalid production config: SKIP_SMS_IN_DEV must be false in production.");
+    }
+  }
+}
+
+function quoteIdentifier(identifier) {
+  return `\`${identifier.replace(/`/g, "``")}\``;
+}
+
+async function ensureDatabaseExists() {
+  const connection = await mysql.createConnection({
+    host: process.env.DB_HOST || "localhost",
+    port: Number(process.env.DB_PORT || 3306),
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD || undefined
+  });
+
+  try {
+    await connection.query(
+      `CREATE DATABASE IF NOT EXISTS ${quoteIdentifier(process.env.DB_NAME)} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+    );
+  } finally {
+    await connection.end();
+  }
+}
+
+async function startServer() {
+  try {
+    validateEnv();
+    await ensureDatabaseExists();
+
+    const db = require("./src/models");
+
+    await db.sequelize.authenticate();
+    console.log("Database connected successfully!");
+
+    await db.sequelize.sync({ alter: true });
+    console.log("Database tables synced successfully!");
+
+    const PORT = Number(process.env.PORT || 5000);
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  } catch (err) {
+    console.error("Failed to start backend:", err.message);
+    if (err.code === "ER_ACCESS_DENIED_ERROR") {
+      console.error("Check DB_USER and DB_PASSWORD in backend/.env. MySQL rejected these credentials.");
+    }
+    process.exit(1);
+  }
+}
+
+startServer();
