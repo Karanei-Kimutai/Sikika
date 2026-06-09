@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2/promise");
 require("dotenv").config();
+const authMiddleware = require("./src/middleware/authMiddleware");
 
 for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]) {
   if (process.env[key] === "http://127.0.0.1:9") {
@@ -11,7 +12,13 @@ for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "http
 
 const app = express();
 
-app.use(cors());
+const frontendOrigin = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
+
+app.use(cors({
+  origin: frontendOrigin,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
 app.use(express.json());
 
 const authRoutes = require("./src/routes/authRoutes");
@@ -35,6 +42,13 @@ app.get("/api/health/db", async (req, res) => {
 });
 
 app.use("/api/auth", authRoutes);
+
+app.get("/api/auth/session", authMiddleware, (req, res) => {
+  res.json({
+    authenticated: true,
+    user: req.user
+  });
+});
 
 const requiredEnv = [
   "DB_HOST",
