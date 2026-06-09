@@ -3,6 +3,7 @@ import SiteHeader from "./components/SiteHeader";
 import AuthPage from "./pages/AuthPage";
 import LandingPage from "./pages/LandingPage";
 import LibraryPage from "./pages/LibraryPage";
+import DirectChatPage from "./pages/DirectChatPage";
 import "./App.css";
 
 /**
@@ -17,7 +18,8 @@ const routes = {
   "/": LandingPage,
   "/home": LandingPage,
   "/library": LibraryPage,
-  "/join": AuthPage
+  "/join": AuthPage,
+  "/chat": DirectChatPage
 };
 
 // Unknown paths fall back to the public landing page.
