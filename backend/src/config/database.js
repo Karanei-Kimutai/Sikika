@@ -20,7 +20,7 @@ const sequelize = new Sequelize(
   process.env.DB_PASSWORD,  // MySQL password
   {
     host:    process.env.DB_HOST || 'localhost',
-    port:    process.env.DB_PORT || 3306,
+    port:    Number(process.env.DB_PORT || 3306),
     dialect: 'mysql',
 
     // Connection pool settings — controls how many simultaneous

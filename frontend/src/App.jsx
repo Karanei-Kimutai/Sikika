@@ -1,19 +1,209 @@
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
+import axios from "axios";
+import "./App.css";
+
+const API_BASE_URL = "http://localhost:5000";
+const QUICK_EXIT_URL = "https://www.google.com";
 
 function App() {
-  const [message, setMessage] = useState("");
+  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(localStorage.getItem("authToken")));
+  const [step, setStep] = useState("phone");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [otp, setOtp] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+  const [devOtpHint, setDevOtpHint] = useState("");
+  const [tokenPreview, setTokenPreview] = useState("");
 
-  useEffect(() => {
-    fetch("http://localhost:5000/api/hello")
-      .then((res) => res.json())
-      .then((data) => setMessage(data.message));
-  }, []);
+  const canSubmitPhone = useMemo(() => phoneNumber.trim().length >= 10, [phoneNumber]);
+  const canSubmitOtp = useMemo(() => otp.trim().length === 4, [otp]);
+
+  const clearMessages = () => {
+    setErrorMessage("");
+    setSuccessMessage("");
+    setDevOtpHint("");
+  };
+
+  const finalizeLogin = (token, message) => {
+    localStorage.setItem("authToken", token);
+    setTokenPreview(`${token.slice(0, 18)}...`);
+    setSuccessMessage(message);
+    setIsAuthenticated(true);
+  };
+
+  const requestOtp = async () => {
+    if (!canSubmitPhone) {
+      setErrorMessage("Enter a valid mobile number including country code.");
+      return;
+    }
+
+    clearMessages();
+    setLoading(true);
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/request-otp`, {
+        phoneNumber: phoneNumber.trim()
+      });
+
+      if (response.data.developmentOtp) {
+        const autoVerifyResponse = await axios.post(`${API_BASE_URL}/api/auth/verify-otp`, {
+          phoneNumber: phoneNumber.trim(),
+          otp: response.data.developmentOtp
+        });
+
+        finalizeLogin(
+          autoVerifyResponse.data.token,
+          "Development mode: auto-verified and logged in successfully."
+        );
+        return;
+      }
+
+      setStep("otp");
+      setSuccessMessage("A secure code has been sent to your phone.");
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Could not send access code. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const verifyOtp = async () => {
+    if (!canSubmitOtp) {
+      setErrorMessage("Enter the 4-digit code sent to your phone.");
+      return;
+    }
+
+    clearMessages();
+    setLoading(true);
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/verify-otp`, {
+        phoneNumber: phoneNumber.trim(),
+        otp: otp.trim()
+      });
+
+      finalizeLogin(response.data.token, "Secure login successful. You can now continue safely.");
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Verification failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resendCode = async () => {
+    setOtp("");
+    await requestOtp();
+  };
+
+  const quickExit = () => {
+    localStorage.removeItem("authToken");
+    setIsAuthenticated(false);
+    setStep("phone");
+    setPhoneNumber("");
+    setOtp("");
+    setTokenPreview("");
+    clearMessages();
+    window.location.replace(QUICK_EXIT_URL);
+  };
+
+  const logout = () => {
+    localStorage.removeItem("authToken");
+    setIsAuthenticated(false);
+    setStep("phone");
+    setOtp("");
+    setTokenPreview("");
+    setSuccessMessage("You have been signed out safely.");
+  };
 
   return (
-    <div>
-      <h1>React Frontend</h1>
-      <p>{message}</p>
-    </div>
+    <main className="page-shell">
+      <button type="button" className="quick-exit" onClick={quickExit}>
+        Quick Exit
+      </button>
+
+      <section className="facade-card" aria-label="Community Connect login panel">
+        <div className="illustration" aria-hidden="true">
+          <div className="blob blob-one" />
+          <div className="blob blob-two" />
+          <div className="chat-card">Safe space</div>
+          <div className="chat-card">Private support</div>
+        </div>
+
+        <div className="form-panel">
+          <p className="eyebrow">Community Connect</p>
+          <h1>
+            {isAuthenticated ? "You Are Securely Signed In" : step === "phone" ? "Join the Community" : "Welcome Back"}
+          </h1>
+          <p className="subtext">
+            A discreet support and reporting platform that helps survivors access help safely.
+          </p>
+
+          {errorMessage && <p className="feedback feedback-error">{errorMessage}</p>}
+          {successMessage && <p className="feedback feedback-success">{successMessage}</p>}
+          {devOtpHint && <p className="feedback feedback-hint">{devOtpHint}</p>}
+
+          {isAuthenticated ? (
+            <div className="field-group">
+              <p className="auth-note">Your secure session is active. You can now continue to protected areas.</p>
+              <button type="button" className="primary-btn" onClick={() => window.location.assign("/home")}>
+                Continue To Home
+              </button>
+              <button type="button" className="link-btn" onClick={logout}>
+                Sign Out
+              </button>
+            </div>
+          ) : step === "phone" ? (
+            <div className="field-group">
+              <label htmlFor="phoneNumber">Mobile Number</label>
+              <input
+                id="phoneNumber"
+                type="tel"
+                placeholder="e.g. +2547XXXXXXXX"
+                value={phoneNumber}
+                onChange={(event) => setPhoneNumber(event.target.value)}
+                autoComplete="tel"
+              />
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={requestOtp}
+                disabled={loading || !canSubmitPhone}
+              >
+                {loading ? "Sending..." : "Send Access Code"}
+              </button>
+            </div>
+          ) : (
+            <div className="field-group">
+              <label htmlFor="otp">Enter 4-Digit Code</label>
+              <input
+                id="otp"
+                type="text"
+                inputMode="numeric"
+                maxLength={4}
+                placeholder="----"
+                className="otp-input"
+                value={otp}
+                onChange={(event) => setOtp(event.target.value.replace(/\D/g, ""))}
+              />
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={verifyOtp}
+                disabled={loading || !canSubmitOtp}
+              >
+                {loading ? "Verifying..." : "Verify & Secure Login"}
+              </button>
+              <button type="button" className="link-btn" onClick={resendCode} disabled={loading}>
+                Resend Code
+              </button>
+            </div>
+          )}
+
+          {tokenPreview && <p className="token-preview">Token saved locally: {tokenPreview}</p>}
+        </div>
+      </section>
+    </main>
   );
 }
 
