@@ -70,8 +70,9 @@ function AuthPage({ onNavigate }) {
    * tokenPreview is deliberately shortened so the UI can confirm storage without
    * rendering the full credential.
    */
-  const finalizeLogin = (token, message) => {
+  const finalizeLogin = (token, message, userId = null) => {
     localStorage.setItem("authToken", token);
+    if (userId) localStorage.setItem("userId", userId);
     setTokenPreview(`${token.slice(0, 18)}...`);
     setSuccessMessage(message);
     setIsAuthenticated(true);
@@ -112,7 +113,8 @@ function AuthPage({ onNavigate }) {
 
         finalizeLogin(
           autoVerifyResponse.data.token,
-          "Development mode: auto-verified and logged in successfully."
+          "Development mode: auto-verified and logged in successfully.",
+          autoVerifyResponse.data.userId
         );
         return;
       }
@@ -146,7 +148,10 @@ function AuthPage({ onNavigate }) {
         otp: otp.trim()
       });
 
-      finalizeLogin(response.data.token, "Secure login successful. You can now continue safely.");
+      finalizeLogin(
+        response.data.token,
+         "Secure login successful. You can now continue safely.",
+         response.data.userId);
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Verification failed. Please try again.");
     } finally {
@@ -174,7 +179,11 @@ function AuthPage({ onNavigate }) {
         password: password.trim()
       });
 
-      finalizeLogin(response.data.token, "Password login successful. You can now continue safely.");
+      finalizeLogin(
+        response.data.token,
+        "Password login successful. You can now continue safely.",
+        response.data.userId
+      );
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Password login failed. Try OTP or check your password.");
     } finally {
