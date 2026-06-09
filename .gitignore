@@ -1,5 +1,7 @@
 backend/node_modules/
 backend/.env
+backend/config.json
 .vscode/
 frontend/node_modules/
 frontend/dist/
+backend/*.log
