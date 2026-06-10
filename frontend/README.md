@@ -1,6 +1,6 @@
 # Frontend
 
-React + Vite frontend for authentication, library resources, confidential reporting, direct encrypted chat, community rooms, and moderation dashboard workflows.
+React + Vite frontend for authentication, library resources, staff resource management, confidential reporting, direct encrypted chat, community rooms, and moderation dashboard workflows.
 
 ## Tech Stack
 
@@ -90,6 +90,21 @@ Key behavior:
 - Staff roles can request status transitions from the dropdown, but backend is final authority on allowed transitions.
 - Evidence upload uses multipart file field named file and enforces 15MB size in UI to match backend limits.
 - Evidence links are opened through short-lived signed URLs fetched on demand.
+
+## Resource Library and Management
+
+Main implementation:
+
+- src/pages/LibraryPage.jsx
+- src/services/resources.js
+
+Key behavior:
+
+- Resource browsing is public and works without authentication.
+- Search and category filtering are handled via /api/resources query params.
+- Staff write actions (create/update/delete) are available through authenticated service methods and are enforced by backend RBAC.
+- Resource write calls use multipart form-data with file field name file.
+- Backend stores files in Cloudinary and returns stable resource metadata + delivery URL for listing.
 
 ## Direct Chat UI
 

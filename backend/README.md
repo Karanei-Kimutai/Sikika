@@ -1,6 +1,6 @@
 # Backend API
 
-Express + Sequelize (MySQL) backend for authentication, incident reporting, direct chat, community rooms, moderation, notifications, and websocket relay.
+Express + Sequelize (MySQL) backend for authentication, support resources, incident reporting, direct chat, community rooms, moderation, notifications, and websocket relay.
 
 ## Tech Stack
 
@@ -10,7 +10,7 @@ Express + Sequelize (MySQL) backend for authentication, incident reporting, dire
 - MySQL 8+
 - Socket.io
 - Multer (multipart evidence uploads)
-- Cloudinary (evidence storage and signed URLs)
+- Cloudinary (evidence storage and signed URLs, plus support resource storage)
 
 ## Backend Architecture
 
@@ -53,13 +53,13 @@ Recommended for local development:
 - SKIP_SMS_IN_DEV=true (development OTP bypass)
 - NODE_ENV=development
 
-Required for evidence upload flow:
+Required for Cloudinary-backed uploads (evidence and support resources):
 
 - CLOUDINARY_CLOUD_NAME
 - CLOUDINARY_API_KEY
 - CLOUDINARY_API_SECRET
 
-Without Cloudinary config, reporting APIs still work but evidence upload/access endpoints return service-unavailable responses.
+Without Cloudinary config, reporting APIs still work but evidence upload endpoints and support-resource write endpoints return service-unavailable responses.
 
 ## Setup and Run
 
@@ -129,6 +129,22 @@ Auth compatibility behavior:
 ### Resources
 
 - GET /api/resources
+- POST /api/resources (bearer token, multipart file upload)
+- PATCH /api/resources/:resourceId (bearer token, optional multipart file replacement)
+- DELETE /api/resources/:resourceId (bearer token)
+
+Resource access model:
+
+- Read access is public: authenticated users and unregistered visitors can browse resources.
+- Create, update, and delete are restricted to COUNSELLOR, LEGAL_COUNSEL, and NGO_ADMIN.
+- Resource uploads are stored in Cloudinary and persisted with metadata for replacement/deletion cleanup.
+- Update supports metadata-only edits or metadata + file replacement in one request.
+
+Resource upload constraints:
+
+- Multipart field name: file
+- Max upload size: 20MB
+- Allowed MIME types: PDF, DOC, DOCX, TXT, JPG, PNG, WEBP, MP3, WAV, MP4
 
 ### Reporting
 

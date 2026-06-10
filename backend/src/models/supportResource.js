@@ -49,6 +49,31 @@ const SupportResource = sequelize.define('supportResource', {
     allowNull: false,
     comment:   'URL to the resource — Cloudinary URL for uploaded files'
   },
+
+  cloudinaryPublicId: {
+    type:    DataTypes.STRING(255),
+    comment: 'Cloudinary public identifier for this uploaded resource'
+  },
+
+  cloudinaryResourceType: {
+    type:    DataTypes.STRING(20),
+    comment: 'Cloudinary resource type (image, video, raw) for deletion operations'
+  },
+
+  originalFileName: {
+    type:    DataTypes.STRING(255),
+    comment: 'Original uploaded file name supplied by uploader'
+  },
+
+  mimeType: {
+    type:    DataTypes.STRING(120),
+    comment: 'MIME type detected by upload middleware'
+  },
+
+  fileSizeBytes: {
+    type:    DataTypes.INTEGER.UNSIGNED,
+    comment: 'File size in bytes of the uploaded resource'
+  },
  
   /**
    * The staff member or admin who uploaded this resource.
