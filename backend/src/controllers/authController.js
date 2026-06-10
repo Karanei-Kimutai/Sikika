@@ -224,12 +224,12 @@ function buildDefaultSurvivorProfileFields(user) {
 // then falling back to any profile if all staff are OFFLINE.
 // Assumption: staff profiles are provisioned via NGO admin user-management flows.
 // Signup logic here never promotes survivor role; it only links existing staff.
-async function pickLeastLoadedStaff(ProfileModel, transaction) {
+async function pickLeastLoadedStaff(ProfileModel, idField, transaction) {
     const preferred = await ProfileModel.findOne({
         where: { availabilityStatus: { [Op.in]: ['AVAILABLE', 'BUSY'] } },
         order: [
             ['currentWorkloadScore', 'ASC'],
-            ['createdAt', 'ASC']
+            [idField, 'ASC']
         ],
         transaction
     });
@@ -239,7 +239,7 @@ async function pickLeastLoadedStaff(ProfileModel, transaction) {
     return ProfileModel.findOne({
         order: [
             ['currentWorkloadScore', 'ASC'],
-            ['createdAt', 'ASC']
+            [idField, 'ASC']
         ],
         transaction
     });
@@ -258,8 +258,8 @@ async function ensureSurvivorStaffAutoAssignment(user) {
             return existingProfile;
         }
 
-        const assignedCounsellor = await pickLeastLoadedStaff(CounsellorProfile, transaction);
-        const assignedLegalCounsel = await pickLeastLoadedStaff(LegalCounselProfile, transaction);
+        const assignedCounsellor = await pickLeastLoadedStaff(CounsellorProfile, 'counsellorId', transaction);
+        const assignedLegalCounsel = await pickLeastLoadedStaff(LegalCounselProfile, 'legalCounselId', transaction);
         const defaults = buildDefaultSurvivorProfileFields(user);
 
         const survivorProfile = await SurvivorProfile.create({
