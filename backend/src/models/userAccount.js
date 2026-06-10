@@ -128,6 +128,58 @@ const UserAccount = sequelize.define('userAccount', {
     type: DataTypes.STRING(10),
     allowNull: true,
     comment: 'Temporary OTP code for phone login'
+  },
+
+  /**
+   * Declares which workflow the current OTP belongs to.
+   * This prevents reusing a signup OTP for signin/reset (or vice versa).
+   */
+  otpPurpose: {
+    type: DataTypes.STRING(40),
+    allowNull: true,
+    comment: 'Purpose for current OTP (SIGNUP_OTP, SIGNIN_OTP, PASSWORD_RESET)'
+  },
+
+  /**
+   * UTC expiry boundary for the active OTP.
+   * Verification attempts after this timestamp are rejected.
+   */
+  otpExpiresAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: 'Expiry timestamp for the active OTP code'
+  },
+
+  /**
+   * Failed OTP verification attempts for the currently issued OTP.
+   * Reset whenever a new OTP is issued.
+   */
+  otpAttemptCount: {
+    type: DataTypes.INTEGER.UNSIGNED,
+    allowNull: false,
+    defaultValue: 0,
+    comment: 'Failed OTP verification attempts for the active OTP code'
+  },
+
+  /**
+   * Failed password-login attempts for lockout policy.
+   * Cleared on successful password authentication.
+   */
+  authFailedAttempts: {
+    type: DataTypes.INTEGER.UNSIGNED,
+    allowNull: false,
+    defaultValue: 0,
+    comment: 'Consecutive failed password login attempts'
+  },
+
+  /**
+   * Temporary lock timestamp after repeated auth failures.
+   * Auth requests are blocked while now < authLockUntil.
+   */
+  authLockUntil: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: 'Temporary account lock timestamp after repeated auth failures'
   }
 
 }, {
