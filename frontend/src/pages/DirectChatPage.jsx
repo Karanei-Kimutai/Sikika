@@ -12,9 +12,16 @@ import { io } from 'socket.io-client';
 import { getSharedKey, encryptMessage, decryptMessage } from '../utils/cryptoUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+const QUICK_EXIT_URL = 'https://www.google.com';
 
-// Initialize socket connection outside component to prevent infinite reconnects
-const socket = io('http://localhost:5000', { autoConnect: false });
+function createSocket(token) {
+  return io(API_BASE_URL, {
+    autoConnect: true,
+    auth: {
+      token
+    }
+  });
+}
 
 /**
  * Lightweight JWT payload decoder for client-only session bootstrap.
@@ -46,8 +53,12 @@ const DirectChatPage = () => {
   const [currentUserId, setCurrentUserId] = useState(null);
   const [currentUserRole, setCurrentUserRole] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [noticeMessage, setNoticeMessage] = useState('');
+  const [isPrivacyMaskActive, setIsPrivacyMaskActive] = useState(false);
   
   const messagesEndRef = useRef(null);
+  const socketRef = useRef(null);
+  const inactivityTimerRef = useRef(null);
 
   /**
    * 1. Initialize Channels and Socket Connection
@@ -73,7 +84,7 @@ const DirectChatPage = () => {
     // Role is used for labels in the chat list/header only.
     setCurrentUserRole((payload?.role || '').toString().toLowerCase());
 
-    socket.connect();
+    socketRef.current = createSocket(token);
 
     const loadChannels = async () => {
       try {
@@ -93,7 +104,9 @@ const DirectChatPage = () => {
     loadChannels();
 
     return () => {
-      socket.disconnect();
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
     };
   }, []);
 
@@ -111,7 +124,7 @@ const DirectChatPage = () => {
       }
 
       // Join the Socket room
-      socket.emit('joinChannel', activeChannelId);
+      socketRef.current?.emit('joinChannel', activeChannelId);
 
       // Derive the channel key from a deterministic shared input.
       // In a production E2EE design this should come from real key exchange.
@@ -167,13 +180,61 @@ const DirectChatPage = () => {
       };
 
       setMessages((prev) => [...prev, decryptedMsg]);
+
+      if (dbMessage.senderUserId !== currentUserId) {
+        setNoticeMessage('You have a new update.');
+        window.setTimeout(() => setNoticeMessage(''), 2800);
+      }
     };
 
-    socket.on('receiveMessage', handleNewMessage);
+    socketRef.current?.on('receiveMessage', handleNewMessage);
 
     // Cleanup listener to prevent duplicates
-    return () => socket.off('receiveMessage', handleNewMessage);
+    return () => socketRef.current?.off('receiveMessage', handleNewMessage);
   }, [activeChannelId, cryptoKey, currentUserId]);
+
+  useEffect(() => {
+    const markRead = async () => {
+      const token = localStorage.getItem('authToken');
+      if (!token || !activeChannelId) return;
+
+      try {
+        await axios.patch(
+          `${API_BASE_URL}/api/chat/${activeChannelId}/read`,
+          {},
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+      } catch (error) {
+        // No-op to avoid disrupting chat flow if read receipts fail.
+      }
+    };
+
+    markRead();
+  }, [activeChannelId, messages.length]);
+
+  useEffect(() => {
+    const activateMaskLater = () => {
+      if (inactivityTimerRef.current) {
+        window.clearTimeout(inactivityTimerRef.current);
+      }
+
+      setIsPrivacyMaskActive(false);
+      inactivityTimerRef.current = window.setTimeout(() => {
+        setIsPrivacyMaskActive(true);
+      }, 25000);
+    };
+
+    const activityEvents = ['mousemove', 'mousedown', 'keydown', 'touchstart'];
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, activateMaskLater));
+    activateMaskLater();
+
+    return () => {
+      activityEvents.forEach((eventName) => window.removeEventListener(eventName, activateMaskLater));
+      if (inactivityTimerRef.current) {
+        window.clearTimeout(inactivityTimerRef.current);
+      }
+    };
+  }, []);
 
   // Auto-scroll to latest message
   useEffect(() => {
@@ -196,10 +257,8 @@ const DirectChatPage = () => {
       const encryptedPayload = await encryptMessage(plaintext, cryptoKey);
 
       // Emit the ciphertext payload over WebSockets
-      socket.emit('sendEncryptedMessage', {
+      socketRef.current?.emit('sendEncryptedMessage', {
         chatId: activeChannelId,
-        // Sender identity is attached so receivers can align message bubbles.
-        senderUserId: currentUserId,
         encryptedPayload: encryptedPayload
       });
 
@@ -211,6 +270,16 @@ const DirectChatPage = () => {
   return (
     // WhatsApp-inspired split layout with project theme colors from App.css.
     <div className="wa-page">
+      <button type="button" className="quick-exit" onClick={() => window.location.replace(QUICK_EXIT_URL)}>
+        Quick Exit
+      </button>
+
+      {isPrivacyMaskActive && (
+        <button type="button" className="privacy-mask" onClick={() => setIsPrivacyMaskActive(false)}>
+          Screen hidden for privacy. Tap to continue.
+        </button>
+      )}
+
       <section className="wa-shell" aria-label="Direct chat">
         <aside className="wa-sidebar">
           <header className="wa-sidebar-header">
@@ -257,6 +326,7 @@ const DirectChatPage = () => {
                     <small>end-to-end encrypted</small>
                   </div>
                 </div>
+                {noticeMessage && <p className="wa-notice">{noticeMessage}</p>}
               </header>
 
               <div className="wa-messages">

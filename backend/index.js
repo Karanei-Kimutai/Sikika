@@ -55,6 +55,8 @@ const io = new Server(server, {
 
 // Initialize the WebSocket event listeners for the chat relay
 require("./src/sockets/chatSocket")(io);
+require("./src/sockets/communitySocket")(io);
+app.locals.io = io;
 // CORS is configured before routes so every endpoint receives the same policy.
 app.use(cors({
   origin: frontendOrigin,
@@ -69,6 +71,7 @@ const authRoutes = require("./src/routes/authRoutes");
 const resourceRoutes = require("./src/routes/resourceRoutes");
 const chatRoutes = require("./src/routes/chatRoutes");
 const reportRoutes = require("./src/routes/reportRoutes");
+const communityRoutes = require("./src/routes/communityRoutes");
 
 // Lightweight API smoke-test endpoint.
 app.get("/api/hello", (req, res) => {
@@ -97,6 +100,9 @@ app.use("/api/resources", resourceRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/reports", reportRoutes);
+app.use("/api/community", communityRoutes);
+app.use("/api/reports", reportRoutes);
+app.use("/api/community", communityRoutes);
 
 /**
  * Session inspection endpoint.

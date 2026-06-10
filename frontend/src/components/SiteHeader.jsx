@@ -1,14 +1,15 @@
-/**
- * Shared public navigation header.
- *
- * The header receives navigation as a prop so App.jsx remains the only place
- * that mutates browser history.
- */
-function SiteHeader({ currentPath, isAuthenticated, onNavigate, onSignOut }) {
+function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut }) {
   const navItems = [
     { path: "/", label: "Home" },
     { path: "/library", label: "Library" },
-    ...(isAuthenticated ? [{ path: "/reports", label: "Reports" }] : [])
+    ...(isAuthenticated
+      ? [
+          { path: "/reports", label: "Reports" },
+          { path: "/chat", label: "Direct Chat" },
+          { path: "/community", label: "Community" },
+          ...(role === "NGO_ADMIN" ? [{ path: "/moderation", label: "Moderation" }] : [])
+        ]
+      : [])
   ];
 
   return (
@@ -35,8 +36,12 @@ function SiteHeader({ currentPath, isAuthenticated, onNavigate, onSignOut }) {
       </nav>
 
       <div className="header-actions">
-        <button type="button" className="header-action" onClick={() => onNavigate(isAuthenticated ? "/reports" : "/join")}>
-          {isAuthenticated ? "My Reports" : "Join Community"}
+        <button
+          type="button"
+          className="header-action"
+          onClick={() => onNavigate(isAuthenticated ? "/chat" : "/join")}
+        >
+          {isAuthenticated ? "Open Chat" : "Join Community"}
         </button>
         {isAuthenticated && (
           <button type="button" className="header-signout" onClick={onSignOut}>

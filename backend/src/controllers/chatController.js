@@ -4,8 +4,17 @@
  * Handles fetching chat channels and retrieving historical direct messages.
  */
 
-const { DirectChatChannel, DirectChatMessage, SurvivorProfile } = require('../models');
+const { DirectChatChannel, DirectChatMessage, SurvivorProfile, UserAccount } = require('../models');
 const { Op } = require('sequelize');
+const {
+  getActorContextByUserId,
+  ensureAutoChannelsForSurvivor,
+  canUserAccessChannel
+} = require('../services/chatAccessService');
+
+function getUserIdFromRequest(req) {
+  return req.user?.userId || req.user?.id || null;
+}
 
 /**
  * Returns active direct-chat channels for the authenticated user.
@@ -19,10 +28,18 @@ const { Op } = require('sequelize');
  */
 const getChannels = async (req, res) => {
   try {
-    // Accept both token claim shapes for backward compatibility.
-    const userId = req.user.userId || req.user.id;
+    const userId = getUserIdFromRequest(req);
     if (!userId) {
       return res.status(401).json({ error: 'Invalid token payload.' });
+    }
+
+    const actor = await getActorContextByUserId(userId);
+    if (!actor) {
+      return res.status(401).json({ error: 'Invalid token payload.' });
+    }
+
+    if (actor.role === 'SYSTEM_ADMIN' || actor.role === 'NGO_ADMIN') {
+      return res.status(403).json({ error: 'Direct chat is available only for survivors and assigned support staff.' });
     }
 
     // If this account has a survivor profile, capture the survivor PK used by
@@ -36,6 +53,8 @@ const getChannels = async (req, res) => {
     // when a survivor profile exists for this authenticated account.
     const channelAudience = [{ supportStaffCounterpartId: userId }];
     if (survivorProfile?.survivorId) {
+      // Survivor channels are auto-provisioned from assignment links.
+      await ensureAutoChannelsForSurvivor(survivorProfile);
       channelAudience.push({ survivorId: survivorProfile.survivorId });
     }
 
@@ -47,7 +66,30 @@ const getChannels = async (req, res) => {
       },
       order: [['chatCreationTimestamp', 'DESC']]
     });
-    res.status(200).json(channels);
+
+    const enriched = await Promise.all(
+      channels.map(async (channel) => {
+        const unreadCount = await DirectChatMessage.count({
+          where: {
+            chatId: channel.chatId,
+            messageReadStatus: 'UNREAD',
+            senderUserId: { [Op.ne]: userId }
+          }
+        });
+
+        const counterpart = await UserAccount.findByPk(channel.supportStaffCounterpartId, {
+          attributes: ['userId', 'userRole']
+        });
+
+        return {
+          ...channel.toJSON(),
+          unreadCount,
+          counterpartRole: counterpart?.userRole || null
+        };
+      })
+    );
+
+    res.status(200).json(enriched);
   } catch (error) {
     res.status(500).json({ error: 'Failed to retrieve chat channels.' });
   }
@@ -60,29 +102,13 @@ const getChannels = async (req, res) => {
 const getMessages = async (req, res) => {
   try {
     const { chatId } = req.params;
-    // Accept both token claim shapes for backward compatibility.
-    const userId = req.user.userId || req.user.id;
+    const userId = getUserIdFromRequest(req);
     if (!userId) {
       return res.status(401).json({ error: 'Invalid token payload.' });
     }
 
-    // Resolve survivor profile ID for survivor-side authorization checks.
-    const survivorProfile = await SurvivorProfile.findOne({
-      where: { userId },
-      attributes: ['survivorId']
-    });
-    
-    const channel = await DirectChatChannel.findOne({ where: { chatId } });
-
-    // Survivor membership compares channel.survivorId against the resolved
-    // survivor profile primary key, not against userAccount.userId.
-    const isSurvivorInChannel = Boolean(
-      survivorProfile?.survivorId && channel?.survivorId === survivorProfile.survivorId
-    );
-    // Staff membership is direct because channel stores userAccount.userId.
-    const isStaffInChannel = channel?.supportStaffCounterpartId === userId;
-
-    if (!channel || (!isSurvivorInChannel && !isStaffInChannel)) {
+    const allowed = await canUserAccessChannel(userId, chatId);
+    if (!allowed) {
       return res.status(403).json({ error: 'Unauthorized.' });
     }
 
@@ -92,10 +118,53 @@ const getMessages = async (req, res) => {
       where: { chatId },
       order: [['messageDispatchTimestamp', 'ASC']]
     });
+
+    await DirectChatMessage.update(
+      { messageReadStatus: 'READ' },
+      {
+        where: {
+          chatId,
+          senderUserId: { [Op.ne]: userId },
+          messageReadStatus: 'UNREAD'
+        }
+      }
+    );
+
     res.status(200).json(messages);
   } catch (error) {
     res.status(500).json({ error: 'Failed to retrieve message history.' });
   }
 };
 
-module.exports = { getChannels, getMessages };
+const markChannelRead = async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const userId = getUserIdFromRequest(req);
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Invalid token payload.' });
+    }
+
+    const allowed = await canUserAccessChannel(userId, chatId);
+    if (!allowed) {
+      return res.status(403).json({ error: 'Unauthorized.' });
+    }
+
+    await DirectChatMessage.update(
+      { messageReadStatus: 'READ' },
+      {
+        where: {
+          chatId,
+          senderUserId: { [Op.ne]: userId },
+          messageReadStatus: 'UNREAD'
+        }
+      }
+    );
+
+    return res.json({ message: 'Messages marked as read.' });
+  } catch (error) {
+    return res.status(500).json({ error: 'Failed to mark messages as read.' });
+  }
+};
+
+module.exports = { getChannels, getMessages, markChannelRead };
