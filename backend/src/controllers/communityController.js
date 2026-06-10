@@ -74,15 +74,74 @@ async function getDisplayIdentity(userId) {
 }
 
 async function ensureGeneralRoomExists() {
-  const existing = await CommunityRoom.findOne();
-  if (existing) return existing;
+  const defaultRooms = [
+    {
+      roomName: "General Support",
+      roomDescriptionText: "A moderated peer-support room for day-to-day discussion."
+    },
+    {
+      roomName: "Legal Guidance",
+      roomDescriptionText: "Ask legal process questions and share verified legal resources."
+    },
+    {
+      roomName: "Emotional Support",
+      roomDescriptionText: "Check-ins, coping tips, and encouragement from the community."
+    },
+    {
+      roomName: "Safety Planning",
+      roomDescriptionText: "Discuss practical safety planning ideas in a moderated space."
+    }
+  ];
 
-  return CommunityRoom.create({
-    roomId: randomUUID(),
-    roomName: "General Support",
-    roomDescriptionText: "A moderated peer-support room for day-to-day discussion.",
-    createdByAdminId: null
-  });
+  const existingRooms = await CommunityRoom.findAll({ attributes: ["roomName"] });
+  const existingNames = new Set(existingRooms.map((room) => room.roomName));
+
+  for (const room of defaultRooms) {
+    if (!existingNames.has(room.roomName)) {
+      await CommunityRoom.create({
+        roomId: randomUUID(),
+        roomName: room.roomName,
+        roomDescriptionText: room.roomDescriptionText,
+        createdByAdminId: null
+      });
+    }
+  }
+
+  return CommunityRoom.findOne({ order: [["roomCreationTimestamp", "ASC"]] });
+}
+
+async function seedDemoMessagesForRoom(roomId, userId) {
+  if (process.env.NODE_ENV === "production") return;
+
+  const existingCount = await CommunityMessage.count({ where: { roomId } });
+  if (existingCount > 0) return;
+
+  const demoLines = [
+    "Welcome to the room. Share only what feels safe for you.",
+    "If you are in immediate danger, use emergency services first.",
+    "Small steps still count. You are not behind.",
+    "If anyone needs legal guidance, ask and verified staff will respond.",
+    "Grounding tip: name 5 things you can see around you.",
+    "Hydration reminder: take a sip of water if you can.",
+    "You can pause and return later. Your pace is valid.",
+    "Safety planning can start with one trusted contact.",
+    "If you need to step away quickly, use Quick Exit.",
+    "Community rule: no personal attacks, no sharing private identifying details.",
+    "If a post feels harmful, report it so moderators can review.",
+    "Coping idea: short walk + slow breathing for 2 minutes.",
+    "You can ask for practical resources in your county here.",
+    "Take breaks while reading. Emotional fatigue is real.",
+    "You are welcome here."
+  ];
+
+  await CommunityMessage.bulkCreate(
+    demoLines.map((line) => ({
+      communityMessageId: randomUUID(),
+      roomId,
+      senderUserId: userId,
+      publicMessageContent: line
+    }))
+  );
 }
 
 async function listRooms(req, res) {
@@ -189,6 +248,8 @@ async function listMessages(req, res) {
     return res.status(403).json({ error: "Join this room first to view messages." });
   }
 
+  await seedDemoMessagesForRoom(room.roomId, actor.userId);
+
   const messages = await CommunityMessage.findAll({
     where: { roomId: room.roomId },
     order: [["messageDispatchTimestamp", "ASC"]]
@@ -283,6 +344,44 @@ async function reportMessage(req, res) {
   });
 
   return res.status(201).json({ report });
+}
+
+async function deleteMessage(req, res) {
+  const actor = await getActor(req);
+  if (!actor) {
+    return res.status(401).json({ error: "Authentication required." });
+  }
+
+  const message = await CommunityMessage.findByPk(req.params.messageId);
+  if (!message) {
+    return res.status(404).json({ error: "Message not found." });
+  }
+
+  const isOwner = message.senderUserId === actor.userId;
+  const isNgoAdmin = actor.role === "NGO_ADMIN";
+
+  if (!isOwner && !isNgoAdmin) {
+    return res.status(403).json({ error: "You can only delete your own messages." });
+  }
+
+  if (isNgoAdmin && !isOwner) {
+    await ModerationActionLog.create({
+      moderationActionId: randomUUID(),
+      moderatorUserId: actor.userId,
+      targetUserId: message.senderUserId,
+      moderationActionType: "MESSAGE_DELETION",
+      moderationActionReason: "Manual moderation deletion"
+    });
+  }
+
+  await message.destroy();
+
+  req.app.locals.io?.to(`community-room:${message.roomId}`).emit("community:message-deleted", {
+    roomId: message.roomId,
+    messageId: message.communityMessageId
+  });
+
+  return res.json({ message: "Message deleted." });
 }
 
 async function getModerationReports(req, res) {
@@ -403,6 +502,7 @@ module.exports = {
   listMessages,
   postMessage,
   reportMessage,
+  deleteMessage,
   getModerationReports,
   reviewReport
 };

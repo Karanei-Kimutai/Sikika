@@ -3,7 +3,6 @@ import axios from "axios";
 import { io } from "socket.io-client";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
-const QUICK_EXIT_URL = "https://www.google.com";
 
 const socket = io(API_BASE_URL, { autoConnect: false });
 
@@ -17,10 +16,12 @@ function CommunityPage() {
   const [activeRoomId, setActiveRoomId] = useState("");
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
-  const [reportReasonByMessage, setReportReasonByMessage] = useState({});
+  const [activeMessageMenuId, setActiveMessageMenuId] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const activeRoomIdRef = useRef("");
+
+  const currentUserId = localStorage.getItem("userId");
 
   async function loadRooms() {
     setErrorMessage("");
@@ -94,12 +95,19 @@ function CommunityPage() {
       );
     };
 
+    const handleMessageDeleted = ({ roomId, messageId }) => {
+      if (roomId !== activeRoomIdRef.current) return;
+      setMessages((current) => current.filter((entry) => entry.communityMessageId !== messageId));
+    };
+
     socket.on("community:new-message", handleIncomingMessage);
     socket.on("community:message-updated", handleMessageUpdated);
+    socket.on("community:message-deleted", handleMessageDeleted);
 
     return () => {
       socket.off("community:new-message", handleIncomingMessage);
       socket.off("community:message-updated", handleMessageUpdated);
+      socket.off("community:message-deleted", handleMessageDeleted);
       socket.disconnect();
     };
   }, []);
@@ -133,9 +141,9 @@ function CommunityPage() {
   }
 
   async function handleReportMessage(messageId) {
-    const reason = String(reportReasonByMessage[messageId] || "").trim();
+    const reason = String(window.prompt("Why are you reporting this message?") || "").trim();
     if (!reason) {
-      setErrorMessage("Please provide a reason before reporting content.");
+      setErrorMessage("Report cancelled. Add a reason to submit a report.");
       return;
     }
 
@@ -149,22 +157,34 @@ function CommunityPage() {
         { headers: getAuthHeaders() }
       );
 
-      setReportReasonByMessage((current) => ({
-        ...current,
-        [messageId]: ""
-      }));
       setSuccessMessage("Content reported successfully.");
+      setActiveMessageMenuId("");
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Could not report content.");
     }
   }
 
+  async function handleDeleteMessage(messageId) {
+    const confirmed = window.confirm("Delete this message?");
+    if (!confirmed) return;
+
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      await axios.delete(`${API_BASE_URL}/api/community/messages/${messageId}`, {
+        headers: getAuthHeaders()
+      });
+      setMessages((current) => current.filter((message) => message.communityMessageId !== messageId));
+      setSuccessMessage("Message deleted.");
+      setActiveMessageMenuId("");
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Could not delete message.");
+    }
+  }
+
   return (
     <main className="community-page">
-      <button type="button" className="quick-exit" onClick={() => window.location.replace(QUICK_EXIT_URL)}>
-        Quick Exit
-      </button>
-
       <section className="community-shell" aria-label="Community forum">
         <aside className="community-sidebar">
           <h2>Community Rooms</h2>
@@ -184,45 +204,61 @@ function CommunityPage() {
         <section className="community-main">
           <header>
             <h1>Community Support Forum</h1>
-            <p>Survivors appear by nickname only. Staff posts are verified badges.</p>
+            <p>Live room chat with nickname privacy and discreet moderation tools.</p>
           </header>
 
           {errorMessage && <p className="status-message warning">{errorMessage}</p>}
           {successMessage && <p className="status-message">{successMessage}</p>}
 
-          <div className="community-feed">
+          <div className="community-messages">
             {messages.map((message) => (
-              <article key={message.communityMessageId} className="community-message-card">
-                <div className="community-message-meta">
-                  <strong>{message.author?.displayName || "Community Member"}</strong>
-                  {message.author?.badge && <span className="verified-badge">{message.author.badge}</span>}
-                </div>
-                <p>{message.publicMessageContent}</p>
+              <article
+                key={message.communityMessageId}
+                className={`community-row ${message.senderUserId === currentUserId ? "mine" : "theirs"}`}
+              >
+                <div className={`community-bubble ${message.senderUserId === currentUserId ? "mine" : "theirs"}`}>
+                  <div className="community-message-meta">
+                    <strong>{message.author?.displayName || "Community Member"}</strong>
+                    {message.author?.badge && <span className="verified-badge">{message.author.badge}</span>}
 
-                <div className="community-report-row">
-                  <input
-                    type="text"
-                    placeholder="Reason for report"
-                    value={reportReasonByMessage[message.communityMessageId] || ""}
-                    onChange={(event) =>
-                      setReportReasonByMessage((current) => ({
-                        ...current,
-                        [message.communityMessageId]: event.target.value
-                      }))
-                    }
-                  />
-                  <button
-                    type="button"
-                    className="secondary-btn"
-                    onClick={() => handleReportMessage(message.communityMessageId)}
-                  >
-                    Report Post
-                  </button>
+                    <button
+                      type="button"
+                      className="message-menu-trigger"
+                      onClick={() =>
+                        setActiveMessageMenuId((current) =>
+                          current === message.communityMessageId ? "" : message.communityMessageId
+                        )
+                      }
+                    >
+                      ...
+                    </button>
+                  </div>
+
+                  <p>{message.publicMessageContent}</p>
+
+                  {activeMessageMenuId === message.communityMessageId && (
+                    <div className="message-actions-menu">
+                      <button type="button" onClick={() => handleReportMessage(message.communityMessageId)}>
+                        Report Message
+                      </button>
+
+                      {message.senderUserId === currentUserId && (
+                        <button type="button" onClick={() => handleDeleteMessage(message.communityMessageId)}>
+                          Delete My Message
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </article>
             ))}
 
-            {messages.length === 0 && <p className="wa-empty-state">No posts yet for this room.</p>}
+            {messages.length === 0 && (
+              <div className="community-empty-state">
+                <h2>No messages yet</h2>
+                <p>Start the conversation with a supportive message.</p>
+              </div>
+            )}
           </div>
 
           <form className="community-composer" onSubmit={handleSendMessage}>

@@ -59,7 +59,6 @@ function normalizePhoneNumber(phoneNumber) {
 function issueAuthToken(user) {
     return jwt.sign(
         { id: user.userId, userId: user.userId, role: getCanonicalRole(user) },
-    { id: user.userId, userId: user.userId, role: getCanonicalRole(user) },
         process.env.JWT_SECRET,
         { expiresIn: '2h' }
     );
