@@ -91,8 +91,14 @@ async function getActorContext(req) {
 
   return {
     userId: account.userId,
-    role: normalizeRole(req.user?.role || req.user?.userRole || account.userRole || account.role)
+    // Trust DB role first so stale token claims cannot retain elevated access.
+    role: normalizeRole(account.userRole || account.role || req.user?.role || req.user?.userRole)
   };
+}
+
+function canManageTargetResource(actor, resource) {
+  if (actor.role === "NGO_ADMIN") return true;
+  return String(resource.uploadedByStaffId) === String(actor.userId);
 }
 
 // Maps DB fields to the stable API shape consumed by frontend pages.
@@ -258,6 +264,12 @@ async function updateResource(req, res) {
       return res.status(404).json({ error: "Resource not found." });
     }
 
+    if (!canManageTargetResource(actor, resource)) {
+      return res.status(403).json({
+        error: "You can only update resources you uploaded. NGO admins may update any resource."
+      });
+    }
+
     const title = req.body.title !== undefined ? String(req.body.title).trim() : resource.resourceTitle;
     const description = req.body.description !== undefined ? String(req.body.description).trim() : resource.resourceDescription;
     const category = req.body.category !== undefined ? normalizeCategory(req.body.category) : resource.resourceCategory;
@@ -341,6 +353,12 @@ async function deleteResource(req, res) {
     const resource = await SupportResource.findByPk(req.params.resourceId);
     if (!resource) {
       return res.status(404).json({ error: "Resource not found." });
+    }
+
+    if (!canManageTargetResource(actor, resource)) {
+      return res.status(403).json({
+        error: "You can only delete resources you uploaded. NGO admins may delete any resource."
+      });
     }
 
     await resource.destroy();
