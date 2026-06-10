@@ -81,6 +81,33 @@ Start in production mode:
 npm start
 ```
 
+## Testing
+
+Manual test commands:
+
+```bash
+npm test
+```
+
+```bash
+npm run test:auth
+```
+
+```bash
+npm run test:watch
+```
+
+What each command does:
+
+- `npm test`: runs the complete backend Jest test suite once.
+- `npm run test:auth`: runs only the auth regression suite.
+- `npm run test:watch`: reruns tests automatically while files change.
+
+Current execution policy:
+
+- Auth tests are intentionally run manually by developers before pushing or opening PRs.
+- No automatic GitHub workflow gate is enabled for backend auth tests.
+
 At startup, backend validates required environment variables, ensures the configured database exists, authenticates Sequelize, then syncs models.
 
 ## Database and Seeders
@@ -125,6 +152,11 @@ Auth compatibility behavior:
 - JWT includes both id and userId claims.
 - Login responses include userId and canonical role.
 - Phone numbers are normalized before account lookup.
+- First-time OTP signup creates a survivor profile automatically.
+- New survivors are auto-assigned the least-loaded counsellor and legal counsel.
+- Assignment creates an initial staff-assignment-history audit record.
+- Staff profiles are expected to be created by NGO admins in user-management flows.
+- Signup does not change survivor role; role changes remain an admin operation.
 
 ### Resources
 
