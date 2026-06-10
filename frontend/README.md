@@ -1,6 +1,6 @@
 # Frontend
 
-React + Vite frontend for authentication, resource library, and secure direct chat.
+React + Vite frontend for authentication, library resources, confidential reporting, direct encrypted chat, community rooms, and moderation dashboard workflows.
 
 ## Tech Stack
 
@@ -8,31 +8,36 @@ React + Vite frontend for authentication, resource library, and secure direct ch
 - Vite
 - Axios
 - Socket.io client
+- Web Crypto API (browser-side message encryption/decryption)
 
 ## Setup
 
-1. Install dependencies.
+Install dependencies:
 
 ```bash
 npm install
 ```
 
-2. Configure environment variables.
-
-Create `.env` in the frontend folder if needed:
+Configure environment variables in frontend/.env:
 
 ```bash
 VITE_API_BASE_URL=http://localhost:5000
 ```
 
-If not set, the app defaults to `http://localhost:5000`.
+If VITE_API_BASE_URL is not set, frontend defaults to http://localhost:5000.
 
-## Run
+## Run and Build
 
 Development:
 
 ```bash
 npm run dev
+```
+
+Lint:
+
+```bash
+npm run lint
 ```
 
 Build:
@@ -41,54 +46,100 @@ Build:
 npm run build
 ```
 
-Preview production build:
+Preview built app:
 
 ```bash
 npm run preview
 ```
 
-## App Routes
+## Route Map
 
-Client routes are handled in `src/App.jsx` without a router package:
+Routes are handled in src/App.jsx via lightweight path switching:
 
-- `/` or `/home` - Landing page
-- `/library` - Resources library
-- `/join` - OTP/password authentication page
-- `/chat` - Direct encrypted chat page
+- / and /home: Landing page
+- /library: Resource library
+- /join: OTP and password authentication
+- /reports: Incident reporting workflow
+- /chat: Direct encrypted chat
+- /community: Community rooms and reporting tools
+- /moderation: NGO moderation dashboard
 
-## Authentication Notes
+Route protection behavior:
 
-- Auth token is saved to localStorage as `authToken`.
-- Auth user ID is saved as `userId` when returned by backend.
-- Password login and OTP login both use the same backend auth APIs.
-- Backend phone normalization allows users to log in even if they type spaces/dashes in phone numbers.
+- /chat, /community, /moderation, /reports require auth token.
+- /moderation is role-gated in UI to NGO_ADMIN.
+- Backend still enforces all permission checks even when UI hides routes.
 
-## Direct Chat Notes
+## Session and Auth Behavior
 
-- `src/pages/DirectChatPage.jsx` loads channels and messages using bearer token auth.
-- JWT payload is decoded client-side to bootstrap identity (`userId`/`id`) and role labels.
-- Historical messages are decrypted in-browser using utilities in `src/utils/cryptoUtils.js`.
-- New messages are encrypted before sending over sockets.
-- Current UI is WhatsApp-inspired but follows the project white/brown theme.
+- authToken is stored in localStorage after login.
+- userId is stored in localStorage when backend returns it.
+- JWT payload may carry id and userId claims; frontend accepts both.
+- Quick Exit control clears authToken and userId before redirecting away.
 
-Important:
-- Seeded legacy messages may display as unreadable placeholders because they are not stored in the current JSON ciphertext format expected by the decryptor.
+## Reporting UI
 
-## Two-User Local Test Workflow
+Main implementation:
+
+- src/pages/ReportingPage.jsx
+- src/services/reports.js
+
+Key behavior:
+
+- Survivors can create, edit draft-state entries, upload evidence, withdraw, and delete their own reports.
+- Staff roles can request status transitions from the dropdown, but backend is final authority on allowed transitions.
+- Evidence upload uses multipart file field named file and enforces 15MB size in UI to match backend limits.
+- Evidence links are opened through short-lived signed URLs fetched on demand.
+
+## Direct Chat UI
+
+Main implementation:
+
+- src/pages/DirectChatPage.jsx
+- src/utils/cryptoUtils.js
+
+Key behavior:
+
+- Loads authorized channels through bearer-token REST calls.
+- Joins socket room for active chat channel.
+- Decrypts historical and live ciphertext client-side.
+- Encrypts outbound messages before socket emit.
+- Sends best-effort read acknowledgements without interrupting chat flow on failure.
+- Privacy mask auto-hides screen after inactivity and reopens on interaction.
+
+Development note:
+
+- In development mode, a demo transcript may be appended when channel history is sparse.
+
+## Community and Moderation UI
+
+Main implementation:
+
+- src/pages/CommunityPage.jsx
+- src/pages/ModerationDashboardPage.jsx
+
+Key behavior:
+
+- Joins selected community room and receives realtime create/update/delete events.
+- Supports reporting harmful posts and self-delete for own posts.
+- Moderation dashboard consumes report queues and review actions for NGO admins.
+
+## Local Two-User Realtime Test
 
 1. Start backend and frontend.
-2. Open normal browser tab and log in as survivor.
-3. Open incognito tab and log in as counsellor.
-4. Navigate both sessions to `/chat`.
-5. Send messages in one tab and confirm live delivery in the other.
+2. Open one normal browser window and one incognito window.
+3. Log in as survivor in one, counsellor in the other.
+4. Open /chat in both sessions and exchange messages.
+5. Optionally open /community in both to validate realtime room events.
 
-Seeded test accounts:
+Seeded accounts:
 
-- Survivor: `+254711000001` / `Survivor@2026!`
-- Counsellor: `+254700000020` / `Counsellor@2026!`
+- Survivor: +254711000001 / Survivor@2026!
+- Counsellor: +254700000020 / Counsellor@2026!
 
-## Lint
+## Troubleshooting
 
-```bash
-npm run lint
-```
+- Blank data lists: verify backend is running and VITE_API_BASE_URL points to the correct host/port.
+- 401 responses: verify localStorage authToken exists and is current.
+- Socket not receiving events: confirm token is set, room join occurs, and backend FRONTEND_ORIGIN allows your frontend URL.
+- Decryption placeholders: legacy non-JSON ciphertext may not decrypt with current format expectations.
