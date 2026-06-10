@@ -9,6 +9,15 @@ const {
   SurvivorProfile
 } = require("../models");
 
+/**
+ * Community controller
+ *
+ * Design notes:
+ * - Survivors are represented with privacy-preserving display identities.
+ * - Room reads/writes require membership checks to avoid silent data leakage.
+ * - Moderation actions are logged for NGO-admin accountability.
+ */
+
 function getUserIdFromRequest(req) {
   return req.user?.userId || req.user?.id || null;
 }
@@ -46,6 +55,7 @@ async function getDisplayIdentity(userId) {
   const role = normalizeRole(user.userRole);
 
   if (role === "SURVIVOR") {
+    // Survivors keep a pseudonymous identity in public room timelines.
     const survivor = await SurvivorProfile.findOne({
       where: { userId: user.userId },
       attributes: ["displayNickname"]
@@ -248,6 +258,7 @@ async function listMessages(req, res) {
     return res.status(403).json({ error: "Join this room first to view messages." });
   }
 
+  // Non-production only: seed starter copy so empty rooms are still explorable.
   await seedDemoMessagesForRoom(room.roomId, actor.userId);
 
   const messages = await CommunityMessage.findAll({
@@ -284,6 +295,7 @@ async function postMessage(req, res) {
     return res.status(400).json({ error: "Message content is required." });
   }
 
+  // Auto-join on first post keeps UX simple while preserving membership gating.
   await RoomMembership.findOrCreate({
     where: {
       roomId: room.roomId,
@@ -449,6 +461,7 @@ async function reviewReport(req, res) {
 
   const message = await CommunityMessage.findByPk(report.reportedCommunityMessageId);
 
+  // Only approved reports can trigger moderation side-effects on users/messages.
   if (reviewStatus === "APPROVED" && message) {
     if (action === "remove_message") {
       message.publicMessageContent = "[Removed by moderators for community safety.]";
