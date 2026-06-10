@@ -1,103 +1,156 @@
-# Backend
+# Backend API
 
-Node.js + Express backend with Sequelize (MySQL).
+Express + Sequelize (MySQL) backend for authentication, chat, resources, and websocket relay.
 
-## Prerequisites
+## Tech Stack
 
 - Node.js 18+
-- npm
+- Express
+- Sequelize
 - MySQL 8+
+- Socket.io
 
-## Install
+## Setup
+
+1. Install dependencies.
 
 ```bash
 npm install
 ```
 
-## Environment Variables
-
-Copy the example file and update values:
+2. Create environment file.
 
 ```bash
 cp .env.example .env
 ```
 
-Expected variables:
+3. Set required environment variables in `.env`.
 
+Core database:
 - `DB_HOST`
 - `DB_PORT`
 - `DB_NAME`
 - `DB_USER`
 - `DB_PASSWORD`
 
+Authentication and messaging:
+- `JWT_SECRET`
+- `AFRICASTALKING_API_KEY`
+- `AFRICASTALKING_USERNAME`
+
+Optional but recommended for local development:
+- `PORT` (defaults to `5000`)
+- `FRONTEND_ORIGIN` (defaults to `http://localhost:5173`)
+- `SKIP_SMS_IN_DEV=true` (enables development OTP bypass when not in production)
+
 ## Database
 
-### 1. Create the database
-
-Create the database configured in `.env` (example uses `CSProjectDB`).
+Create the database (if your MySQL user can create DBs, startup also auto-creates it):
 
 ```sql
 CREATE DATABASE CSProjectDB;
 ```
 
-### 2. Synchronize models to MySQL
-
-This authenticates and syncs Sequelize models using `alter: true` in [src/sync.js](src/sync.js).
-
-```bash
-node src/sync.js
-```
-
-### 3. Seed development data
-
-Seeder script in [src/seeders/index.js](src/seeders/index.js):
+Seed development data:
 
 ```bash
 node src/seeders/index.js
 ```
 
 Important:
-- The seeder runs with `force: true` and will drop/recreate tables before inserting data.
-- Use seeding only in development environments.
+- Seeding runs with `force: true` and drops/recreates tables.
+- Use only in development.
 
-## Run Server
+## Run
 
-Production mode:
-
-```bash
-npm start
-```
-
-Development mode (auto-reload):
+Development:
 
 ```bash
 npm run dev
 ```
 
-If startup fails with `Access denied for user`, update `DB_USER` and `DB_PASSWORD` in `.env` to match a real MySQL user. The server creates `DB_NAME` automatically if that user has permission.
-
-## OTP SMS Curl
-
-Start the backend, then request an OTP through Africa's Talking:
+Production:
 
 ```bash
-curl -X POST http://localhost:5000/api/auth/request-otp ^
-  -H "Content-Type: application/json" ^
-  -d "{\"phoneNumber\":\"+2547XXXXXXXX\"}"
+npm start
 ```
 
-Verify the OTP:
+## API Overview
+
+Health:
+- `GET /api/health`
+- `GET /api/health/db`
+
+Auth:
+- `POST /api/auth/request-otp`
+- `POST /api/auth/verify-otp`
+- `POST /api/auth/login-password`
+- `POST /api/auth/set-password` (requires bearer token)
+- `GET /api/auth/session` (requires bearer token)
+
+Chat:
+- `GET /api/chat/channels` (requires bearer token)
+- `GET /api/chat/:chatId/messages` (requires bearer token)
+
+Resources:
+- Mounted at `/api/resources`
+
+## Recent Auth/Chat Behavior
+
+- Phone numbers are normalized before auth lookup. Inputs like `+254 711 000 001` and `+254711000001` are treated as the same account.
+- JWT includes both `id` and `userId` claims for compatibility with multiple consumers.
+- Auth success responses now return `userId` and normalized `role`.
+- Chat authorization resolves survivor membership correctly through `SurvivorProfile` mapping.
+
+## Local Login Test Accounts (Seeded)
+
+Password logins (development seed data):
+
+- Survivor
+  - Phone: `+254711000001`
+  - Password: `Survivor@2026!`
+- Counsellor
+  - Phone: `+254700000020`
+  - Password: `Counsellor@2026!`
+
+These two accounts have a seeded direct chat channel and are useful for two-tab testing.
+
+## Curl Examples
+
+Password login:
 
 ```bash
-curl -X POST http://localhost:5000/api/auth/verify-otp ^
-  -H "Content-Type: application/json" ^
-  -d "{\"phoneNumber\":\"+2547XXXXXXXX\",\"otp\":\"1234\"}"
+curl -X POST http://localhost:5000/api/auth/login-password \
+  -H "Content-Type: application/json" \
+  -d '{"phoneNumber":"+254711000001","password":"Survivor@2026!"}'
 ```
 
-## Project Commands Summary
+Request OTP:
 
-- `npm install` - install dependencies
-- `node src/sync.js` - sync DB schema from models
-- `node src/seeders/index.js` - reset DB and seed test data
-- `npm start` - start backend server
-- `npm run dev` - run backend with nodemon
+```bash
+curl -X POST http://localhost:5000/api/auth/request-otp \
+  -H "Content-Type: application/json" \
+  -d '{"phoneNumber":"+254711000001"}'
+```
+
+Verify OTP:
+
+```bash
+curl -X POST http://localhost:5000/api/auth/verify-otp \
+  -H "Content-Type: application/json" \
+  -d '{"phoneNumber":"+254711000001","otp":"1234"}'
+```
+
+Get channels:
+
+```bash
+curl -X GET http://localhost:5000/api/chat/channels \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+## Useful Commands
+
+- `npm install`
+- `node src/seeders/index.js`
+- `npm run dev`
+- `npm start`

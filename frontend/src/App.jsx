@@ -1,38 +1,51 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import SiteHeader from "./components/SiteHeader";
 import AuthPage from "./pages/AuthPage";
 import LandingPage from "./pages/LandingPage";
 import LibraryPage from "./pages/LibraryPage";
+import DirectChatPage from "./pages/DirectChatPage";
 import ReportingPage from "./pages/ReportingPage";
+import CommunityPage from "./pages/CommunityPage";
+import ModerationDashboardPage from "./pages/ModerationDashboardPage";
 import "./App.css";
 
-/**
- * Root application shell.
- *
- * Responsibilities:
- * - Keep a lightweight client-side route state for public pages.
- * - Render the shared header across landing, library, and auth screens.
- * - Preserve direct URL access for the core routes without adding a router package.
- */
+const QUICK_EXIT_URL = "https://www.google.com";
+
 const routes = {
   "/": LandingPage,
   "/home": LandingPage,
   "/library": LibraryPage,
   "/join": AuthPage,
-  "/reports": ReportingPage
+  "/chat": DirectChatPage,
+  "/reports": ReportingPage,
+  "/community": CommunityPage,
+  "/moderation": ModerationDashboardPage
 };
 
-// Unknown paths fall back to the public landing page.
+function decodeRoleFromToken() {
+  const token = localStorage.getItem("authToken");
+  if (!token) return "";
+
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return String(payload.role || "").toUpperCase();
+  } catch {
+    return "";
+  }
+}
+
 function getCurrentPath() {
   return window.location.pathname in routes ? window.location.pathname : "/";
 }
 
 function App() {
   const [currentPath, setCurrentPath] = useState(getCurrentPath);
+  const [isQuickExitCollapsed, setIsQuickExitCollapsed] = useState(false);
+  const quickExitIdleTimerRef = useRef(null);
   const isAuthenticated = Boolean(localStorage.getItem("authToken"));
+  const role = decodeRoleFromToken();
 
   useEffect(() => {
-    // Keep page state in sync when users navigate with browser back/forward.
     const handlePopState = () => setCurrentPath(getCurrentPath());
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
@@ -46,20 +59,76 @@ function App() {
 
   const handleSignOut = () => {
     localStorage.removeItem("authToken");
+    localStorage.removeItem("userId");
     navigate("/join");
   };
 
-  const resolvedPath = currentPath === "/reports" && !isAuthenticated ? "/join" : currentPath;
-  const Page = routes[resolvedPath] || LandingPage;
+  const handleQuickExit = () => {
+    if (isQuickExitCollapsed) {
+      setIsQuickExitCollapsed(false);
+      return;
+    }
+
+    localStorage.removeItem("authToken");
+    localStorage.removeItem("userId");
+    window.location.replace(QUICK_EXIT_URL);
+  };
+
+  useEffect(() => {
+    const resetQuickExitIdleTimer = () => {
+      setIsQuickExitCollapsed(false);
+
+      if (quickExitIdleTimerRef.current) {
+        window.clearTimeout(quickExitIdleTimerRef.current);
+      }
+
+      quickExitIdleTimerRef.current = window.setTimeout(() => {
+        setIsQuickExitCollapsed(true);
+      }, 3000);
+    };
+
+    const activityEvents = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"];
+    activityEvents.forEach((eventName) => {
+      window.addEventListener(eventName, resetQuickExitIdleTimer, { passive: true });
+    });
+
+    resetQuickExitIdleTimer();
+
+    return () => {
+      activityEvents.forEach((eventName) => {
+        window.removeEventListener(eventName, resetQuickExitIdleTimer);
+      });
+
+      if (quickExitIdleTimerRef.current) {
+        window.clearTimeout(quickExitIdleTimerRef.current);
+      }
+    };
+  }, []);
+
+  const protectedPaths = new Set(["/chat", "/community", "/moderation", "/reports"]);
+  const resolvedPath = protectedPaths.has(currentPath) && !isAuthenticated ? "/join" : currentPath;
+  const roleResolvedPath = resolvedPath === "/moderation" && role !== "NGO_ADMIN" ? "/community" : resolvedPath;
+  const Page = routes[roleResolvedPath] || LandingPage;
 
   return (
     <div className="app-shell">
       <SiteHeader
-        currentPath={resolvedPath}
-        isAuthenticated={isAuthenticated}
+        currentPath={roleResolvedPath}
         onNavigate={navigate}
+        isAuthenticated={isAuthenticated}
+        role={role}
         onSignOut={handleSignOut}
       />
+      <button
+        type="button"
+        className={`app-quick-exit ${isQuickExitCollapsed ? "collapsed" : "expanded"}`}
+        onClick={handleQuickExit}
+        onMouseEnter={() => setIsQuickExitCollapsed(false)}
+        onFocus={() => setIsQuickExitCollapsed(false)}
+        aria-label="Quick Exit"
+      >
+        <span className="app-quick-exit-label">Quick Exit</span>
+      </button>
       <Page onNavigate={navigate} />
     </div>
   );
