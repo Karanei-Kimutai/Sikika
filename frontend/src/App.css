@@ -554,6 +554,74 @@ input:focus {
   background: #fff4df;
 }
 
+.status-message.success {
+  color: var(--success);
+  background: var(--success-bg);
+}
+
+.resource-management-panel {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.1rem;
+  margin-bottom: 1rem;
+  padding: 1rem;
+  border: 1px solid rgba(95, 125, 105, 0.3);
+  border-radius: 0.85rem;
+  background: linear-gradient(180deg, rgba(232, 240, 233, 0.88), rgba(255, 255, 255, 0.95));
+}
+
+.resource-management-heading h2 {
+  margin: 0;
+  color: var(--brown-dark);
+}
+
+.resource-management-heading p {
+  margin: 0.4rem 0 0;
+  color: var(--body);
+}
+
+.resource-management-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.resource-management-span-full {
+  grid-column: 1 / -1;
+}
+
+.resource-tile-actions {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.resource-manager-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.resource-delete-btn {
+  border-color: rgba(159, 45, 45, 0.42);
+  color: var(--danger);
+}
+
+.resource-edit-panel {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(139, 94, 60, 0.24);
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.resource-edit-panel label {
+  display: grid;
+  gap: 0.4rem;
+  color: var(--brown-dark);
+  font-weight: 800;
+}
+
 .resource-grid {
   margin-top: 1.2rem;
 }
@@ -833,6 +901,11 @@ input:focus {
   .offer-grid,
   .steps-list,
   .resource-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .resource-management-form,
+  .resource-manager-actions {
     grid-template-columns: 1fr;
   }
 
