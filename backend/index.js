@@ -201,7 +201,11 @@ async function startServer() {
     await db.sequelize.authenticate();
     console.log("Database connected successfully!");
 
-    await db.sequelize.sync({ alter: true });
+    // `alter: true` can repeatedly create/index constraints across restarts in
+    // mutable dev databases and eventually hit MySQL max-key limits. Keep
+    // default startup sync non-destructive, with optional alter mode by env.
+    const enableAlterSync = process.env.DB_SYNC_ALTER === "true";
+    await db.sequelize.sync(enableAlterSync ? { alter: true } : undefined);
     console.log("Database tables synced successfully!");
 
     const PORT = Number(process.env.PORT || 5000);
