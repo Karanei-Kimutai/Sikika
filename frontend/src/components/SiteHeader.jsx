@@ -4,10 +4,11 @@
  * The header receives navigation as a prop so App.jsx remains the only place
  * that mutates browser history.
  */
-function SiteHeader({ currentPath, onNavigate }) {
+function SiteHeader({ currentPath, isAuthenticated, onNavigate, onSignOut }) {
   const navItems = [
     { path: "/", label: "Home" },
-    { path: "/library", label: "Library" }
+    { path: "/library", label: "Library" },
+    ...(isAuthenticated ? [{ path: "/reports", label: "Reports" }] : [])
   ];
 
   return (
@@ -33,9 +34,16 @@ function SiteHeader({ currentPath, onNavigate }) {
         ))}
       </nav>
 
-      <button type="button" className="header-action" onClick={() => onNavigate("/join")}>
-        Join Community
-      </button>
+      <div className="header-actions">
+        <button type="button" className="header-action" onClick={() => onNavigate(isAuthenticated ? "/reports" : "/join")}>
+          {isAuthenticated ? "My Reports" : "Join Community"}
+        </button>
+        {isAuthenticated && (
+          <button type="button" className="header-signout" onClick={onSignOut}>
+            Sign Out
+          </button>
+        )}
+      </div>
     </header>
   );
 }

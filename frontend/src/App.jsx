@@ -3,6 +3,7 @@ import SiteHeader from "./components/SiteHeader";
 import AuthPage from "./pages/AuthPage";
 import LandingPage from "./pages/LandingPage";
 import LibraryPage from "./pages/LibraryPage";
+import ReportingPage from "./pages/ReportingPage";
 import "./App.css";
 
 /**
@@ -17,7 +18,8 @@ const routes = {
   "/": LandingPage,
   "/home": LandingPage,
   "/library": LibraryPage,
-  "/join": AuthPage
+  "/join": AuthPage,
+  "/reports": ReportingPage
 };
 
 // Unknown paths fall back to the public landing page.
@@ -27,6 +29,7 @@ function getCurrentPath() {
 
 function App() {
   const [currentPath, setCurrentPath] = useState(getCurrentPath);
+  const isAuthenticated = Boolean(localStorage.getItem("authToken"));
 
   useEffect(() => {
     // Keep page state in sync when users navigate with browser back/forward.
@@ -41,11 +44,22 @@ function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const Page = routes[currentPath] || LandingPage;
+  const handleSignOut = () => {
+    localStorage.removeItem("authToken");
+    navigate("/join");
+  };
+
+  const resolvedPath = currentPath === "/reports" && !isAuthenticated ? "/join" : currentPath;
+  const Page = routes[resolvedPath] || LandingPage;
 
   return (
     <div className="app-shell">
-      <SiteHeader currentPath={currentPath} onNavigate={navigate} />
+      <SiteHeader
+        currentPath={resolvedPath}
+        isAuthenticated={isAuthenticated}
+        onNavigate={navigate}
+        onSignOut={handleSignOut}
+      />
       <Page onNavigate={navigate} />
     </div>
   );
