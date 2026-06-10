@@ -270,6 +270,8 @@ async function canActorAccessReport(actor, report) {
   if (actor.role === "COUNSELLOR") {
     if (!actor.counsellorId) return false;
 
+    // Counsellors can only access reports for survivors currently assigned to
+    // their counsellor profile.
     const survivor = await SurvivorProfile.findOne({
       where: {
         survivorId: report.survivorId,
@@ -283,6 +285,7 @@ async function canActorAccessReport(actor, report) {
   if (actor.role === "LEGAL_COUNSEL") {
     if (!actor.legalCounselId) return false;
 
+    // Legal counsel access follows legal assignment links only.
     const survivor = await SurvivorProfile.findOne({
       where: {
         survivorId: report.survivorId,
@@ -456,6 +459,7 @@ async function listReports(req, res) {
   }
 
   if (actor.role === "SURVIVOR") {
+    // Survivors only see their own submissions.
     where.survivorId = actor.survivorId;
   }
 
@@ -465,6 +469,7 @@ async function listReports(req, res) {
       where: { assignedCounsellorId: actor.counsellorId }
     });
     const survivorIds = survivors.map((survivor) => survivor.survivorId);
+    // Force empty result when no assignments exist instead of widening scope.
     where.survivorId = survivorIds.length > 0 ? { [Op.in]: survivorIds } : "__none__";
   }
 
@@ -474,6 +479,7 @@ async function listReports(req, res) {
       where: { assignedLegalCounselId: actor.legalCounselId }
     });
     const survivorIds = survivors.map((survivor) => survivor.survivorId);
+    // Force empty result when no assignments exist instead of widening scope.
     where.survivorId = survivorIds.length > 0 ? { [Op.in]: survivorIds } : "__none__";
   }
 
@@ -709,6 +715,7 @@ async function updateReportStatus(req, res) {
   }
 
   if (nextStatus === REPORT_STATUS.LEGAL_REVIEW) {
+    // Legal review requires a linked legal-case record even before escalation.
     await ensureLegalCaseForWorkflow({
       report,
       nextStatus,
@@ -720,6 +727,8 @@ async function updateReportStatus(req, res) {
   await report.save();
 
   if (nextStatus === REPORT_STATUS.RESOLVED) {
+    // Resolution closes the legal case when one exists, keeping workflow state
+    // synchronized between report and case artifacts.
     const legalCase = await LegalCaseFile.findOne({ where: { reportId: report.reportId } });
     if (legalCase && legalCase.currentCaseStatus !== "CLOSED") {
       legalCase.currentCaseStatus = "CLOSED";

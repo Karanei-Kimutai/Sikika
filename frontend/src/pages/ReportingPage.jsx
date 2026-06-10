@@ -81,6 +81,7 @@ function ReportingPage({ onNavigate }) {
     setErrorMessage("");
 
     try {
+      // Backend scopes returned rows by caller role + assignment relations.
       const data = await getReports();
       setReports(data.reports || []);
     } catch (error) {
@@ -134,6 +135,8 @@ function ReportingPage({ onNavigate }) {
     setSuccessMessage("");
 
     try {
+      // survivorConsent=true keeps escalation path valid when legal escalation
+      // is selected; backend still enforces exact transition constraints.
       await updateReportStatus(reportId, reportStatus, true);
       setSuccessMessage("Report status updated.");
       await loadReports();
@@ -470,6 +473,7 @@ function ReportingPage({ onNavigate }) {
                         const file = event.target.files?.[0] || null;
 
                         if (file && file.size > 15 * 1024 * 1024) {
+                          // Keep client-side limit aligned with Multer backend limit.
                           setErrorMessage("Evidence file must be 15MB or smaller.");
                           return;
                         }
@@ -531,6 +535,7 @@ function ReportingPage({ onNavigate }) {
                 {canUpdateStatus && (
                   <label className="status-select-label" htmlFor={`status-${report.reportId}`}>
                     Update status
+                    {/* UI shows full enum; backend is the final authority on role and transition validity. */}
                     <select
                       id={`status-${report.reportId}`}
                       defaultValue={report.reportStatus}

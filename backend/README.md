@@ -1,6 +1,6 @@
 # Backend API
 
-Express + Sequelize (MySQL) backend for authentication, chat, resources, and websocket relay.
+Express + Sequelize (MySQL) backend for authentication, incident reporting, direct chat, community rooms, moderation, notifications, and websocket relay.
 
 ## Tech Stack
 
@@ -9,148 +9,218 @@ Express + Sequelize (MySQL) backend for authentication, chat, resources, and web
 - Sequelize
 - MySQL 8+
 - Socket.io
+- Multer (multipart evidence uploads)
+- Cloudinary (evidence storage and signed URLs)
 
-## Setup
+## Backend Architecture
 
-1. Install dependencies.
+Main server bootstrap lives in backend/index.js and wires:
 
-```bash
-npm install
-```
+- REST routes
+- shared auth middleware
+- socket gateways for direct chat and community
+- DB bootstrap and model sync
 
-2. Create environment file.
+Socket namespaces are implemented through room naming conventions:
+
+- Direct chat room: chatId
+- Community room: community-room:<roomId>
+- Community moderation feed: community-moderation
+
+## Environment Variables
+
+Copy example file first:
 
 ```bash
 cp .env.example .env
 ```
 
-3. Set required environment variables in `.env`.
+Required:
 
-Core database:
-- `DB_HOST`
-- `DB_PORT`
-- `DB_NAME`
-- `DB_USER`
-- `DB_PASSWORD`
+- DB_HOST
+- DB_PORT
+- DB_NAME
+- DB_USER
+- DB_PASSWORD
+- JWT_SECRET
+- AFRICASTALKING_API_KEY
+- AFRICASTALKING_USERNAME
 
-Authentication and messaging:
-- `JWT_SECRET`
-- `AFRICASTALKING_API_KEY`
-- `AFRICASTALKING_USERNAME`
+Recommended for local development:
 
-Optional but recommended for local development:
-- `PORT` (defaults to `5000`)
-- `FRONTEND_ORIGIN` (defaults to `http://localhost:5173`)
-- `SKIP_SMS_IN_DEV=true` (enables development OTP bypass when not in production)
+- PORT (default 5000)
+- FRONTEND_ORIGIN (default http://localhost:5173)
+- SKIP_SMS_IN_DEV=true (development OTP bypass)
+- NODE_ENV=development
 
-## Database
+Required for evidence upload flow:
 
-Create the database (if your MySQL user can create DBs, startup also auto-creates it):
+- CLOUDINARY_CLOUD_NAME
+- CLOUDINARY_API_KEY
+- CLOUDINARY_API_SECRET
 
-```sql
-CREATE DATABASE CSProjectDB;
-```
+Without Cloudinary config, reporting APIs still work but evidence upload/access endpoints return service-unavailable responses.
 
-Seed development data:
+## Setup and Run
+
+Install dependencies:
 
 ```bash
-node src/seeders/index.js
+npm install
 ```
 
-Important:
-- Seeding runs with `force: true` and drops/recreates tables.
-- Use only in development.
-
-## Run
-
-Development:
+Start in development:
 
 ```bash
 npm run dev
 ```
 
-Production:
+Start in production mode:
 
 ```bash
 npm start
 ```
 
-## API Overview
+At startup, backend validates required environment variables, ensures the configured database exists, authenticates Sequelize, then syncs models.
 
-Health:
-- `GET /api/health`
-- `GET /api/health/db`
+## Database and Seeders
 
-Auth:
-- `POST /api/auth/request-otp`
-- `POST /api/auth/verify-otp`
-- `POST /api/auth/login-password`
-- `POST /api/auth/set-password` (requires bearer token)
-- `GET /api/auth/session` (requires bearer token)
+Manual DB creation is optional when DB user has CREATE DATABASE permission.
 
-Chat:
-- `GET /api/chat/channels` (requires bearer token)
-- `GET /api/chat/:chatId/messages` (requires bearer token)
+Optional SQL:
 
-Resources:
-- Mounted at `/api/resources`
-
-## Recent Auth/Chat Behavior
-
-- Phone numbers are normalized before auth lookup. Inputs like `+254 711 000 001` and `+254711000001` are treated as the same account.
-- JWT includes both `id` and `userId` claims for compatibility with multiple consumers.
-- Auth success responses now return `userId` and normalized `role`.
-- Chat authorization resolves survivor membership correctly through `SurvivorProfile` mapping.
-
-## Local Login Test Accounts (Seeded)
-
-Password logins (development seed data):
-
-- Survivor
-  - Phone: `+254711000001`
-  - Password: `Survivor@2026!`
-- Counsellor
-  - Phone: `+254700000020`
-  - Password: `Counsellor@2026!`
-
-These two accounts have a seeded direct chat channel and are useful for two-tab testing.
-
-## Curl Examples
-
-Password login:
-
-```bash
-curl -X POST http://localhost:5000/api/auth/login-password \
-  -H "Content-Type: application/json" \
-  -d '{"phoneNumber":"+254711000001","password":"Survivor@2026!"}'
+```sql
+CREATE DATABASE CSProjectDB;
 ```
 
-Request OTP:
+Seed sample data:
 
 ```bash
-curl -X POST http://localhost:5000/api/auth/request-otp \
-  -H "Content-Type: application/json" \
-  -d '{"phoneNumber":"+254711000001"}'
+node src/seeders/index.js
 ```
 
-Verify OTP:
+Important seeding note:
 
-```bash
-curl -X POST http://localhost:5000/api/auth/verify-otp \
-  -H "Content-Type: application/json" \
-  -d '{"phoneNumber":"+254711000001","otp":"1234"}'
-```
+- Seeder uses force sync and recreates tables.
+- Use only in local/development environments.
 
-Get channels:
+## API Surface
 
-```bash
-curl -X GET http://localhost:5000/api/chat/channels \
-  -H "Authorization: Bearer <TOKEN>"
-```
+### Health
 
-## Useful Commands
+- GET /api/hello
+- GET /api/health
+- GET /api/health/db
 
-- `npm install`
-- `node src/seeders/index.js`
-- `npm run dev`
-- `npm start`
+### Auth
+
+- POST /api/auth/request-otp
+- POST /api/auth/verify-otp
+- POST /api/auth/login-password
+- POST /api/auth/set-password (bearer token)
+- GET /api/auth/session (bearer token)
+
+Auth compatibility behavior:
+
+- JWT includes both id and userId claims.
+- Login responses include userId and canonical role.
+- Phone numbers are normalized before account lookup.
+
+### Resources
+
+- GET /api/resources
+
+### Reporting
+
+- POST /api/reports
+- GET /api/reports
+- GET /api/reports/:reportId
+- PATCH /api/reports/:reportId
+- PATCH /api/reports/:reportId/withdraw
+- DELETE /api/reports/:reportId
+- PATCH /api/reports/:reportId/status
+- POST /api/reports/:reportId/evidence
+- GET /api/reports/:reportId/evidence/:evidenceId/access-url
+- GET /api/reports/analytics/summary
+
+Reporting workflow protections:
+
+- Transition graph is explicit and validated server-side.
+- Role permissions are checked separately from transition validity.
+- Escalation to legal case requires legal counsel role and survivorConsent=true.
+
+### Direct Chat
+
+- GET /api/chat/channels
+- GET /api/chat/:chatId/messages
+- PATCH /api/chat/:chatId/read
+
+Direct chat security behavior:
+
+- Channel membership is validated for reads and socket sends.
+- Server stores encrypted payloads as opaque ciphertext.
+- Notifications are generated with discreet content.
+
+### Community and Moderation
+
+- GET /api/community/rooms
+- POST /api/community/rooms
+- POST /api/community/rooms/:roomId/join
+- GET /api/community/rooms/:roomId/messages
+- POST /api/community/rooms/:roomId/messages
+- POST /api/community/messages/:messageId/report
+- DELETE /api/community/messages/:messageId
+- GET /api/community/moderation/reports
+- PATCH /api/community/moderation/reports/:reportId
+
+Community behavior notes:
+
+- Survivors display pseudonymous nicknames in room timelines.
+- Room membership gates message listing and socket room joins.
+- NGO moderation actions are audit-logged.
+
+## Socket Events
+
+### Direct Chat Socket
+
+Client emits:
+
+- joinChannel(chatId)
+- sendEncryptedMessage({ chatId, encryptedPayload })
+
+Server emits:
+
+- receiveMessage(savedMessage)
+- messageError({ error })
+
+### Community Socket
+
+Client emits:
+
+- joinCommunityRoom(roomId)
+- joinModerationFeed()
+
+Server emits:
+
+- community:new-message
+- community:message-updated
+- community:message-deleted
+- community:report-created
+- community:report-reviewed
+- community:error
+
+## Local Test Accounts
+
+Seeded password logins:
+
+- Survivor: +254711000001 / Survivor@2026!
+- Counsellor: +254700000020 / Counsellor@2026!
+
+These accounts are suitable for two-tab realtime chat validation.
+
+## Troubleshooting
+
+- Invalid or expired token: verify Authorization header uses Bearer token and JWT_SECRET matches token issuer.
+- SMS failures in development: set SKIP_SMS_IN_DEV=true to enable OTP bypass behavior.
+- Evidence upload unavailable: confirm Cloudinary variables are present and valid.
+- CORS issues from frontend: confirm FRONTEND_ORIGIN matches the active frontend URL.

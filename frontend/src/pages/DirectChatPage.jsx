@@ -65,6 +65,9 @@ function buildDemoTranscript(currentRole) {
   }));
 }
 
+// Demo transcript exists only to make local/dev screens easier to demo when
+// channels have little or no real history.
+
 /**
  * Lightweight JWT payload decoder for client-only session bootstrap.
  *
@@ -195,6 +198,7 @@ const DirectChatPage = () => {
         );
 
         const shouldAddDemoTranscript = import.meta.env.DEV && decryptedHistory.length < 8;
+        // Keep production timelines untouched; only enrich sparse dev timelines.
         setMessages(
           shouldAddDemoTranscript
             ? [...decryptedHistory, ...buildDemoTranscript(currentUserRole)]
@@ -274,6 +278,7 @@ const DirectChatPage = () => {
         window.clearTimeout(inactivityTimerRef.current);
       }
 
+      // Any interaction reveals the screen and restarts inactivity countdown.
       setIsPrivacyMaskActive(false);
       inactivityTimerRef.current = window.setTimeout(() => {
         setIsPrivacyMaskActive(true);
