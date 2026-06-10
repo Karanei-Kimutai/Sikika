@@ -22,6 +22,7 @@ const routes = {
   "/moderation": ModerationDashboardPage
 };
 
+// UI-only route gating helper; API authorization still happens on the backend.
 function decodeRoleFromToken() {
   const token = localStorage.getItem("authToken");
   if (!token) return "";
@@ -64,6 +65,8 @@ function App() {
   };
 
   const handleQuickExit = () => {
+    // If collapsed, first interaction expands the control instead of navigating.
+    // This reduces accidental exits from incidental taps.
     if (isQuickExitCollapsed) {
       setIsQuickExitCollapsed(false);
       return;
@@ -82,6 +85,7 @@ function App() {
         window.clearTimeout(quickExitIdleTimerRef.current);
       }
 
+      // Keep the control discreet by auto-collapsing shortly after activity settles.
       quickExitIdleTimerRef.current = window.setTimeout(() => {
         setIsQuickExitCollapsed(true);
       }, 3000);

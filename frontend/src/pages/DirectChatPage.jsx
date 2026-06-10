@@ -22,6 +22,9 @@ function createSocket(token) {
   });
 }
 
+// Socket auth token is attached during connection setup so backend can enforce
+// per-channel authorization before room joins and sends.
+
 function roleLabelFromSession(role) {
   return role === 'survivor' ? 'Survivor' : 'Counsellor';
 }
@@ -61,6 +64,9 @@ function buildDemoTranscript(currentRole) {
     senderLabel: turn.mine ? selfLabel : peerLabel
   }));
 }
+
+// Demo transcript exists only to make local/dev screens easier to demo when
+// channels have little or no real history.
 
 /**
  * Lightweight JWT payload decoder for client-only session bootstrap.
@@ -192,6 +198,7 @@ const DirectChatPage = () => {
         );
 
         const shouldAddDemoTranscript = import.meta.env.DEV && decryptedHistory.length < 8;
+        // Keep production timelines untouched; only enrich sparse dev timelines.
         setMessages(
           shouldAddDemoTranscript
             ? [...decryptedHistory, ...buildDemoTranscript(currentUserRole)]
@@ -251,6 +258,7 @@ const DirectChatPage = () => {
       if (!token || !activeChannelId) return;
 
       try {
+        // Best-effort read receipt. Message rendering should not fail if this errors.
         await axios.patch(
           `${API_BASE_URL}/api/chat/${activeChannelId}/read`,
           {},
@@ -270,6 +278,7 @@ const DirectChatPage = () => {
         window.clearTimeout(inactivityTimerRef.current);
       }
 
+      // Any interaction reveals the screen and restarts inactivity countdown.
       setIsPrivacyMaskActive(false);
       inactivityTimerRef.current = window.setTimeout(() => {
         setIsPrivacyMaskActive(true);

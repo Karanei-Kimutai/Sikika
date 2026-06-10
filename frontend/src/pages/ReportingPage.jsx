@@ -21,6 +21,9 @@ const STATUS_OPTIONS = [
   "WITHDRAWN"
 ];
 
+// Staff may see all options in the UI, but backend enforces exact role-based
+// transitions and can reject disallowed status changes.
+
 function decodeTokenRole() {
   const token = localStorage.getItem("authToken");
   if (!token) return "";
@@ -43,7 +46,9 @@ function formatStatus(status) {
 
 function ReportingPage({ onNavigate }) {
   const role = useMemo(decodeTokenRole, []);
+  // Survivors can create/edit/withdraw/delete their own reports.
   const canCreate = role === "SURVIVOR";
+  // Staff users can request status updates subject to backend transition rules.
   const canUpdateStatus = ["COUNSELLOR", "LEGAL_COUNSEL", "NGO_ADMIN"].includes(role);
 
   const [reports, setReports] = useState([]);
@@ -76,6 +81,7 @@ function ReportingPage({ onNavigate }) {
     setErrorMessage("");
 
     try {
+      // Backend scopes returned rows by caller role + assignment relations.
       const data = await getReports();
       setReports(data.reports || []);
     } catch (error) {
@@ -129,6 +135,8 @@ function ReportingPage({ onNavigate }) {
     setSuccessMessage("");
 
     try {
+      // survivorConsent=true keeps escalation path valid when legal escalation
+      // is selected; backend still enforces exact transition constraints.
       await updateReportStatus(reportId, reportStatus, true);
       setSuccessMessage("Report status updated.");
       await loadReports();
@@ -253,6 +261,7 @@ function ReportingPage({ onNavigate }) {
     setSuccessMessage("");
 
     try {
+      // Fetch a short-lived signed URL and open it right away.
       const data = await getEvidenceAccessUrl(reportId, evidenceId);
       window.open(data.signedUrl, "_blank", "noopener,noreferrer");
     } catch (error) {
@@ -464,6 +473,7 @@ function ReportingPage({ onNavigate }) {
                         const file = event.target.files?.[0] || null;
 
                         if (file && file.size > 15 * 1024 * 1024) {
+                          // Keep client-side limit aligned with Multer backend limit.
                           setErrorMessage("Evidence file must be 15MB or smaller.");
                           return;
                         }
@@ -525,6 +535,7 @@ function ReportingPage({ onNavigate }) {
                 {canUpdateStatus && (
                   <label className="status-select-label" htmlFor={`status-${report.reportId}`}>
                     Update status
+                    {/* UI shows full enum; backend is the final authority on role and transition validity. */}
                     <select
                       id={`status-${report.reportId}`}
                       defaultValue={report.reportStatus}
