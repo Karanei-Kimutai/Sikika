@@ -123,6 +123,27 @@ button {
   background: #ffffff;
 }
 
+.header-actions {
+  justify-self: end;
+  display: inline-flex;
+  gap: 0.5rem;
+}
+
+.header-signout {
+  border: 1px solid rgba(159, 45, 45, 0.35);
+  border-radius: 0.7rem;
+  min-height: 2.75rem;
+  padding: 0.78rem 1rem;
+  color: var(--danger);
+  background: #ffffff;
+  font-weight: 800;
+}
+
+.header-signout:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(159, 45, 45, 0.2);
+}
+
 .primary-btn,
 .tile-action {
   border: 0;
@@ -430,6 +451,24 @@ input {
   font-size: 1rem;
 }
 
+select,
+textarea {
+  width: 100%;
+  border: 1px solid rgba(139, 94, 60, 0.26);
+  border-radius: 0.7rem;
+  padding: 0.85rem 0.95rem;
+  color: var(--brown-dark);
+  background: #ffffff;
+  font-size: 1rem;
+}
+
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--brown);
+  box-shadow: 0 0 0 4px rgba(139, 94, 60, 0.14);
+}
+
 input:focus {
   outline: none;
   border-color: var(--brown);
@@ -508,6 +547,71 @@ input:focus {
   border-radius: 0.85rem;
   text-align: center;
   background: #ffffff;
+}
+
+.report-form {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.report-actions {
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 1rem;
+}
+
+.inline-edit-block {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.8rem;
+  border: 1px solid rgba(139, 94, 60, 0.2);
+  border-radius: 0.7rem;
+  background: rgba(247, 239, 228, 0.45);
+}
+
+.inline-edit-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.evidence-upload-block {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.8rem;
+  border: 1px solid rgba(139, 94, 60, 0.2);
+  border-radius: 0.7rem;
+  background: rgba(247, 239, 228, 0.5);
+}
+
+.evidence-upload-block label {
+  color: var(--brown-dark);
+  font-weight: 800;
+}
+
+.evidence-upload-block small {
+  color: var(--muted);
+}
+
+.evidence-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.evidence-list strong {
+  color: var(--brown-dark);
+}
+
+.evidence-list .footer-link {
+  display: inline-flex;
+  justify-content: center;
+}
+
+.status-select-label {
+  display: grid;
+  gap: 0.45rem;
+  color: var(--brown-dark);
+  font-weight: 800;
 }
 
 .auth-page {
@@ -643,7 +747,8 @@ input:focus {
   }
 
   .site-nav,
-  .header-action {
+  .header-action,
+  .header-actions {
     justify-self: stretch;
   }
 
@@ -652,8 +757,13 @@ input:focus {
   }
 
   .header-action,
+  .header-signout,
   .site-nav button {
     width: 100%;
+  }
+
+  .header-actions {
+    display: grid;
   }
 
   .hero-section,

@@ -13,6 +13,18 @@ function authMiddleware(req, res, next) {
   const header = req.headers.authorization;
 
   if (!header || !header.startsWith("Bearer ")) {
+    if (req.originalUrl.startsWith("/api/reports")) {
+      return res.status(401).json({
+        error: "Reporting is only available for registered and authenticated survivors.",
+        redirectTo: "/emergency-contacts",
+        emergencyContacts: [
+          "Police emergency: 999 / 112",
+          "Childline Kenya: 116",
+          "National GBV Hotline: 1195"
+        ]
+      });
+    }
+
     return res.status(401).json({ error: "Missing or invalid authorization header." });
   }
 
