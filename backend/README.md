@@ -103,10 +103,10 @@ What each command does:
 - `npm run test:auth`: runs only the auth regression suite.
 - `npm run test:watch`: reruns tests automatically while files change.
 
-Automatic test execution:
+Current execution policy:
 
-- GitHub Actions runs backend auth tests automatically on every push and pull request to `main` and `authentication`.
-- CI uses `NODE_ENV=test` and `SKIP_SMS_IN_DEV=true` so OTP tests run deterministically without external SMS dependencies.
+- Auth tests are intentionally run manually by developers before pushing or opening PRs.
+- No automatic GitHub workflow gate is enabled for backend auth tests.
 
 At startup, backend validates required environment variables, ensures the configured database exists, authenticates Sequelize, then syncs models.
 
