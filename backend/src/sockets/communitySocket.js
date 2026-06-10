@@ -1,6 +1,15 @@
 const jwt = require("jsonwebtoken");
 const { RoomMembership, UserAccount } = require("../models");
 
+/**
+ * Community socket gateway
+ *
+ * Auth model:
+ * - Token is read from socket auth payload or Authorization header.
+ * - Only active accounts can join rooms.
+ * - Room join is membership-guarded; moderation feed is NGO-admin only.
+ */
+
 function getTokenFromHandshake(socket) {
   const authToken = socket.handshake?.auth?.token;
   if (authToken) return authToken;
@@ -65,6 +74,7 @@ module.exports = (io) => {
         return;
       }
 
+      // Namespace rooms by domain prefix to avoid collisions with direct-chat IDs.
       socket.join(`community-room:${roomId}`);
     });
 
