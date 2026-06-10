@@ -11,5 +11,6 @@ const authMiddleware = require('../middleware/authMiddleware');
 
 router.get('/channels', authMiddleware, chatController.getChannels);
 router.get('/:chatId/messages', authMiddleware, chatController.getMessages);
+router.patch('/:chatId/read', authMiddleware, chatController.markChannelRead);
 
 module.exports = router;
