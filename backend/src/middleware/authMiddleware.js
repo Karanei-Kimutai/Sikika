@@ -7,6 +7,11 @@ const jwt = require("jsonwebtoken");
  *   Bearer <token>
  *
  * On success, decoded claims are attached to req.user.
+ *
+ * Route-specific behavior:
+ * - /api/reports returns a survivor-support response payload when auth is
+ *   missing, so clients can redirect users toward emergency resources.
+ * - all other routes receive a generic 401 response on missing/invalid auth.
  */
 
 function authMiddleware(req, res, next) {
@@ -31,6 +36,7 @@ function authMiddleware(req, res, next) {
   const token = header.slice("Bearer ".length).trim();
 
   try {
+    // JWT verification is synchronous; invalid/expired tokens throw.
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded;
     return next();
