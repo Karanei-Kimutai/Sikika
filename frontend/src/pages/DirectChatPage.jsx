@@ -12,7 +12,6 @@ import { io } from 'socket.io-client';
 import { getSharedKey, encryptMessage, decryptMessage } from '../utils/cryptoUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
-const QUICK_EXIT_URL = 'https://www.google.com';
 
 function createSocket(token) {
   return io(API_BASE_URL, {
@@ -21,6 +20,46 @@ function createSocket(token) {
       token
     }
   });
+}
+
+function roleLabelFromSession(role) {
+  return role === 'survivor' ? 'Survivor' : 'Counsellor';
+}
+
+function peerRoleLabelFromSession(role) {
+  return role === 'survivor' ? 'Counsellor' : 'Survivor';
+}
+
+function buildDemoTranscript(currentRole) {
+  const selfLabel = roleLabelFromSession(currentRole);
+  const peerLabel = peerRoleLabelFromSession(currentRole);
+
+  const turns = [
+    { mine: false, text: 'Hi, thank you for reaching out today. Are you in a safe place to chat right now?' },
+    { mine: true, text: 'Yes, I am safe for now. I just feel overwhelmed and needed to talk to someone.' },
+    { mine: false, text: 'I hear you. We can go step by step. What feels most urgent for you this evening?' },
+    { mine: true, text: 'I need a plan for tonight and maybe where to get help tomorrow morning.' },
+    { mine: false, text: 'That makes sense. For tonight, can we identify one trusted person and one safe location?' },
+    { mine: true, text: 'I can stay with my cousin tonight. She knows part of what is happening.' },
+    { mine: false, text: 'That is a strong step. Do you want me to share a short checklist you can follow before leaving?' },
+    { mine: true, text: 'Yes please. A checklist would help because my mind is racing.' },
+    { mine: false, text: 'Checklist: phone charged, IDs, medicine, emergency contacts, and important documents if possible.' },
+    { mine: true, text: 'Got it. I can pack those in a small bag in ten minutes.' },
+    { mine: false, text: 'Great. Tomorrow we can connect you to legal and psychosocial support based on your location.' },
+    { mine: true, text: 'Thank you. I also want to report, but I am scared of doing it wrong.' },
+    { mine: false, text: 'You are not alone in that. We can complete the report together in simple steps when you are ready.' },
+    { mine: true, text: 'Okay. That helps. I feel calmer now and I can move to my cousin\'s place.' },
+    { mine: false, text: 'You are doing well. Message me once you arrive, and we will continue from there.' },
+    { mine: true, text: 'I will. Thank you for staying with me through this.' }
+  ];
+
+  return turns.map((turn, index) => ({
+    messageId: `demo-${index + 1}`,
+    senderUserId: turn.mine ? 'demo-self' : 'demo-peer',
+    plaintext: turn.text,
+    isMine: turn.mine,
+    senderLabel: turn.mine ? selfLabel : peerLabel
+  }));
 }
 
 /**
@@ -144,11 +183,20 @@ const DirectChatPage = () => {
             senderUserId: dbMessage.senderUserId,
             // Failed decrypts are handled in cryptoUtils with a readable marker.
             plaintext: await decryptMessage(dbMessage.encryptedMessageContent, key),
-            isMine: dbMessage.senderUserId === currentUserId
+            isMine: dbMessage.senderUserId === currentUserId,
+            senderLabel:
+              dbMessage.senderUserId === currentUserId
+                ? roleLabelFromSession(currentUserRole)
+                : peerRoleLabelFromSession(currentUserRole)
           }))
         );
 
-        setMessages(decryptedHistory);
+        const shouldAddDemoTranscript = import.meta.env.DEV && decryptedHistory.length < 8;
+        setMessages(
+          shouldAddDemoTranscript
+            ? [...decryptedHistory, ...buildDemoTranscript(currentUserRole)]
+            : decryptedHistory
+        );
       } catch (error) {
         setMessages([]);
         setErrorMessage(error.response?.data?.error || 'Failed to load channel messages.');
@@ -176,7 +224,11 @@ const DirectChatPage = () => {
         senderUserId: dbMessage.senderUserId,
         plaintext: plaintext,
         // Bubble alignment depends on sender identity.
-        isMine: dbMessage.senderUserId === currentUserId
+        isMine: dbMessage.senderUserId === currentUserId,
+        senderLabel:
+          dbMessage.senderUserId === currentUserId
+            ? roleLabelFromSession(currentUserRole)
+            : peerRoleLabelFromSession(currentUserRole)
       };
 
       setMessages((prev) => [...prev, decryptedMsg]);
@@ -191,7 +243,7 @@ const DirectChatPage = () => {
 
     // Cleanup listener to prevent duplicates
     return () => socketRef.current?.off('receiveMessage', handleNewMessage);
-  }, [activeChannelId, cryptoKey, currentUserId]);
+  }, [activeChannelId, cryptoKey, currentUserId, currentUserRole]);
 
   useEffect(() => {
     const markRead = async () => {
@@ -270,10 +322,6 @@ const DirectChatPage = () => {
   return (
     // WhatsApp-inspired split layout with project theme colors from App.css.
     <div className="wa-page">
-      <button type="button" className="quick-exit" onClick={() => window.location.replace(QUICK_EXIT_URL)}>
-        Quick Exit
-      </button>
-
       {isPrivacyMaskActive && (
         <button type="button" className="privacy-mask" onClick={() => setIsPrivacyMaskActive(false)}>
           Screen hidden for privacy. Tap to continue.
@@ -337,6 +385,7 @@ const DirectChatPage = () => {
                   messages.map((msg) => (
                     <div key={msg.messageId} className={`wa-row ${msg.isMine ? 'mine' : 'theirs'}`}>
                       <div className={`wa-bubble ${msg.isMine ? 'mine' : 'theirs'}`}>
+                        <small className="wa-msg-role">{msg.senderLabel || (msg.isMine ? 'You' : 'Peer')}</small>
                         <p>{msg.plaintext}</p>
                       </div>
                     </div>

@@ -1,8 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
-const QUICK_EXIT_URL = "https://www.google.com";
 
 /**
  * Community authentication page.
@@ -15,15 +14,8 @@ const QUICK_EXIT_URL = "https://www.google.com";
  * 2. User chooses either OTP login or password login.
  * 3. OTP users move from the "phone" step to the "otp" step after requesting a code.
  * 4. Successful OTP/password verification stores the JWT in localStorage.
- * 5. Quick Exit clears local auth state and redirects away from the platform.
  */
 function AuthPage({ onNavigate }) {
-  /**
-   * Authentication state is initialized from localStorage so a page refresh does
-   * not immediately hide the signed-in UI after a successful login.
-   */
-  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(localStorage.getItem("authToken")));
-
   /**
    * step controls which part of the form is displayed:
    * - "phone": collect phone number and optional password.
@@ -47,8 +39,12 @@ function AuthPage({ onNavigate }) {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
-  const [devOtpHint, setDevOtpHint] = useState("");
-  const [tokenPreview, setTokenPreview] = useState("");
+
+  useEffect(() => {
+    if (localStorage.getItem("authToken")) {
+      onNavigate("/home");
+    }
+  }, [onNavigate]);
 
   /**
    * Derived validation flags keep disabled-button logic readable in JSX.
@@ -62,7 +58,6 @@ function AuthPage({ onNavigate }) {
   const clearMessages = () => {
     setErrorMessage("");
     setSuccessMessage("");
-    setDevOtpHint("");
   };
 
   /**
@@ -70,12 +65,10 @@ function AuthPage({ onNavigate }) {
    * tokenPreview is deliberately shortened so the UI can confirm storage without
    * rendering the full credential.
    */
-  const finalizeLogin = (token, message, userId = null) => {
+  const finalizeLogin = (token, userId = null) => {
     localStorage.setItem("authToken", token);
     if (userId) localStorage.setItem("userId", userId);
-    setTokenPreview(`${token.slice(0, 18)}...`);
-    setSuccessMessage(message);
-    setIsAuthenticated(true);
+    onNavigate("/home");
   };
 
   /**
@@ -113,7 +106,6 @@ function AuthPage({ onNavigate }) {
 
         finalizeLogin(
           autoVerifyResponse.data.token,
-          "Development mode: auto-verified and logged in successfully.",
           autoVerifyResponse.data.userId
         );
         return;
@@ -150,8 +142,8 @@ function AuthPage({ onNavigate }) {
 
       finalizeLogin(
         response.data.token,
-         "Secure login successful. You can now continue safely.",
-         response.data.userId);
+        response.data.userId
+      );
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Verification failed. Please try again.");
     } finally {
@@ -181,7 +173,6 @@ function AuthPage({ onNavigate }) {
 
       finalizeLogin(
         response.data.token,
-        "Password login successful. You can now continue safely.",
         response.data.userId
       );
     } catch (error) {
@@ -197,45 +188,8 @@ function AuthPage({ onNavigate }) {
     await requestOtp();
   };
 
-  /**
-   * Safety action: remove local auth state and leave the application immediately.
-   * This is intentionally more aggressive than logout because it navigates away
-   * from the support platform after clearing sensitive local UI/session state.
-   */
-  const quickExit = () => {
-    localStorage.removeItem("authToken");
-    setIsAuthenticated(false);
-    setStep("phone");
-    setLoginMethod("otp");
-    setPhoneNumber("");
-    setOtp("");
-    setPassword("");
-    setTokenPreview("");
-    clearMessages();
-    window.location.replace(QUICK_EXIT_URL);
-  };
-
-  /**
-   * Standard sign-out keeps the user inside the app shell while clearing the
-   * saved token and sensitive form fields.
-   */
-  const logout = () => {
-    localStorage.removeItem("authToken");
-    setIsAuthenticated(false);
-    setStep("phone");
-    setLoginMethod("otp");
-    setOtp("");
-    setPassword("");
-    setTokenPreview("");
-    setSuccessMessage("You have been signed out safely.");
-  };
-
   return (
     <main className="auth-page">
-      <button type="button" className="quick-exit" onClick={quickExit}>
-        Quick Exit
-      </button>
-
       <section className="auth-layout" aria-label="Community login panel">
         <div className="auth-context">
           <p className="eyebrow">Private community access</p>
@@ -253,7 +207,7 @@ function AuthPage({ onNavigate }) {
         <div className="form-panel">
           <p className="eyebrow">GBV Support Platform</p>
           <h2>
-            {isAuthenticated ? "You Are Securely Signed In" : step === "phone" ? "Community Login" : "Welcome Back"}
+            {step === "phone" ? "Community Login" : "Welcome Back"}
           </h2>
           <p className="subtext">
             A discreet support and reporting platform that helps survivors access help safely.
@@ -261,20 +215,8 @@ function AuthPage({ onNavigate }) {
 
           {errorMessage && <p className="feedback feedback-error">{errorMessage}</p>}
           {successMessage && <p className="feedback feedback-success">{successMessage}</p>}
-          {devOtpHint && <p className="feedback feedback-hint">{devOtpHint}</p>}
 
-          {/* Authenticated users see a compact session state instead of the login form. */}
-          {isAuthenticated ? (
-            <div className="field-group">
-              <p className="auth-note">Your secure session is active. You can now continue to protected areas.</p>
-              <button type="button" className="primary-btn" onClick={() => onNavigate("/home")}>
-                Continue To Home
-              </button>
-              <button type="button" className="link-btn" onClick={logout}>
-                Sign Out
-              </button>
-            </div>
-          ) : step === "phone" ? (
+          {step === "phone" ? (
             /**
              * First unauthenticated step:
              * collect the phone number and, only when password mode is selected,
@@ -360,8 +302,6 @@ function AuthPage({ onNavigate }) {
               </button>
             </div>
           )}
-
-          {tokenPreview && <p className="token-preview">Token saved locally: {tokenPreview}</p>}
         </div>
       </section>
     </main>

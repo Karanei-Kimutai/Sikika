@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import SiteHeader from "./components/SiteHeader";
 import AuthPage from "./pages/AuthPage";
 import LandingPage from "./pages/LandingPage";
@@ -8,6 +8,8 @@ import ReportingPage from "./pages/ReportingPage";
 import CommunityPage from "./pages/CommunityPage";
 import ModerationDashboardPage from "./pages/ModerationDashboardPage";
 import "./App.css";
+
+const QUICK_EXIT_URL = "https://www.google.com";
 
 const routes = {
   "/": LandingPage,
@@ -38,6 +40,8 @@ function getCurrentPath() {
 
 function App() {
   const [currentPath, setCurrentPath] = useState(getCurrentPath);
+  const [isQuickExitCollapsed, setIsQuickExitCollapsed] = useState(false);
+  const quickExitIdleTimerRef = useRef(null);
   const isAuthenticated = Boolean(localStorage.getItem("authToken"));
   const role = decodeRoleFromToken();
 
@@ -59,6 +63,48 @@ function App() {
     navigate("/join");
   };
 
+  const handleQuickExit = () => {
+    if (isQuickExitCollapsed) {
+      setIsQuickExitCollapsed(false);
+      return;
+    }
+
+    localStorage.removeItem("authToken");
+    localStorage.removeItem("userId");
+    window.location.replace(QUICK_EXIT_URL);
+  };
+
+  useEffect(() => {
+    const resetQuickExitIdleTimer = () => {
+      setIsQuickExitCollapsed(false);
+
+      if (quickExitIdleTimerRef.current) {
+        window.clearTimeout(quickExitIdleTimerRef.current);
+      }
+
+      quickExitIdleTimerRef.current = window.setTimeout(() => {
+        setIsQuickExitCollapsed(true);
+      }, 3000);
+    };
+
+    const activityEvents = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"];
+    activityEvents.forEach((eventName) => {
+      window.addEventListener(eventName, resetQuickExitIdleTimer, { passive: true });
+    });
+
+    resetQuickExitIdleTimer();
+
+    return () => {
+      activityEvents.forEach((eventName) => {
+        window.removeEventListener(eventName, resetQuickExitIdleTimer);
+      });
+
+      if (quickExitIdleTimerRef.current) {
+        window.clearTimeout(quickExitIdleTimerRef.current);
+      }
+    };
+  }, []);
+
   const protectedPaths = new Set(["/chat", "/community", "/moderation", "/reports"]);
   const resolvedPath = protectedPaths.has(currentPath) && !isAuthenticated ? "/join" : currentPath;
   const roleResolvedPath = resolvedPath === "/moderation" && role !== "NGO_ADMIN" ? "/community" : resolvedPath;
@@ -73,6 +119,16 @@ function App() {
         role={role}
         onSignOut={handleSignOut}
       />
+      <button
+        type="button"
+        className={`app-quick-exit ${isQuickExitCollapsed ? "collapsed" : "expanded"}`}
+        onClick={handleQuickExit}
+        onMouseEnter={() => setIsQuickExitCollapsed(false)}
+        onFocus={() => setIsQuickExitCollapsed(false)}
+        aria-label="Quick Exit"
+      >
+        <span className="app-quick-exit-label">Quick Exit</span>
+      </button>
       <Page onNavigate={navigate} />
     </div>
   );

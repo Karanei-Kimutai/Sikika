@@ -7,6 +7,7 @@ const {
   listMessages,
   postMessage,
   reportMessage,
+  deleteMessage,
   getModerationReports,
   reviewReport
 } = require("../controllers/communityController");
@@ -22,6 +23,7 @@ router.get("/rooms/:roomId/messages", listMessages);
 router.post("/rooms/:roomId/messages", postMessage);
 
 router.post("/messages/:messageId/report", reportMessage);
+router.delete("/messages/:messageId", deleteMessage);
 
 router.get("/moderation/reports", getModerationReports);
 router.patch("/moderation/reports/:reportId", reviewReport);
