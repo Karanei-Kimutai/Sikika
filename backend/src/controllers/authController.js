@@ -33,6 +33,8 @@ function getSafeErrorMessage(error) {
 }
 
 function getCanonicalRole(user) {
+    // Keep role resolution tolerant while legacy records still populate `role`
+    // and newer records prefer `userRole`.
     return user.userRole || user.role;
 }
 
@@ -57,6 +59,8 @@ function normalizePhoneNumber(phoneNumber) {
 }
 
 function issueAuthToken(user) {
+    // Include both id and userId claims for middleware/client compatibility
+    // across old and new consumers.
     return jwt.sign(
         { id: user.userId, userId: user.userId, role: getCanonicalRole(user) },
         process.env.JWT_SECRET,
@@ -153,7 +157,8 @@ const verifyOTP = async (req, res) => {
 
         const token = issueAuthToken(user);
 
-        // Send the token back to the React frontend
+        // Echo userId explicitly so frontend can cache session identity without
+        // decoding JWT payload at this stage.
         res.status(200).json({ 
             message: "Login successful!",
             token: token,
@@ -190,6 +195,7 @@ const loginWithPassword = async (req, res) => {
 
         const token = issueAuthToken(user);
 
+        // Password login mirrors OTP login response shape for frontend parity.
         return res.status(200).json({
             message: 'Password login successful!',
             token,

@@ -84,6 +84,7 @@ async function getDisplayIdentity(userId) {
 }
 
 async function ensureGeneralRoomExists() {
+  // Keep default rooms idempotent so repeated requests cannot duplicate seeds.
   const defaultRooms = [
     {
       roomName: "General Support",
@@ -369,6 +370,7 @@ async function deleteMessage(req, res) {
     return res.status(404).json({ error: "Message not found." });
   }
 
+  // Message owners can self-delete; NGO admins can moderate-delete.
   const isOwner = message.senderUserId === actor.userId;
   const isNgoAdmin = actor.role === "NGO_ADMIN";
 
@@ -377,6 +379,7 @@ async function deleteMessage(req, res) {
   }
 
   if (isNgoAdmin && !isOwner) {
+    // Admin deletions are audit-logged for moderation traceability.
     await ModerationActionLog.create({
       moderationActionId: randomUUID(),
       moderatorUserId: actor.userId,
