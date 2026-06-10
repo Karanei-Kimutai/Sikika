@@ -17,6 +17,16 @@ const {
   generateEvidenceSignedUrl
 } = require("../config/cloudinary");
 
+/**
+ * reportController.js
+ *
+ * Core reporting workflow:
+ * - Survivors create and manage their own submissions.
+ * - Assigned staff (counsellor/legal) and NGO admins can review and advance status.
+ * - Status changes are guarded by both transition rules and role permissions.
+ * - Evidence files are stored in Cloudinary; clients receive short-lived signed URLs.
+ */
+
 const EMERGENCY_CONTACTS = [
   "Police emergency: 999 / 112",
   "Childline Kenya: 116",
@@ -47,6 +57,9 @@ const STATUS_TRANSITIONS = {
   [REPORT_STATUS.WITHDRAWN]: []
 };
 
+// Allowed transitions are intentionally explicit so invalid workflow jumps are
+// blocked at API level regardless of client behavior.
+
 const STATUS_UPDATE_PERMISSIONS = {
   SURVIVOR: [],
   COUNSELLOR: [REPORT_STATUS.ACTIVE_SUPPORT, REPORT_STATUS.UNDER_INVESTIGATION, REPORT_STATUS.RESOLVED],
@@ -54,6 +67,9 @@ const STATUS_UPDATE_PERMISSIONS = {
   NGO_ADMIN: [REPORT_STATUS.UNDER_REVIEW, REPORT_STATUS.ACTIVE_SUPPORT, REPORT_STATUS.UNDER_INVESTIGATION, REPORT_STATUS.LEGAL_REVIEW, REPORT_STATUS.RESOLVED],
   SYSTEM_ADMIN: []
 };
+
+// Roles are allowed to set only specific next states, even when a transition
+// itself is valid in STATUS_TRANSITIONS.
 
 function normalizeRole(value) {
   if (!value) return "";
@@ -196,6 +212,7 @@ async function notifyStakeholders({
     stakeholderIds.delete(actorUserId);
   }
 
+  // Fan-out runs in parallel to avoid serial notification delays on write paths.
   await Promise.all(
     [...stakeholderIds].map((recipientUserId) => createNotification(recipientUserId, staffMessage, category))
   );
@@ -663,6 +680,7 @@ async function updateReportStatus(req, res) {
     });
   }
 
+  // Role authorization is checked separately from transition validity.
   if (!STATUS_UPDATE_PERMISSIONS[actor.role].includes(nextStatus)) {
     return res.status(403).json({
       error: `Role ${actor.role} is not allowed to set status ${nextStatus}.`
@@ -670,6 +688,7 @@ async function updateReportStatus(req, res) {
   }
 
   if (nextStatus === REPORT_STATUS.ESCALATED_TO_LEGAL_CASE) {
+    // Escalation to legal case has extra safeguards beyond generic transitions.
     if (actor.role !== "LEGAL_COUNSEL") {
       return res.status(403).json({
         error: "Only legal counsel can escalate to a legal case."
@@ -751,6 +770,7 @@ async function uploadEvidence(req, res) {
     });
   }
 
+  // Upload once to cloud storage and persist only metadata + signed access URL.
   const uploadResult = await uploadEvidenceBuffer({
     buffer: req.file.buffer,
     reportId: report.reportId,
@@ -945,6 +965,7 @@ async function getEvidenceAccessUrl(req, res) {
     });
   }
 
+  // URL is refreshed on access to keep evidence links short-lived and revocable.
   evidence.dynamicallySignedUrl = generateEvidenceSignedUrl({
     publicId: evidence.cloudinaryPublicIdentifier,
     evidenceType: evidence.evidenceFileType

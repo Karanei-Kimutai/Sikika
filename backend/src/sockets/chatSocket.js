@@ -10,6 +10,13 @@ const { randomUUID } = require('crypto');
 const { DirectChatMessage, DirectChatChannel, InAppNotification } = require('../models');
 const { canUserAccessChannel, getChannelParticipantUserIds } = require('../services/chatAccessService');
 
+/**
+ * Trust boundary notes:
+ * - Token signature verification is required before socket joins are accepted.
+ * - Channel membership is checked on both join and send events.
+ * - Server persists opaque encrypted payloads without decrypting message content.
+ */
+
 function getTokenFromHandshake(socket) {
   const authToken = socket.handshake?.auth?.token;
   if (authToken) return authToken;
@@ -30,6 +37,7 @@ async function createDiscreetNotifications(channel, senderUserId) {
   const participantUserIds = await getChannelParticipantUserIds(channel);
   const recipients = participantUserIds.filter((id) => id && id !== senderUserId);
 
+  // Notify every participant except the sender with privacy-safe copy.
   await Promise.all(
     recipients.map((recipientUserId) =>
       InAppNotification.create({
@@ -116,6 +124,7 @@ module.exports = (io) => {
 
         await createDiscreetNotifications(channel, socket.data.userId);
 
+        // Broadcast only to clients currently joined to this channel room.
         io.to(chatId).emit('receiveMessage', savedMessage);
       } catch (error) {
         console.error('Failed to save and relay message:', error);

@@ -21,6 +21,9 @@ const STATUS_OPTIONS = [
   "WITHDRAWN"
 ];
 
+// Staff may see all options in the UI, but backend enforces exact role-based
+// transitions and can reject disallowed status changes.
+
 function decodeTokenRole() {
   const token = localStorage.getItem("authToken");
   if (!token) return "";
@@ -43,7 +46,9 @@ function formatStatus(status) {
 
 function ReportingPage({ onNavigate }) {
   const role = useMemo(decodeTokenRole, []);
+  // Survivors can create/edit/withdraw/delete their own reports.
   const canCreate = role === "SURVIVOR";
+  // Staff users can request status updates subject to backend transition rules.
   const canUpdateStatus = ["COUNSELLOR", "LEGAL_COUNSEL", "NGO_ADMIN"].includes(role);
 
   const [reports, setReports] = useState([]);
@@ -253,6 +258,7 @@ function ReportingPage({ onNavigate }) {
     setSuccessMessage("");
 
     try {
+      // Fetch a short-lived signed URL and open it right away.
       const data = await getEvidenceAccessUrl(reportId, evidenceId);
       window.open(data.signedUrl, "_blank", "noopener,noreferrer");
     } catch (error) {

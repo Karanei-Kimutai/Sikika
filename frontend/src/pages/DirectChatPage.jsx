@@ -22,6 +22,9 @@ function createSocket(token) {
   });
 }
 
+// Socket auth token is attached during connection setup so backend can enforce
+// per-channel authorization before room joins and sends.
+
 function roleLabelFromSession(role) {
   return role === 'survivor' ? 'Survivor' : 'Counsellor';
 }
@@ -251,6 +254,7 @@ const DirectChatPage = () => {
       if (!token || !activeChannelId) return;
 
       try {
+        // Best-effort read receipt. Message rendering should not fail if this errors.
         await axios.patch(
           `${API_BASE_URL}/api/chat/${activeChannelId}/read`,
           {},
