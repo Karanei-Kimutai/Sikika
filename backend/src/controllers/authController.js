@@ -32,9 +32,33 @@ function getSafeErrorMessage(error) {
         'Unknown error';
 }
 
+function getCanonicalRole(user) {
+    return user.userRole || user.role;
+}
+
+function normalizePhoneNumber(phoneNumber) {
+    const raw = String(phoneNumber || '').trim();
+    if (!raw) return '';
+
+    const hasPlus = raw.startsWith('+');
+    const digits = raw.replace(/\D/g, '');
+
+    if (!digits) return raw;
+
+    if (digits.startsWith('0') && digits.length === 10) {
+        return `+254${digits.slice(1)}`;
+    }
+
+    if (digits.startsWith('254') && digits.length === 12) {
+        return `+${digits}`;
+    }
+
+    return hasPlus ? `+${digits}` : raw;
+}
+
 function issueAuthToken(user) {
     return jwt.sign(
-        { id: user.userId, role: user.role || user.userRole },
+        { id: user.userId, userId: user.userId, role: getCanonicalRole(user) },
         process.env.JWT_SECRET,
         { expiresIn: '2h' }
     );
@@ -43,9 +67,10 @@ function issueAuthToken(user) {
 // Generate and send OTP, creating a default survivor account when needed.
 const requestOTP = async (req, res) => {
     const { phoneNumber } = req.body;
+    const normalizedPhone = normalizePhoneNumber(phoneNumber);
 
     try {
-        if (!phoneNumber) {
+        if (!normalizedPhone) {
             return res.status(400).json({ error: "Phone number is required." });
         }
 
@@ -54,7 +79,7 @@ const requestOTP = async (req, res) => {
 
         // Check if user exists. If not, create a new 'survivor' account
         let [user] = await UserAccount.findOrCreate({
-            where: { phoneNumber: phoneNumber },
+            where: { phoneNumber: normalizedPhone },
             defaults: { 
                 userRole: 'SURVIVOR',
                 role: 'survivor',
@@ -110,10 +135,11 @@ const requestOTP = async (req, res) => {
 // Verify OTP and issue a JWT for authenticated API access.
 const verifyOTP = async (req, res) => {
     const { phoneNumber, otp } = req.body;
+    const normalizedPhone = normalizePhoneNumber(phoneNumber);
 
     try {
         // Fetch the user from the database
-        const user = await UserAccount.findOne({ where: { phoneNumber: phoneNumber } });
+        const user = await UserAccount.findOne({ where: { phoneNumber: normalizedPhone } });
         
         // Check if user exists and if the OTP they typed matches the one in the DB
         if (!user || user.otpHash !== otp) {
@@ -131,7 +157,8 @@ const verifyOTP = async (req, res) => {
         res.status(200).json({ 
             message: "Login successful!",
             token: token,
-            role: user.role || user.userRole
+            userId: user.userId,
+            role: getCanonicalRole(user)
         });
 
     } catch (error) {
@@ -143,13 +170,14 @@ const verifyOTP = async (req, res) => {
 // Log in using phone number + password (for users who already set one).
 const loginWithPassword = async (req, res) => {
     const { phoneNumber, password } = req.body;
+    const normalizedPhone = normalizePhoneNumber(phoneNumber);
 
     try {
-        if (!phoneNumber || !password) {
+        if (!normalizedPhone || !password) {
             return res.status(400).json({ error: 'Phone number and password are required.' });
         }
 
-        const user = await UserAccount.findOne({ where: { phoneNumber } });
+        const user = await UserAccount.findOne({ where: { phoneNumber: normalizedPhone } });
 
         if (!user || !user.hashedPassword) {
             return res.status(401).json({ error: 'Invalid credentials.' });
@@ -165,7 +193,8 @@ const loginWithPassword = async (req, res) => {
         return res.status(200).json({
             message: 'Password login successful!',
             token,
-            role: user.role || user.userRole
+            userId: user.userId,
+            role: getCanonicalRole(user)
         });
     } catch (error) {
         console.error('Password Login Error:', error);
