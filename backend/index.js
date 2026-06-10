@@ -99,9 +99,6 @@ app.use("/api/auth", authRoutes);
 app.use("/api/resources", resourceRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/reports", reportRoutes);
-app.use("/api/reports", reportRoutes);
-app.use("/api/community", communityRoutes);
-app.use("/api/reports", reportRoutes);
 app.use("/api/community", communityRoutes);
 
 /**
