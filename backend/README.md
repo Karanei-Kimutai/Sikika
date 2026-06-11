@@ -1,6 +1,6 @@
 # Backend API
 
-Express + Sequelize backend for the GBV support platform. This service provides:
+Express + Sequelize (MySQL) backend for authentication, support resources, incident reporting, direct chat, community rooms, moderation, notifications, and websocket relay.
 
 - authentication and password reset flows
 - role-aware admin operations for NGO admins and system admins
@@ -15,7 +15,8 @@ Express + Sequelize backend for the GBV support platform. This service provides:
 - Socket.io
 - bcrypt
 - JWT
-- Cloudinary (evidence URLs)
+- Multer (multipart evidence uploads)
+- Cloudinary (evidence storage and signed URLs, plus support resource storage)
 
 ## Startup Responsibilities
 
@@ -56,22 +57,19 @@ Recommended:
 - NODE_ENV (development or production)
 - SKIP_SMS_IN_DEV=true (dev-only OTP bypass)
 - DB_SYNC_ALTER=false (leave false for stable local DB)
+- ALLOW_ADMIN_RESTART=true enables admin-triggered process exit for supervised restart
 
 Optional:
 
 - DB_PASSWORD (omit only if your local MySQL user has no password)
 
-Operational flags:
-
-- ALLOW_ADMIN_RESTART=true enables admin-triggered process exit for supervised restart
-
-Cloudinary evidence support:
+Required for Cloudinary-backed uploads (evidence and support resources):
 
 - CLOUDINARY_CLOUD_NAME
 - CLOUDINARY_API_KEY
 - CLOUDINARY_API_SECRET
 
-Without Cloudinary config, reporting APIs still work but evidence upload/access endpoints return service-unavailable responses.
+Without Cloudinary config, reporting APIs still work but evidence upload endpoints and support-resource write endpoints return service-unavailable responses.
 
 ## Local Setup
 
@@ -188,6 +186,22 @@ Shared admin utility:
 
 - GET /api/resources
 - POST /api/resources/:resourceId/track-access
+- POST /api/resources (bearer token, multipart file upload)
+- PATCH /api/resources/:resourceId (bearer token, optional multipart file replacement)
+- DELETE /api/resources/:resourceId (bearer token)
+
+Resource access model:
+
+- Read access is public: authenticated users and unregistered visitors can browse resources.
+- Create, update, and delete are restricted to COUNSELLOR, LEGAL_COUNSEL, and NGO_ADMIN.
+- Resource uploads are stored in Cloudinary and persisted with metadata for replacement/deletion cleanup.
+- Update supports metadata-only edits or metadata + file replacement in one request.
+
+Resource upload constraints:
+
+- Multipart field name: file
+- Max upload size: 20MB
+- Allowed MIME types: PDF, DOC, DOCX, TXT, JPG, PNG, WEBP, MP3, WAV, MP4
 
 Resource analytics behavior:
 
