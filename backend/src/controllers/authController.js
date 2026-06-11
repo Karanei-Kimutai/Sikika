@@ -10,6 +10,7 @@ const {
     LegalCounselProfile,
     StaffAssignmentHistory
 } = require('../models');
+const { ensureAutoChannelsForSurvivor } = require('../services/chatAccessService');
 
 /**
  * Authentication controller
@@ -464,7 +465,11 @@ const verifyOTP = async (req, res) => {
         await user.save();
 
         if (effectiveIntent === AUTH_INTENTS.SIGNUP_OTP && isFirstTimeSignup) {
-            await ensureSurvivorStaffAutoAssignment(user);
+            const survivorProfile = await ensureSurvivorStaffAutoAssignment(user);
+
+            // Eagerly provision direct-chat channels so assigned counsellor/legal counsel
+            // and the survivor can see each other immediately on the chat page.
+            await ensureAutoChannelsForSurvivor(survivorProfile);
         }
 
         const token = issueAuthToken(user);

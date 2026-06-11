@@ -21,6 +21,7 @@ const {
   StaffAssignmentHistory,
   ResourceAccessEvent
 } = require('../models');
+const { ensureAutoChannelsForSurvivor } = require('../services/chatAccessService');
 
 /**
  * Admin Controller
@@ -753,6 +754,10 @@ async function reassignSurvivor(req, res) {
     });
 
     await refreshWorkloadScores();
+
+    // Provision chat channels immediately after assignment changes so both
+    // survivor and newly assigned staff see the channel in their sidebar.
+    await ensureAutoChannelsForSurvivor(survivor);
 
     return res.json({
       message: 'Assignment updated successfully.',
