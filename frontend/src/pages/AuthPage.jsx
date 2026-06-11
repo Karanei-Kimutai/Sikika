@@ -45,7 +45,7 @@ function AuthPage({ onNavigate }) {
   const [resetNewPassword, setResetNewPassword] = useState("");
   const [showResetPassword, setShowResetPassword] = useState(false);
 
-  // First-login forced reset flow for staff created by system admin.
+  // First-login forced reset flow for staff created by NGO admin.
   // Backend returns authStage=PASSWORD_RESET_REQUIRED with a temporary token.
   // User must set a new password before proceeding to /home.
   const [showFirstLoginResetFlow, setShowFirstLoginResetFlow] = useState(false);

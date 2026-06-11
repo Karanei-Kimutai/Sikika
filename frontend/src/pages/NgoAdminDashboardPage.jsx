@@ -6,7 +6,8 @@ import {
   runAdminSearch,
   createNgoResource,
   updateNgoResource,
-  reassignSurvivorCase
+  reassignSurvivorCase,
+  createNgoStaffAccount
 } from "../services/admin";
 
 /**
@@ -112,6 +113,13 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     counsellorId: "",
     legalCounselId: "",
     reason: ""
+  });
+  const [staffForm, setStaffForm] = useState({
+    phoneNumber: "",
+    password: "",
+    role: "COUNSELLOR",
+    specialization: "",
+    availabilityStatus: "AVAILABLE"
   });
   const [reportFilters, setReportFilters] = useState({
     status: "ALL",
@@ -293,6 +301,40 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
       await loadDashboard();
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Failed to reassign survivor.");
+    }
+  }
+
+  async function handleStaffCreate(event) {
+    event.preventDefault();
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const payload = {
+      phoneNumber: staffForm.phoneNumber.trim(),
+      password: staffForm.password,
+      role: staffForm.role,
+      specialization: staffForm.specialization.trim(),
+      availabilityStatus: staffForm.availabilityStatus
+    };
+
+    if (!payload.phoneNumber || !payload.password || !payload.role) {
+      setErrorMessage("Phone number, temporary password, and role are required.");
+      return;
+    }
+
+    try {
+      const data = await createNgoStaffAccount(payload);
+      setSuccessMessage(data.message || "Staff account created.");
+      setStaffForm({
+        phoneNumber: "",
+        password: "",
+        role: "COUNSELLOR",
+        specialization: "",
+        availabilityStatus: "AVAILABLE"
+      });
+      await loadDashboard();
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Failed to create staff account.");
     }
   }
 
@@ -858,6 +900,63 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
                 </tbody>
               </table>
             </div>
+          </article>
+
+          <article className="admin-panel full-span">
+            <h2>Create Staff Account</h2>
+            <p className="admin-empty">NGO admins can onboard counsellors and legal counsel. New staff must change the temporary password on first login.</p>
+            <form className="reassignment-form" onSubmit={handleStaffCreate}>
+              <label>
+                Phone Number
+                <input
+                  type="text"
+                  value={staffForm.phoneNumber}
+                  onChange={(event) => setStaffForm((prev) => ({ ...prev, phoneNumber: event.target.value }))}
+                  placeholder="+2547XXXXXXXX"
+                />
+              </label>
+              <label>
+                Temporary Password
+                <input
+                  type="password"
+                  value={staffForm.password}
+                  onChange={(event) => setStaffForm((prev) => ({ ...prev, password: event.target.value }))}
+                  placeholder="At least 6 characters"
+                />
+              </label>
+              <label>
+                Staff Role
+                <select
+                  value={staffForm.role}
+                  onChange={(event) => setStaffForm((prev) => ({ ...prev, role: event.target.value }))}
+                >
+                  <option value="COUNSELLOR">Counsellor</option>
+                  <option value="LEGAL_COUNSEL">Legal Counsel</option>
+                </select>
+              </label>
+              <label>
+                Specialization
+                <input
+                  type="text"
+                  value={staffForm.specialization}
+                  onChange={(event) => setStaffForm((prev) => ({ ...prev, specialization: event.target.value }))}
+                  placeholder={staffForm.role === "COUNSELLOR" ? "Trauma support" : "Family law"}
+                />
+              </label>
+              <label>
+                Availability
+                <select
+                  value={staffForm.availabilityStatus}
+                  onChange={(event) => setStaffForm((prev) => ({ ...prev, availabilityStatus: event.target.value }))}
+                >
+                  <option value="AVAILABLE">Available</option>
+                  <option value="BUSY">Busy</option>
+                  <option value="OFFLINE">Offline</option>
+                </select>
+              </label>
+
+              <button type="submit" className="admin-action-btn">Create Staff</button>
+            </form>
           </article>
 
           <article className="admin-panel full-span">

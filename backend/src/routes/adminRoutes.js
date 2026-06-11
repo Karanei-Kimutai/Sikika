@@ -21,8 +21,8 @@ const router = express.Router();
  * ------------
  * Mounted at /api/admin.
  * All endpoints require authMiddleware, while controllers enforce role scopes:
- * - NGO_ADMIN: ngo dashboard operations
- * - SYSTEM_ADMIN: infrastructure/runtime/staff management operations
+ * - NGO_ADMIN: ngo dashboard operations and staff lifecycle management
+ * - SYSTEM_ADMIN: infrastructure/runtime operations
  */
 router.use(authMiddleware);
 
@@ -31,13 +31,13 @@ router.get('/ngo/dashboard', getNgoDashboard);
 router.patch('/ngo/reassignments', reassignSurvivor);
 router.post('/ngo/resources', createNgoResource);
 router.patch('/ngo/resources/:resourceId', updateNgoResource);
+router.post('/ngo/staff', createStaffAccount);
+router.patch('/ngo/staff/:userId/status', updateStaffAccountStatus);
 
 // System Admin operations
 router.get('/system/dashboard', getSystemDashboard);
 router.get('/system/logs', getSystemLogs);
 router.post('/system/runtime-action', performRuntimeAction);
-router.post('/system/staff', createStaffAccount);
-router.patch('/system/staff/:userId/status', updateStaffAccountStatus);
 
 // Shared admin utility
 router.get('/search', globalSearch);

@@ -4,21 +4,19 @@ import {
   getSystemAdminDashboard,
   setMaintenanceMode,
   getSystemLogs,
-  performSystemRuntimeAction,
-  createSystemStaffAccount,
-  updateSystemStaffStatus
+  performSystemRuntimeAction
 } from "../services/admin";
 
 /**
  * System Admin Dashboard
  * ----------------------
- * Operational control plane for infrastructure, maintenance, logs, and staff lifecycle.
+ * Operational control plane for infrastructure, maintenance, logs, and admin governance.
  *
  * Why this page is segmented:
  * - Infrastructure: current runtime health snapshot
  * - Operational Logs: near-real-time audit stream
  * - Maintenance Control: global user-traffic gate + runtime actions
- * - Admin Access: staff creation and account status governance
+ * - Admin Access: read-only system-admin directory and delegated governance guidance
  */
 
 const systemMenu = [
@@ -62,17 +60,6 @@ function SystemAdminDashboardPage({ onNavigate, onSignOut, initialSection = "inf
   const [liveLogs, setLiveLogs] = useState([]);
   const [maintenanceReasonInput, setMaintenanceReasonInput] = useState("");
   const [maintenanceExpectedUntilInput, setMaintenanceExpectedUntilInput] = useState("");
-  const [pendingStatusChange, setPendingStatusChange] = useState(null);
-  const [staffForm, setStaffForm] = useState({
-    phoneNumber: "",
-    password: "",
-    role: "COUNSELLOR",
-    specialization: "",
-    availabilityStatus: "AVAILABLE",
-    administrativeDepartment: "",
-    accessLevel: "1",
-    maintenancePrivileges: ""
-  });
 
   async function loadDashboard() {
     // One aggregate payload avoids cross-panel drift between cards and controls.
@@ -137,19 +124,6 @@ function SystemAdminDashboardPage({ onNavigate, onSignOut, initialSection = "inf
     };
   }, [activeSection]);
 
-  useEffect(() => {
-    if (!pendingStatusChange) return undefined;
-
-    function onKeyDown(event) {
-      if (event.key === "Escape") {
-        setPendingStatusChange(null);
-      }
-    }
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [pendingStatusChange]);
-
   async function toggleMaintenanceMode(enabled) {
     setActionMessage("");
     setErrorMessage("");
@@ -181,74 +155,6 @@ function SystemAdminDashboardPage({ onNavigate, onSignOut, initialSection = "inf
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Failed to execute runtime action.");
     }
-  }
-
-  async function handleStaffCreate(event) {
-    event.preventDefault();
-    setActionMessage("");
-    setErrorMessage("");
-
-    const payload = {
-      phoneNumber: staffForm.phoneNumber.trim(),
-      password: staffForm.password,
-      role: staffForm.role,
-      specialization: staffForm.specialization.trim(),
-      availabilityStatus: staffForm.availabilityStatus,
-      administrativeDepartment: staffForm.administrativeDepartment.trim(),
-      accessLevel: Number(staffForm.accessLevel || 1),
-      maintenancePrivileges: staffForm.maintenancePrivileges.trim()
-    };
-
-    if (!payload.phoneNumber || !payload.password) {
-      setErrorMessage("Phone number and password are required for staff onboarding.");
-      return;
-    }
-
-    try {
-      const data = await createSystemStaffAccount(payload);
-      setActionMessage(data.message || "Staff account created.");
-      setStaffForm((prev) => ({
-        ...prev,
-        phoneNumber: "",
-        password: "",
-        specialization: "",
-        administrativeDepartment: "",
-        maintenancePrivileges: ""
-      }));
-      await loadDashboard();
-    } catch (error) {
-      setErrorMessage(error.response?.data?.error || "Failed to create staff account.");
-    }
-  }
-
-  async function handleStaffStatusChange(userId, status) {
-    setActionMessage("");
-    setErrorMessage("");
-
-    try {
-      const data = await updateSystemStaffStatus(userId, status);
-      setActionMessage(data.message || "Staff status updated.");
-      await loadDashboard();
-    } catch (error) {
-      setErrorMessage(error.response?.data?.error || "Failed to update staff account status.");
-    }
-  }
-
-  function requestStaffStatusChange(entry, nextStatus) {
-    // Confirmation modal prevents accidental suspension/reactivation clicks.
-    setPendingStatusChange({
-      userId: entry.userId,
-      phoneNumber: entry.phoneNumber,
-      role: entry.role,
-      nextStatus
-    });
-  }
-
-  async function confirmStaffStatusChange() {
-    if (!pendingStatusChange) return;
-
-    await handleStaffStatusChange(pendingStatusChange.userId, pendingStatusChange.nextStatus);
-    setPendingStatusChange(null);
   }
 
   if (loading) {
@@ -440,168 +346,9 @@ function SystemAdminDashboardPage({ onNavigate, onSignOut, initialSection = "inf
             <h2>What Admin Access Means</h2>
             <p>
               This directory shows system-admin accounts, privilege levels, and account status.
-              Use it to verify who is authorized for critical platform operations.
+              Staff onboarding and counsellor/legal-counsel lifecycle actions are managed by NGO administrators.
             </p>
           </article>
-          <article className="admin-panel full-span">
-            <h2>Create Staff Account</h2>
-            <p className="admin-empty">Use this form to onboard counsellors, legal counsel, NGO admins, and system admins.</p>
-            <form className="reassignment-form" onSubmit={handleStaffCreate}>
-              <label>
-                Phone Number
-                <input
-                  type="text"
-                  value={staffForm.phoneNumber}
-                  onChange={(event) => setStaffForm((prev) => ({ ...prev, phoneNumber: event.target.value }))}
-                  placeholder="+2547XXXXXXXX"
-                />
-              </label>
-              <label>
-                Temporary Password
-                <input
-                  type="password"
-                  value={staffForm.password}
-                  onChange={(event) => setStaffForm((prev) => ({ ...prev, password: event.target.value }))}
-                  placeholder="At least 6 characters"
-                />
-              </label>
-              <label>
-                Staff Role
-                <select
-                  value={staffForm.role}
-                  onChange={(event) => setStaffForm((prev) => ({ ...prev, role: event.target.value }))}
-                >
-                  <option value="COUNSELLOR">Counsellor</option>
-                  <option value="LEGAL_COUNSEL">Legal Counsel</option>
-                  <option value="NGO_ADMIN">NGO Admin</option>
-                  <option value="SYSTEM_ADMIN">System Admin</option>
-                </select>
-              </label>
-              {(staffForm.role === "COUNSELLOR" || staffForm.role === "LEGAL_COUNSEL") && (
-                <>
-                  <label>
-                    Specialization
-                    <input
-                      type="text"
-                      value={staffForm.specialization}
-                      onChange={(event) => setStaffForm((prev) => ({ ...prev, specialization: event.target.value }))}
-                      placeholder={staffForm.role === "COUNSELLOR" ? "Trauma support" : "Family law"}
-                    />
-                  </label>
-                  <label>
-                    Availability
-                    <select
-                      value={staffForm.availabilityStatus}
-                      onChange={(event) => setStaffForm((prev) => ({ ...prev, availabilityStatus: event.target.value }))}
-                    >
-                      <option value="AVAILABLE">Available</option>
-                      <option value="BUSY">Busy</option>
-                      <option value="OFFLINE">Offline</option>
-                    </select>
-                  </label>
-                </>
-              )}
-
-              {staffForm.role === "NGO_ADMIN" && (
-                <>
-                  <label>
-                    Department
-                    <input
-                      type="text"
-                      value={staffForm.administrativeDepartment}
-                      onChange={(event) => setStaffForm((prev) => ({ ...prev, administrativeDepartment: event.target.value }))}
-                      placeholder="Case Management"
-                    />
-                  </label>
-                  <label>
-                    Access Level
-                    <input
-                      type="number"
-                      min="1"
-                      value={staffForm.accessLevel}
-                      onChange={(event) => setStaffForm((prev) => ({ ...prev, accessLevel: event.target.value }))}
-                    />
-                  </label>
-                </>
-              )}
-
-              {staffForm.role === "SYSTEM_ADMIN" && (
-                <>
-                  <label>
-                    Access Level
-                    <input
-                      type="number"
-                      min="1"
-                      value={staffForm.accessLevel}
-                      onChange={(event) => setStaffForm((prev) => ({ ...prev, accessLevel: event.target.value }))}
-                    />
-                  </label>
-                  <label className="full-span">
-                    Maintenance Privileges
-                    <input
-                      type="text"
-                      value={staffForm.maintenancePrivileges}
-                      onChange={(event) => setStaffForm((prev) => ({ ...prev, maintenancePrivileges: event.target.value }))}
-                      placeholder="server_restart,log_access,cache_control"
-                    />
-                  </label>
-                </>
-              )}
-
-              <button type="submit" className="admin-action-btn">Create Staff</button>
-            </form>
-          </article>
-
-          <article className="admin-panel full-span">
-            <h2>All Staff Directory</h2>
-            <div className="admin-table-wrap">
-              <table className="admin-table">
-                <thead>
-                  <tr>
-                    <th>User ID</th>
-                    <th>Phone</th>
-                    <th>Role</th>
-                    <th>Status</th>
-                    <th>Password Reset</th>
-                    <th>Created</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(dashboard.staffDirectory || []).map((entry) => (
-                    <tr key={`staff-${entry.userId}`}>
-                      <td>{entry.userId}</td>
-                      <td>{entry.phoneNumber}</td>
-                      <td>{entry.role}</td>
-                      <td>{entry.accountStatus}</td>
-                      <td>{entry.passwordResetRequired ? "Required" : "No"}</td>
-                      <td>{formatDate(entry.createdAt)}</td>
-                      <td className="action-cell">
-                        {entry.accountStatus === "SUSPENDED" ? (
-                          <button
-                            type="button"
-                            className="admin-action-btn"
-                            onClick={() => requestStaffStatusChange(entry, "ACTIVE")}
-                          >
-                            Reactivate
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            className="admin-action-btn danger"
-                            onClick={() => requestStaffStatusChange(entry, "SUSPENDED")}
-                          >
-                            Suspend
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </article>
-
           <article className="admin-panel full-span">
             <h2>System Admin Directory</h2>
             <div className="admin-table-wrap">
@@ -630,51 +377,6 @@ function SystemAdminDashboardPage({ onNavigate, onSignOut, initialSection = "inf
             </div>
           </article>
         </section>
-      )}
-
-      {pendingStatusChange && (
-        <div
-          className="admin-confirm-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="confirm-status-title"
-          onClick={() => setPendingStatusChange(null)}
-        >
-          <article className="admin-confirm-modal" onClick={(event) => event.stopPropagation()}>
-            <h3 id="confirm-status-title">
-              Confirm {pendingStatusChange.nextStatus === "SUSPENDED" ? "Suspension" : "Reactivation"}
-            </h3>
-            <p>
-              You are about to {pendingStatusChange.nextStatus === "SUSPENDED" ? "suspend" : "reactivate"} this staff account.
-            </p>
-            <p>
-              <strong>User:</strong> {pendingStatusChange.userId}
-            </p>
-            <p>
-              <strong>Phone:</strong> {pendingStatusChange.phoneNumber}
-            </p>
-            <p>
-              <strong>Role:</strong> {pendingStatusChange.role}
-            </p>
-
-            <div className="admin-confirm-actions">
-              <button
-                type="button"
-                className={`admin-action-btn ${pendingStatusChange.nextStatus === "SUSPENDED" ? "danger" : ""}`}
-                onClick={confirmStaffStatusChange}
-              >
-                Confirm
-              </button>
-              <button
-                type="button"
-                className="admin-action-btn"
-                onClick={() => setPendingStatusChange(null)}
-              >
-                Cancel
-              </button>
-            </div>
-          </article>
-        </div>
       )}
     </AdminWorkspace>
   );

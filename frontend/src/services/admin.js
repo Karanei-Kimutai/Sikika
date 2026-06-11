@@ -73,20 +73,20 @@ export async function performSystemRuntimeAction(action) {
   return response.data;
 }
 
-// System-admin staff onboarding entrypoint.
-export async function createSystemStaffAccount(payload) {
+// NGO-admin staff onboarding entrypoint for counsellor/legal counsel accounts.
+export async function createNgoStaffAccount(payload) {
   const response = await axios.post(
-    `${API_BASE_URL}/api/admin/system/staff`,
+    `${API_BASE_URL}/api/admin/ngo/staff`,
     payload,
     { headers: getAuthHeaders() }
   );
   return response.data;
 }
 
-// Suspends or reactivates a staff account from Admin Access directory.
-export async function updateSystemStaffStatus(userId, status) {
+// Suspends or reactivates a counsellor/legal-counsel account.
+export async function updateNgoStaffStatus(userId, status) {
   const response = await axios.patch(
-    `${API_BASE_URL}/api/admin/system/staff/${userId}/status`,
+    `${API_BASE_URL}/api/admin/ngo/staff/${userId}/status`,
     { status },
     { headers: getAuthHeaders() }
   );
