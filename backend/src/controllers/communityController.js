@@ -592,7 +592,7 @@ async function reviewReport(req, res) {
       }, { transaction });
     }
 
-    if (action === "suspend_user") {
+    if (action === "suspend_user" || action === "block_user") {
       await UserAccount.update(
         { accountStatus: "SUSPENDED" },
         { where: { userId: message.senderUserId }, transaction }
