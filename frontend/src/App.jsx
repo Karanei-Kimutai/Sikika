@@ -64,6 +64,7 @@ const ngoAdminRoutes = {
 const systemAdminRoutes = {
   "/": (props) => <SystemAdminDashboardPage {...props} initialSection="infrastructure" />,
   "/home": (props) => <SystemAdminDashboardPage {...props} initialSection="infrastructure" />,
+  "/reports": ReportingPage,
   "/chat": (props) => <SystemAdminDashboardPage {...props} initialSection="maintenance" />,
   "/community": (props) => <SystemAdminDashboardPage {...props} initialSection="ops-logs" />,
   "/library": (props) => <SystemAdminDashboardPage {...props} initialSection="admin-access" />,

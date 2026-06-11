@@ -32,6 +32,7 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
     if (role === "SYSTEM_ADMIN") {
       return [
         { path: "/home", label: "Home" },
+        { path: "/reports", label: "Reports" },
         { path: "/community", label: "Infra Logs" },
         { path: "/chat", label: "Maintenance" },
         { path: "/profile", label: "Profile" },
