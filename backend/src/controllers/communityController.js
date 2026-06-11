@@ -48,6 +48,14 @@ async function getActor(req) {
   };
 }
 
+/**
+ * getDisplayIdentity
+ * ------------------
+ * Returns privacy-safe display metadata for public community rendering.
+ *
+ * Survivors are pseudonymized while verified staff roles are shown with
+ * explicit role badges.
+ */
 async function getDisplayIdentity(userId) {
   const user = await UserAccount.findByPk(userId, { attributes: ["userId", "userRole"] });
   if (!user) {
@@ -85,6 +93,12 @@ async function getDisplayIdentity(userId) {
   return { displayName: "Community Member", role, badge: null };
 }
 
+/**
+ * ensureGeneralRoomExists
+ * -----------------------
+ * Seeds core community rooms if they do not exist yet.
+ * Safe to call on every rooms-list request due idempotent name checks.
+ */
 async function ensureGeneralRoomExists() {
   // Keep default rooms idempotent so repeated requests cannot duplicate seeds.
   const defaultRooms = [
@@ -123,6 +137,14 @@ async function ensureGeneralRoomExists() {
   return CommunityRoom.findOne({ order: [["roomCreationTimestamp", "ASC"]] });
 }
 
+/**
+ * seedDemoMessagesForRoom
+ * -----------------------
+ * Non-production helper that preloads starter messages in empty rooms.
+ *
+ * This improves early-stage demos and local development UX while keeping
+ * production data paths untouched.
+ */
 async function seedDemoMessagesForRoom(roomId, userId) {
   if (process.env.NODE_ENV === "production") return;
 
@@ -157,6 +179,12 @@ async function seedDemoMessagesForRoom(roomId, userId) {
   );
 }
 
+/**
+ * listRooms
+ * ---------
+ * Returns all community rooms plus actor membership and activity metadata.
+ * Response is sorted by latest activity timestamp for consistent client ordering.
+ */
 async function listRooms(req, res) {
   const actor = await getActor(req);
   if (!actor) {
@@ -198,6 +226,12 @@ async function listRooms(req, res) {
   return res.json({ rooms: response });
 }
 
+/**
+ * createRoom
+ * ----------
+ * NGO-admin-only endpoint for creating a new moderated community room.
+ * Creator is auto-joined so moderation actions are immediately available.
+ */
 async function createRoom(req, res) {
   const actor = await getActor(req);
   if (!actor) {
@@ -231,6 +265,11 @@ async function createRoom(req, res) {
   return res.status(201).json({ room: room.toJSON() });
 }
 
+/**
+ * joinRoom
+ * --------
+ * Idempotent membership endpoint for room participation.
+ */
 async function joinRoom(req, res) {
   const actor = await getActor(req);
   if (!actor) {
@@ -257,6 +296,14 @@ async function joinRoom(req, res) {
   return res.json({ message: "Joined room successfully." });
 }
 
+/**
+ * listMessages
+ * ------------
+ * Membership-gated message history endpoint.
+ *
+ * Also hydrates each message with a privacy-safe author identity object used
+ * by community clients.
+ */
 async function listMessages(req, res) {
   const actor = await getActor(req);
   if (!actor) {
@@ -297,6 +344,12 @@ async function listMessages(req, res) {
   return res.json({ messages: hydrated });
 }
 
+/**
+ * postMessage
+ * -----------
+ * Creates a room message and emits real-time socket event to room subscribers.
+ * Auto-joins actor to room on first post for simplified UX.
+ */
 async function postMessage(req, res) {
   const actor = await getActor(req);
   if (!actor) {
@@ -344,6 +397,12 @@ async function postMessage(req, res) {
   return res.status(201).json({ message: responsePayload });
 }
 
+/**
+ * reportMessage
+ * -------------
+ * Files a harmful-content moderation report for a community message.
+ * Self-reporting is blocked to keep moderation signals actionable.
+ */
 async function reportMessage(req, res) {
   const actor = await getActor(req);
   if (!actor) {
@@ -381,6 +440,12 @@ async function reportMessage(req, res) {
   return res.status(201).json({ report });
 }
 
+/**
+ * deleteMessage
+ * -------------
+ * Allows message owners to delete their own posts.
+ * NGO admins may also delete any message as a moderation action.
+ */
 async function deleteMessage(req, res) {
   const actor = await getActor(req);
   if (!actor) {
@@ -421,6 +486,12 @@ async function deleteMessage(req, res) {
   return res.json({ message: "Message deleted." });
 }
 
+/**
+ * getModerationReports
+ * --------------------
+ * NGO-admin-only moderation queue endpoint.
+ * Hydrates reports with message and identity context for moderation review UI.
+ */
 async function getModerationReports(req, res) {
   const actor = await getActor(req);
   if (!actor) {
@@ -459,6 +530,18 @@ async function getModerationReports(req, res) {
   return res.json({ reports: response });
 }
 
+/**
+ * reviewReport
+ * ------------
+ * Transactional moderation review endpoint.
+ *
+ * Within a single DB transaction it can:
+ * - approve/reject report
+ * - remove message
+ * - suspend user
+ * - issue warning notification
+ * - persist moderation action logs
+ */
 async function reviewReport(req, res) {
   const transaction = await sequelize.transaction();
 
