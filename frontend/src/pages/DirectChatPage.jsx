@@ -22,6 +22,32 @@ function createSocket(token) {
   });
 }
 
+// Reads /chat?channel=<chatId> deep-link parameter when a preferred chat is provided.
+function readPreferredChannelFromUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return String(params.get('channel') || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+// Writes the currently active channel back to URL and localStorage.
+// This keeps direct-chat resume behavior consistent across page reload/navigation.
+function persistPreferredChannel(channelId) {
+  const value = String(channelId || '').trim();
+  if (!value) return;
+
+  localStorage.setItem('lastActiveDirectChatId', value);
+
+  if (window.location.pathname !== '/chat') return;
+
+  const params = new URLSearchParams(window.location.search);
+  params.set('channel', value);
+  const nextUrl = `${window.location.pathname}?${params.toString()}`;
+  window.history.replaceState({}, '', nextUrl);
+}
+
 // Socket auth token is attached during connection setup so backend can enforce
 // per-channel authorization before room joins and sends.
 
@@ -104,6 +130,7 @@ const DirectChatPage = () => {
   const messagesEndRef = useRef(null);
   const socketRef = useRef(null);
   const inactivityTimerRef = useRef(null);
+  const preferredChannelRef = useRef('');
 
   /**
    * 1. Initialize Channels and Socket Connection
@@ -128,6 +155,7 @@ const DirectChatPage = () => {
     setCurrentUserId(userId);
     // Role is used for labels in the chat list/header only.
     setCurrentUserRole((payload?.role || '').toString().toLowerCase());
+    preferredChannelRef.current = readPreferredChannelFromUrl() || String(localStorage.getItem('lastActiveDirectChatId') || '');
 
     socketRef.current = createSocket(token);
 
@@ -139,8 +167,14 @@ const DirectChatPage = () => {
         });
         const loadedChannels = Array.isArray(response.data) ? response.data : [];
         setChannels(loadedChannels);
-        // Auto-open the most recent channel for a familiar messenger UX.
-        setActiveChannelId(loadedChannels[0]?.chatId || null);
+
+        // Selection strategy:
+        // 1) URL deep-link channel from /chat?channel=...
+        // 2) previously active channel persisted in localStorage
+        // 3) fallback to most recent channel from API ordering
+        const preferred = preferredChannelRef.current;
+        const resolvedPreferred = loadedChannels.find((channel) => channel.chatId === preferred)?.chatId || null;
+        setActiveChannelId(resolvedPreferred || loadedChannels[0]?.chatId || null);
       } catch (error) {
         setErrorMessage(error.response?.data?.error || 'Failed to load chat channels.');
       }
@@ -160,6 +194,9 @@ const DirectChatPage = () => {
    */
   useEffect(() => {
     if (!activeChannelId || !currentUserId) return;
+
+    // Persisting here ensures both manual chat clicks and automatic opens are remembered.
+    persistPreferredChannel(activeChannelId);
 
     const setupSecureChannel = async () => {
       const token = localStorage.getItem('authToken');
