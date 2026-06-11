@@ -8,6 +8,18 @@ const {
 } = require('../models');
 const { applySurvivorReassignment } = require('./adminController');
 
+/**
+ * reassignmentRequestController
+ * -----------------------------
+ * Handles survivor-driven reassignment requests and NGO-admin review actions.
+ *
+ * Policy summary:
+ * - Survivors can submit requests about their own staffing relationship.
+ * - Only one pending request per survivor is allowed at a time.
+ * - NGO admins review and can approve/reject with optional notes.
+ * - Approval executes real staff reassignment via adminController helper.
+ */
+
 function getUserIdFromRequest(req) {
   return req.user?.userId || req.user?.id || null;
 }
@@ -50,6 +62,9 @@ function normalizeRequestedScope(value) {
 }
 
 async function pickReplacementCounsellor(currentCounsellorId) {
+  // Replacement policy: prefer AVAILABLE staff, sorted by lowest workload.
+  // If only current counsellor is available, fallback allows same assignment
+  // rather than failing, which keeps approval logic deterministic.
   const candidates = await CounsellorProfile.findAll({
     attributes: ['counsellorId', 'currentWorkloadScore', 'availabilityStatus'],
     order: [
@@ -66,6 +81,7 @@ async function pickReplacementCounsellor(currentCounsellorId) {
 }
 
 async function pickReplacementLegalCounsel(currentLegalCounselId) {
+  // Mirrors counsellor replacement policy for legal counsel assignment.
   const candidates = await LegalCounselProfile.findAll({
     attributes: ['legalCounselId', 'currentWorkloadScore', 'availabilityStatus'],
     order: [
@@ -82,6 +98,7 @@ async function pickReplacementLegalCounsel(currentLegalCounselId) {
 }
 
 async function createMyReassignmentRequest(req, res) {
+  // Survivor intake endpoint: validates scope + reason and enforces one pending request.
   try {
     const actor = await getActor(req);
     if (!actor) return res.status(401).json({ error: 'Authentication required.' });
@@ -137,6 +154,7 @@ async function createMyReassignmentRequest(req, res) {
 }
 
 async function listMyReassignmentRequests(req, res) {
+  // Survivor self-service timeline for request tracking and transparency.
   try {
     const actor = await getActor(req);
     if (!actor) return res.status(401).json({ error: 'Authentication required.' });
@@ -162,6 +180,7 @@ async function listMyReassignmentRequests(req, res) {
 }
 
 async function cancelMyReassignmentRequest(req, res) {
+  // Survivors can only cancel requests that are still pending review.
   try {
     const actor = await getActor(req);
     if (!actor) return res.status(401).json({ error: 'Authentication required.' });
@@ -195,6 +214,7 @@ async function cancelMyReassignmentRequest(req, res) {
 }
 
 async function listNgoReassignmentRequests(req, res) {
+  // NGO queue view with optional status filtering and survivor metadata hydration.
   try {
     const actor = await getActor(req);
     if (!actor) return res.status(401).json({ error: 'Authentication required.' });
@@ -246,6 +266,7 @@ async function listNgoReassignmentRequests(req, res) {
 }
 
 async function reviewNgoReassignmentRequest(req, res) {
+  // NGO review endpoint: approval can trigger actual survivor reassignment.
   try {
     const actor = await getActor(req);
     if (!actor) return res.status(401).json({ error: 'Authentication required.' });
@@ -306,6 +327,7 @@ async function reviewNgoReassignmentRequest(req, res) {
         survivorId: request.survivorId,
         counsellorId,
         legalCounselId,
+        // The reason string is captured in assignment history for auditability.
         reason: `Approved survivor request ${request.requestId}`
       });
     }

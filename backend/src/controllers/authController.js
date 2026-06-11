@@ -485,6 +485,10 @@ const verifyOTP = async (req, res) => {
         await user.save();
 
         if (effectiveIntent === AUTH_INTENTS.SIGNUP_OTP && isFirstTimeSignup) {
+            // Signup completion bundles three side effects:
+            // 1) sanitize/persist survivor profile fields from onboarding UI,
+            // 2) auto-assign counsellor/legal counsel based on workload,
+            // 3) pre-create direct chat channels for immediate visibility.
             const sanitizedProfileInput = sanitizeSignupSurvivorProfileInput(profileDetails, user);
             const survivorProfile = await ensureSurvivorStaffAutoAssignment(user, sanitizedProfileInput);
 

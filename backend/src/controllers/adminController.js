@@ -776,8 +776,9 @@ async function reassignSurvivor(req, res) {
       reason
     });
 
-    // Provision chat channels immediately after assignment changes so both
-    // survivor and newly assigned staff see the channel in their sidebar.
+    // `applySurvivorReassignment` persists assignment history + workload updates.
+    // This follow-up step only guarantees direct-chat continuity for the new
+    // survivor/staff relationship after reassignment completes.
     const survivor = await SurvivorProfile.findByPk(assignment.survivorId);
     if (survivor) {
       await ensureAutoChannelsForSurvivor(survivor);
