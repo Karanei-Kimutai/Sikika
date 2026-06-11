@@ -37,6 +37,7 @@ const LOCKOUT_MS = Number(process.env.AUTH_LOCKOUT_MS || 15 * 60 * 1000);
 const AUTH_STAGES = {
     OTP_VERIFICATION_REQUIRED: 'OTP_VERIFICATION_REQUIRED',
     PASSWORD_SETUP_REQUIRED: 'PASSWORD_SETUP_REQUIRED',
+    PASSWORD_RESET_REQUIRED: 'PASSWORD_RESET_REQUIRED',
     SIGNUP_REQUIRED: 'SIGNUP_REQUIRED',
     SIGNIN_REQUIRED: 'SIGNIN_REQUIRED',
     PASSWORD_RESET_OTP_REQUIRED: 'PASSWORD_RESET_OTP_REQUIRED',
@@ -65,6 +66,11 @@ function getSafeErrorMessage(error) {
 
 function getCanonicalRole(user) {
     return user.userRole || user.role;
+}
+
+function isAccountActive(user) {
+    const status = String(user?.accountStatus || 'ACTIVE').toUpperCase();
+    return status !== 'SUSPENDED' && status !== 'DEACTIVATED';
 }
 
 // Normalizes accepted phone formats into a stable canonical representation.
@@ -224,12 +230,12 @@ function buildDefaultSurvivorProfileFields(user) {
 // then falling back to any profile if all staff are OFFLINE.
 // Assumption: staff profiles are provisioned via NGO admin user-management flows.
 // Signup logic here never promotes survivor role; it only links existing staff.
-async function pickLeastLoadedStaff(ProfileModel, transaction) {
+async function pickLeastLoadedStaff(ProfileModel, idField, transaction) {
     const preferred = await ProfileModel.findOne({
         where: { availabilityStatus: { [Op.in]: ['AVAILABLE', 'BUSY'] } },
         order: [
             ['currentWorkloadScore', 'ASC'],
-            ['createdAt', 'ASC']
+            [idField, 'ASC']
         ],
         transaction
     });
@@ -239,7 +245,7 @@ async function pickLeastLoadedStaff(ProfileModel, transaction) {
     return ProfileModel.findOne({
         order: [
             ['currentWorkloadScore', 'ASC'],
-            ['createdAt', 'ASC']
+            [idField, 'ASC']
         ],
         transaction
     });
@@ -258,8 +264,8 @@ async function ensureSurvivorStaffAutoAssignment(user) {
             return existingProfile;
         }
 
-        const assignedCounsellor = await pickLeastLoadedStaff(CounsellorProfile, transaction);
-        const assignedLegalCounsel = await pickLeastLoadedStaff(LegalCounselProfile, transaction);
+        const assignedCounsellor = await pickLeastLoadedStaff(CounsellorProfile, 'counsellorId', transaction);
+        const assignedLegalCounsel = await pickLeastLoadedStaff(LegalCounselProfile, 'legalCounselId', transaction);
         const defaults = buildDefaultSurvivorProfileFields(user);
 
         const survivorProfile = await SurvivorProfile.create({
@@ -385,6 +391,10 @@ const verifyOTP = async (req, res) => {
             return res.status(401).json({ error: 'Invalid or expired OTP.' });
         }
 
+        if (!isAccountActive(user)) {
+            return res.status(403).json({ error: 'This account is suspended or deactivated.' });
+        }
+
         if (isLocked(user)) {
             return res.status(423).json({
                 error: 'Account temporarily locked due to repeated failed attempts.',
@@ -459,6 +469,18 @@ const verifyOTP = async (req, res) => {
 
         const token = issueAuthToken(user);
 
+        if (String(user.status || '').toLowerCase() === 'password_reset_required') {
+            return res.status(200).json({
+                message: 'Password reset is required before first access.',
+                token,
+                userId: user.userId,
+                authStage: AUTH_STAGES.PASSWORD_RESET_REQUIRED,
+                authIntent: effectiveIntent,
+                authMethod: 'OTP',
+                role: getCanonicalRole(user)
+            });
+        }
+
         return res.status(200).json({
             message: 'Login successful!',
             token,
@@ -494,6 +516,10 @@ const loginWithPassword = async (req, res) => {
             return res.status(401).json({ error: 'Invalid credentials.' });
         }
 
+        if (!isAccountActive(user)) {
+            return res.status(403).json({ error: 'This account is suspended or deactivated.' });
+        }
+
         if (isLocked(user)) {
             return res.status(423).json({
                 error: 'Account temporarily locked due to repeated failed attempts.',
@@ -510,6 +536,17 @@ const loginWithPassword = async (req, res) => {
         await clearPasswordFailureState(user);
 
         const token = issueAuthToken(user);
+
+        if (String(user.status || '').toLowerCase() === 'password_reset_required') {
+            return res.status(200).json({
+                message: 'Password reset is required before first access.',
+                token,
+                userId: user.userId,
+                authStage: AUTH_STAGES.PASSWORD_RESET_REQUIRED,
+                authMethod: 'PASSWORD',
+                role: getCanonicalRole(user)
+            });
+        }
 
         return res.status(200).json({
             message: 'Password login successful!',
@@ -647,6 +684,7 @@ const setPassword = async (req, res) => {
         }
 
         user.hashedPassword = await bcrypt.hash(password, 10);
+        user.status = 'active';
         await user.save();
 
         return res.status(200).json({ message: 'Password set successfully.' });

@@ -44,6 +44,7 @@ const ModerationActionLog       = require('./moderationActionLog');
 const AuditLog                  = require('./auditlog');
 const InAppNotification         = require('./inAppNotification');
 const SupportResource           = require('./supportResource');
+const ResourceAccessEvent       = require('./resourceAccessEvent');
 const StaffAssignmentHistory    = require('./staffAssignmentHistory');
 const UssdCallbackRequest       = require('./ussdCallbackRequest');
 const OtpVerificationRequest    = require('./otpVerificationRequest');
@@ -217,6 +218,12 @@ InAppNotification.belongsTo(UserAccount,  { foreignKey: 'recipientUserId', as: '
 UserAccount.hasMany(SupportResource,    { foreignKey: 'uploadedByStaffId', as: 'uploadedResources' });
 SupportResource.belongsTo(UserAccount,  { foreignKey: 'uploadedByStaffId', as: 'uploadedBy' });
 
+SupportResource.hasMany(ResourceAccessEvent, { foreignKey: 'resourceId', onDelete: 'CASCADE' });
+ResourceAccessEvent.belongsTo(SupportResource, { foreignKey: 'resourceId' });
+
+UserAccount.hasMany(ResourceAccessEvent, { foreignKey: 'accessorUserId', onDelete: 'SET NULL' });
+ResourceAccessEvent.belongsTo(UserAccount, { foreignKey: 'accessorUserId' });
+
 
 // ── StaffAssignmentHistory ────────────────────────────────────────────────────
 
@@ -267,6 +274,7 @@ module.exports = {
 
   // Resources
   SupportResource,
+  ResourceAccessEvent,
 
   // Assignments and external services
   StaffAssignmentHistory,

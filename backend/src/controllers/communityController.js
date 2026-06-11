@@ -170,13 +170,28 @@ async function listRooms(req, res) {
   const response = await Promise.all(
     rooms.map(async (room) => {
       const membersCount = await RoomMembership.count({ where: { roomId: room.roomId } });
+      // Latest room activity drives room ordering in clients.
+      const latestMessage = await CommunityMessage.findOne({
+        where: { roomId: room.roomId },
+        attributes: ["messageDispatchTimestamp"],
+        order: [["messageDispatchTimestamp", "DESC"]]
+      });
+
       return {
         ...room.toJSON(),
         joined: joinedIds.has(room.roomId),
-        membersCount
+        membersCount,
+        latestMessageDispatchTimestamp: latestMessage?.messageDispatchTimestamp || null
       };
     })
   );
+
+  // API guarantees newest-active room first for consistent UX across clients.
+  response.sort((a, b) => {
+    const aTime = Date.parse(a.latestMessageDispatchTimestamp || a.roomCreationTimestamp || 0);
+    const bTime = Date.parse(b.latestMessageDispatchTimestamp || b.roomCreationTimestamp || 0);
+    return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
+  });
 
   return res.json({ rooms: response });
 }
@@ -490,6 +505,16 @@ async function reviewReport(req, res) {
         moderatorUserId: actor.userId,
         targetUserId: message.senderUserId,
         moderationActionType: "SUSPENSION",
+        moderationActionReason: report.reportReasonText
+      });
+    }
+
+    if (action === "issue_warning") {
+      await ModerationActionLog.create({
+        moderationActionId: randomUUID(),
+        moderatorUserId: actor.userId,
+        targetUserId: message.senderUserId,
+        moderationActionType: "WARNING",
         moderationActionReason: report.reportReasonText
       });
     }

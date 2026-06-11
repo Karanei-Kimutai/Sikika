@@ -66,6 +66,13 @@ async function hash(plaintext) {
 // ── Helper: generate a UUID ────────────────────────────────────────────────
 const id = () => uuidv4();
 
+function daysAgo(days) {
+  const date = new Date();
+  date.setHours(10, 0, 0, 0);
+  date.setDate(date.getDate() - days);
+  return date;
+}
+
 
 // ════════════════════════════════════════════════════════════════════════════
 // SEED FUNCTION
@@ -310,7 +317,8 @@ async function seed() {
       incidentDescriptionText: 'Repeated incidents at home over the past three months. Increasing frequency.',
       incidentLocation:       'Nairobi, Eastlands',
       incidentDate:           '2026-04-15',
-      currentReportStatus:    'IN_PROGRESS'
+      currentReportStatus:    'IN_PROGRESS',
+      reportCreationTimestamp: daysAgo(29)
     });
 
     // Evidence file for report 1
@@ -333,7 +341,8 @@ async function seed() {
       incidentDescriptionText: 'Incident occurred on the stated date. Medical attention was sought.',
       incidentLocation:       'Nairobi, CBD',
       incidentDate:           '2026-05-01',
-      currentReportStatus:    'ESCALATED'
+      currentReportStatus:    'ESCALATED',
+      reportCreationTimestamp: daysAgo(25)
     });
 
     // Legal case escalated from report 2
@@ -352,8 +361,95 @@ async function seed() {
       incidentDescriptionText: 'Ongoing stalking behaviour from a known individual.',
       incidentLocation:       'Mombasa, Old Town',
       incidentDate:           '2026-05-10',
-      currentReportStatus:    'SUBMITTED'
+      currentReportStatus:    'SUBMITTED',
+      reportCreationTimestamp: daysAgo(21)
     });
+
+    const extraReports = [
+      {
+        survivorId: survivorIds[3],
+        incidentCategory: 'economic_abuse',
+        severityLevel: 'LOW',
+        incidentDescriptionText: 'Partner controls all income and denies household support.',
+        incidentLocation: 'Kisumu, Nyamasaria',
+        incidentDate: '2026-03-22',
+        currentReportStatus: 'UNDER_REVIEW',
+        reportCreationTimestamp: daysAgo(17)
+      },
+      {
+        survivorId: survivorIds[4],
+        incidentCategory: 'physical_violence',
+        severityLevel: 'HIGH',
+        incidentDescriptionText: 'Recent assault with repeated threats.',
+        incidentLocation: 'Mombasa, Kisauni',
+        incidentDate: '2026-05-18',
+        currentReportStatus: 'ACTIVE_SUPPORT',
+        reportCreationTimestamp: daysAgo(14)
+      },
+      {
+        survivorId: survivorIds[0],
+        incidentCategory: 'psychological_abuse',
+        severityLevel: 'MEDIUM',
+        incidentDescriptionText: 'Persistent intimidation and isolation from family support.',
+        incidentLocation: 'Nairobi, Kasarani',
+        incidentDate: '2026-02-14',
+        currentReportStatus: 'RESOLVED',
+        reportCreationTimestamp: daysAgo(10)
+      },
+      {
+        survivorId: survivorIds[1],
+        incidentCategory: 'digital_harassment',
+        severityLevel: 'MEDIUM',
+        incidentDescriptionText: 'Ongoing threats through social media and messaging apps.',
+        incidentLocation: 'Nairobi, South B',
+        incidentDate: '2026-04-03',
+        currentReportStatus: 'UNDER_INVESTIGATION',
+        reportCreationTimestamp: daysAgo(6)
+      },
+      {
+        survivorId: survivorIds[2],
+        incidentCategory: 'child_protection',
+        severityLevel: 'CRITICAL',
+        incidentDescriptionText: 'Urgent child safety risk reported in household.',
+        incidentLocation: 'Mombasa, Nyali',
+        incidentDate: '2026-05-21',
+        currentReportStatus: 'LEGAL_REVIEW',
+        reportCreationTimestamp: daysAgo(2)
+      }
+    ];
+
+    for (const report of extraReports) {
+      await IncidentReport.create({ reportId: id(), ...report });
+    }
+
+    const bulkReportTemplates = [
+      { category: 'physical_violence', severity: 'HIGH', status: 'UNDER_REVIEW', location: 'Nairobi, Embakasi' },
+      { category: 'emotional_abuse', severity: 'MEDIUM', status: 'ACTIVE_SUPPORT', location: 'Mombasa, Bamburi' },
+      { category: 'economic_abuse', severity: 'LOW', status: 'SUBMITTED', location: 'Kisumu, Kondele' },
+      { category: 'digital_harassment', severity: 'MEDIUM', status: 'UNDER_INVESTIGATION', location: 'Nairobi, Kilimani' },
+      { category: 'sexual_violence', severity: 'CRITICAL', status: 'LEGAL_REVIEW', location: 'Mombasa, Nyali' },
+      { category: 'child_protection', severity: 'HIGH', status: 'UNDER_REVIEW', location: 'Kisumu, Mamboleo' }
+    ];
+
+    // Add more reports with denser activity around recent days to make trend shifts visible.
+    const additionalReportDays = [28, 27, 24, 23, 20, 19, 16, 15, 12, 11, 8, 7, 5, 4, 3, 1];
+
+    for (let i = 0; i < additionalReportDays.length; i += 1) {
+      const template = bulkReportTemplates[i % bulkReportTemplates.length];
+      const survivorId = survivorIds[i % survivorIds.length];
+
+      await IncidentReport.create({
+        reportId: id(),
+        survivorId,
+        incidentCategory: template.category,
+        severityLevel: template.severity,
+        incidentDescriptionText: `Follow-up seeded case ${i + 1} for analytics visibility and dashboard testing.`,
+        incidentLocation: template.location,
+        incidentDate: new Date(Date.now() - (additionalReportDays[i] + 2) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+        currentReportStatus: template.status,
+        reportCreationTimestamp: daysAgo(additionalReportDays[i])
+      });
+    }
 
 
     // ── 7. COMMUNITY ROOMS ───────────────────────────────────────────────
@@ -405,6 +501,22 @@ async function seed() {
       senderUserId:         survivorUserIds[1],
       publicMessageContent: 'I found the legal resources here very helpful. Recommended!'
     });
+
+    const additionalCommunityMessages = [
+      { roomId: roomId1, senderUserId: survivorUserIds[0], publicMessageContent: 'Has anyone used the county safe-house referral process recently?' },
+      { roomId: roomId1, senderUserId: survivorUserIds[2], publicMessageContent: 'Breathing exercises helped me today. Sharing this in case it helps someone else.' },
+      { roomId: roomId2, senderUserId: survivorUserIds[3], publicMessageContent: 'Can someone explain what happens after filing a police abstract?' },
+      { roomId: roomId2, senderUserId: survivorUserIds[0], publicMessageContent: 'The legal rights PDF answered many of my questions.' },
+      { roomId: roomId2, senderUserId: survivorUserIds[4], publicMessageContent: 'I need guidance on obtaining protective orders.' },
+      { roomId: roomId1, senderUserId: counsellorUserIds[1], publicMessageContent: 'Reminder: You can step away and come back later. Your pace matters.' }
+    ];
+
+    for (const message of additionalCommunityMessages) {
+      await CommunityMessage.create({
+        communityMessageId: id(),
+        ...message
+      });
+    }
 
     // A flagged message for moderation testing
     const flaggedMsgId = id();
@@ -545,6 +657,24 @@ async function seed() {
         category: 'safety_planning',
         desc:     'A step-by-step personal safety plan template for survivors in active risk.',
         url:      'https://example.com/resources/safety-plan-template.pdf'
+      },
+      {
+        title:    'County Referral Directory',
+        category: 'service_directory',
+        desc:     'County-by-county contacts for shelters, counselling, and legal support desks.',
+        url:      'https://example.com/resources/county-referrals.pdf'
+      },
+      {
+        title:    'Court Process Checklist',
+        category: 'legal_guidance',
+        desc:     'Step list of documents and milestones for GBV-related legal follow-up.',
+        url:      'https://example.com/resources/court-process-checklist.pdf'
+      },
+      {
+        title:    'Trauma-Informed Grounding Exercises',
+        category: 'self_help',
+        desc:     'Quick grounding and regulation practices for high-stress moments.',
+        url:      'https://example.com/resources/grounding-exercises.pdf'
       }
     ];
 
@@ -634,9 +764,9 @@ async function seed() {
     console.log('  Counsellors:     3');
     console.log('  Legal Counsel:   3');
     console.log('  Survivors:       5');
-    console.log('  Reports:         3  (1 escalated to legal case)');
+    console.log('  Reports:         24 (1 escalated to legal case)');
     console.log('  Community Rooms: 2');
-    console.log('  Resources:       5');
+    console.log('  Resources:       8');
     console.log('─────────────────────────────────────────\n');
 
   } catch (error) {

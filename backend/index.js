@@ -5,6 +5,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 require("dotenv").config();
 const authMiddleware = require("./src/middleware/authMiddleware");
+const { maintenanceGuard, getMaintenanceModeState } = require("./src/controllers/adminController");
 
 /**
  * Backend bootstrap file.
@@ -67,11 +68,15 @@ app.use(cors({
 // Parse JSON request bodies before route handlers access req.body.
 app.use(express.json());
 
+// Global maintenance enforcement is applied before business routes.
+app.use(maintenanceGuard);
+
 const authRoutes = require("./src/routes/authRoutes");
 const resourceRoutes = require("./src/routes/resourceRoutes");
 const chatRoutes = require("./src/routes/chatRoutes");
 const reportRoutes = require("./src/routes/reportRoutes");
 const communityRoutes = require("./src/routes/communityRoutes");
+const adminRoutes = require("./src/routes/adminRoutes");
 
 // Lightweight API smoke-test endpoint.
 app.get("/api/hello", (req, res) => {
@@ -81,6 +86,11 @@ app.get("/api/hello", (req, res) => {
 // Process-level health check. This confirms Express is reachable.
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
+});
+
+// Public status endpoint used by frontend to show a maintenance screen.
+app.get("/api/system/public-status", (req, res) => {
+  res.json({ maintenanceMode: getMaintenanceModeState() });
 });
 
 // Database health check. This is useful when Express starts but MySQL is uncertain.
@@ -100,6 +110,7 @@ app.use("/api/resources", resourceRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/community", communityRoutes);
+app.use("/api/admin", adminRoutes);
 
 /**
  * Session inspection endpoint.
@@ -201,7 +212,11 @@ async function startServer() {
     await db.sequelize.authenticate();
     console.log("Database connected successfully!");
 
-    await db.sequelize.sync({ alter: true });
+    // `alter: true` can repeatedly create/index constraints across restarts in
+    // mutable dev databases and eventually hit MySQL max-key limits. Keep
+    // default startup sync non-destructive, with optional alter mode by env.
+    const enableAlterSync = process.env.DB_SYNC_ALTER === "true";
+    await db.sequelize.sync(enableAlterSync ? { alter: true } : undefined);
     console.log("Database tables synced successfully!");
 
     const PORT = Number(process.env.PORT || 5000);
