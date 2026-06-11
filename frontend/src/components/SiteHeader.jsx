@@ -46,8 +46,6 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
     ];
   })();
 
-  const isAdmin = role === "NGO_ADMIN" || role === "SYSTEM_ADMIN";
-
   return (
     <header className="site-header">
       <button type="button" className="brand-mark" onClick={() => onNavigate("/")}>
@@ -72,6 +70,11 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
       </nav>
 
       <div className="header-actions">
+        {!isAuthenticated && (
+          <button type="button" className="header-action" onClick={() => onNavigate("/join")}>
+            Join Community
+          </button>
+        )}
         {isAuthenticated && (
           <button type="button" className="header-signout" onClick={onSignOut}>
             Sign Out
