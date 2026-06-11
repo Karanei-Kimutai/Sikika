@@ -97,12 +97,18 @@ function SystemAdminDashboardPage({ onNavigate, onSignOut, initialSection = "inf
 
   useEffect(() => {
     // Initial dashboard bootstrap.
-    loadDashboard();
+    const timerId = window.setTimeout(() => {
+      void loadDashboard();
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, []);
 
   useEffect(() => {
     // Route aliases resolve to a default section via initialSection prop.
-    setActiveSection(initialSection);
+    const timerId = window.setTimeout(() => {
+      setActiveSection(initialSection);
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, [initialSection]);
 
   useEffect(() => {

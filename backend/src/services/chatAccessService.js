@@ -7,6 +7,17 @@ const {
   DirectChatChannel
 } = require("../models");
 
+/**
+ * chatAccessService
+ * -----------------
+ * Central access-control helper for direct chat features.
+ *
+ * Why this exists:
+ * - keeps role normalization and actor resolution in one place
+ * - ensures survivor/staff channel access rules are shared across controllers
+ * - provisions assignment-driven channels idempotently
+ */
+
 function normalizeRole(value) {
   const role = String(value || "").trim().toUpperCase();
   if (role === "LEGALCOUNSEL") return "LEGAL_COUNSEL";
@@ -54,6 +65,7 @@ async function ensureAutoChannelsForSurvivor(survivorProfile) {
   const createdOrFound = [];
 
   if (survivorProfile.assignedCounsellorId) {
+    // Auto-provision counsellor channel from assignment if missing.
     const assignedCounsellor = await CounsellorProfile.findByPk(survivorProfile.assignedCounsellorId);
     if (assignedCounsellor?.userId) {
       const [channel] = await DirectChatChannel.findOrCreate({
@@ -75,6 +87,7 @@ async function ensureAutoChannelsForSurvivor(survivorProfile) {
   }
 
   if (survivorProfile.assignedLegalCounselId) {
+    // Auto-provision legal counsel channel from assignment if missing.
     const assignedLegal = await LegalCounselProfile.findByPk(survivorProfile.assignedLegalCounselId);
     if (assignedLegal?.userId) {
       const [channel] = await DirectChatChannel.findOrCreate({
@@ -103,7 +116,10 @@ async function canUserAccessChannel(userId, chatId) {
   if (!actor) return false;
 
   const channel = await DirectChatChannel.findByPk(chatId);
-  if (!channel || channel.chatChannelStatus !== "active") return false;
+  // Deleted channels are intentionally inaccessible. Archived channels remain
+  // viewable for survivor restore workflows, while send-path still checks for
+  // active status in socket handlers.
+  if (!channel || channel.chatChannelStatus === "deleted") return false;
 
   if (actor.role === "SYSTEM_ADMIN") return false;
 
