@@ -1,6 +1,8 @@
 const express = require('express');
 const { Op } = require('sequelize');
-const { SupportResource } = require('../models');
+const jwt = require('jsonwebtoken');
+const { randomUUID } = require('crypto');
+const { SupportResource, ResourceAccessEvent } = require('../models');
 
 const router = express.Router();
 
@@ -18,6 +20,17 @@ const formatCategoryLabel = (category) =>
     .split('_')
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
+
+function tryExtractUserId(req) {
+  const header = req.headers.authorization || '';
+  if (!header.startsWith('Bearer ')) return null;
+  try {
+    const decoded = jwt.verify(header.slice('Bearer '.length).trim(), process.env.JWT_SECRET);
+    return decoded.userId || decoded.id || null;
+  } catch {
+    return null;
+  }
+}
 
 router.get('/', async (req, res) => {
   const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
@@ -80,6 +93,32 @@ router.get('/', async (req, res) => {
       error: 'Could not load support resources.',
       details: process.env.NODE_ENV === 'production' ? undefined : error.message
     });
+  }
+});
+
+router.post('/:resourceId/track-access', async (req, res) => {
+  // Best-effort analytics endpoint used by frontend when a resource is opened.
+  // Auth token is optional; anonymous opens are still recorded with null accessor.
+  try {
+    const resource = await SupportResource.findByPk(req.params.resourceId, {
+      attributes: ['resourceId']
+    });
+
+    if (!resource) {
+      return res.status(404).json({ error: 'Resource not found.' });
+    }
+
+    const accessorUserId = tryExtractUserId(req);
+    await ResourceAccessEvent.create({
+      accessEventId: randomUUID(),
+      resourceId: resource.resourceId,
+      accessorUserId,
+      accessChannel: 'WEB'
+    });
+
+    return res.status(201).json({ tracked: true });
+  } catch (error) {
+    return res.status(500).json({ error: 'Could not track resource access.' });
   }
 });
 
