@@ -45,6 +45,15 @@ function AuthPage({ onNavigate }) {
   const [resetNewPassword, setResetNewPassword] = useState("");
   const [showResetPassword, setShowResetPassword] = useState(false);
 
+  // First-login forced reset flow for staff created by system admin.
+  // Backend returns authStage=PASSWORD_RESET_REQUIRED with a temporary token.
+  // User must set a new password before proceeding to /home.
+  const [showFirstLoginResetFlow, setShowFirstLoginResetFlow] = useState(false);
+  const [firstLoginResetPassword, setFirstLoginResetPassword] = useState("");
+  const [showFirstLoginResetPassword, setShowFirstLoginResetPassword] = useState(false);
+  const [firstLoginAuthToken, setFirstLoginAuthToken] = useState("");
+  const [firstLoginUserId, setFirstLoginUserId] = useState("");
+
   // Shared UI state for all auth actions.
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -70,6 +79,10 @@ function AuthPage({ onNavigate }) {
   const canSubmitResetPhone = useMemo(() => resetPhone.trim().length >= 10, [resetPhone]);
   const canSubmitResetOtp = useMemo(() => resetOtp.trim().length === 4, [resetOtp]);
   const canSubmitResetPassword = useMemo(() => resetNewPassword.trim().length >= 8, [resetNewPassword]);
+  const canSubmitFirstLoginResetPassword = useMemo(
+    () => firstLoginResetPassword.trim().length >= 8,
+    [firstLoginResetPassword]
+  );
 
   // Reset transient notices before a fresh auth request starts.
   const clearMessages = () => {
@@ -93,6 +106,10 @@ function AuthPage({ onNavigate }) {
     setSigninOtp("");
     setShowResetFlow(false);
     setResetStep("request");
+    setShowFirstLoginResetFlow(false);
+    setFirstLoginResetPassword("");
+    setFirstLoginAuthToken("");
+    setFirstLoginUserId("");
   };
 
   // Switches to Sign Up mode and clears stale OTP/password fields.
@@ -104,6 +121,46 @@ function AuthPage({ onNavigate }) {
     setSignupPassword("");
     setShowResetFlow(false);
     setResetStep("request");
+    setShowFirstLoginResetFlow(false);
+    setFirstLoginResetPassword("");
+    setFirstLoginAuthToken("");
+    setFirstLoginUserId("");
+  };
+
+  const beginFirstLoginResetFlow = (responseData, phoneValue) => {
+    // Preserve temporary auth token so set-password can be called in-session.
+    setShowFirstLoginResetFlow(true);
+    setFirstLoginAuthToken(responseData.token || "");
+    setFirstLoginUserId(responseData.userId || "");
+    setFirstLoginResetPassword("");
+    setResetPhone(phoneValue || "");
+    setSuccessMessage("First-time staff login detected. Set a new password to continue.");
+  };
+
+  const completeFirstLoginPasswordReset = async () => {
+    // Uses authenticated set-password endpoint instead of forgot-password flow.
+    if (!canSubmitFirstLoginResetPassword || !firstLoginAuthToken) {
+      setErrorMessage("Enter a new password (minimum 8 characters).");
+      return;
+    }
+
+    clearMessages();
+    setLoading(true);
+
+    try {
+      await axios.post(
+        `${API_BASE_URL}/api/auth/set-password`,
+        { password: firstLoginResetPassword.trim() },
+        { headers: { Authorization: `Bearer ${firstLoginAuthToken}` } }
+      );
+
+      setShowFirstLoginResetFlow(false);
+      finalizeLogin(firstLoginAuthToken, firstLoginUserId || null);
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Could not update password.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Opens forgot-password flow inside Sign In card.
@@ -264,6 +321,11 @@ function AuthPage({ onNavigate }) {
         password: signinPassword.trim()
       });
 
+      if (response.data?.authStage === "PASSWORD_RESET_REQUIRED") {
+        beginFirstLoginResetFlow(response.data, signinPhone.trim());
+        return;
+      }
+
       finalizeLogin(response.data.token, response.data.userId);
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Password login failed. Check your phone number and password.");
@@ -327,6 +389,11 @@ function AuthPage({ onNavigate }) {
         otp: signinOtp.trim(),
         authIntent: AUTH_INTENTS.SIGNIN_OTP
       });
+
+      if (response.data?.authStage === "PASSWORD_RESET_REQUIRED") {
+        beginFirstLoginResetFlow(response.data, signinPhone.trim());
+        return;
+      }
 
       finalizeLogin(response.data.token, response.data.userId);
     } catch (error) {
@@ -404,6 +471,42 @@ function AuthPage({ onNavigate }) {
           {authMode === "signin" ? (
             <div className="field-group auth-step-card">
               <p className="auth-step-heading">Existing Account</p>
+
+              {showFirstLoginResetFlow ? (
+                <>
+                  <p className="auth-mini-guide">For security, you must replace the temporary password before entering the platform.</p>
+                  <label htmlFor="firstLoginResetPassword">New Password</label>
+                  <div className="password-input-wrap">
+                    <input
+                      id="firstLoginResetPassword"
+                      type={showFirstLoginResetPassword ? "text" : "password"}
+                      placeholder="Minimum 8 characters"
+                      value={firstLoginResetPassword}
+                      onChange={(event) => setFirstLoginResetPassword(event.target.value)}
+                      autoComplete="off"
+                      name="first-login-reset-password-input"
+                      data-lpignore="true"
+                    />
+                    <button
+                      type="button"
+                      className="password-toggle-btn"
+                      onClick={() => setShowFirstLoginResetPassword((value) => !value)}
+                    >
+                      {showFirstLoginResetPassword ? "Hide" : "Show"}
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="primary-btn auth-cta-btn"
+                    onClick={completeFirstLoginPasswordReset}
+                    disabled={loading || !canSubmitFirstLoginResetPassword}
+                  >
+                    {loading ? "Updating password..." : "Update Password & Continue"}
+                  </button>
+                </>
+              ) : (
+                <>
               <div className="auth-method-switch" role="tablist" aria-label="Sign in method">
                 <button
                   type="button"
@@ -619,6 +722,8 @@ function AuthPage({ onNavigate }) {
               <button type="button" className="link-btn" onClick={switchToSignup} disabled={loading}>
                 New here? Go to Sign Up
               </button>
+                </>
+              )}
             </div>
           ) : (
             <div className="field-group auth-step-card">

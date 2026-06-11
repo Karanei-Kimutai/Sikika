@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { fallbackCategories, fallbackResources } from "../data/fallbackResources";
-import { getResources } from "../services/resources";
+import { getResources, trackResourceAccess } from "../services/resources";
 
 /**
  * Public resource library page.
@@ -31,6 +31,16 @@ function LibraryPage() {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+
+  async function handleResourceOpen(resource) {
+    try {
+      if (resource?.id) {
+        await trackResourceAccess(resource.id);
+      }
+    } catch {
+      // Analytics should never block resource access.
+    }
+  }
 
   useEffect(() => {
     let isMounted = true;
@@ -142,7 +152,13 @@ function LibraryPage() {
                 <h2>{resource.title}</h2>
                 <p>{resource.description || "Open this resource to view the full support material."}</p>
               </div>
-              <a className="tile-action" href={resource.fileUrl} target="_blank" rel="noreferrer">
+              <a
+                className="tile-action"
+                href={resource.fileUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => handleResourceOpen(resource)}
+              >
                 View / Download
               </a>
             </article>
