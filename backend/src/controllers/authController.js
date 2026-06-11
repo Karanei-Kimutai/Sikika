@@ -10,6 +10,7 @@ const {
     LegalCounselProfile,
     StaffAssignmentHistory
 } = require('../models');
+const { ensureAutoChannelsForSurvivor } = require('../services/chatAccessService');
 
 /**
  * Authentication controller
@@ -226,6 +227,23 @@ function buildDefaultSurvivorProfileFields(user) {
     };
 }
 
+function sanitizeSignupSurvivorProfileInput(rawInput, user) {
+    const input = rawInput && typeof rawInput === 'object' ? rawInput : {};
+
+    const fallbackNickname = `Survivor-${String(user.userId || '').replace(/-/g, '').slice(0, 6) || 'new'}`;
+    const displayNickname = String(input.displayNickname || '').trim();
+    const assignedGender = String(input.assignedGender || '').trim().toUpperCase();
+    const residenceCounty = String(input.residenceCounty || '').trim();
+    const notificationsEnabled = input.notificationsEnabled !== false;
+
+    return {
+        displayNickname: (displayNickname || fallbackNickname).slice(0, 50),
+        assignedGender: assignedGender || 'UNSPECIFIED',
+        residenceCounty: (residenceCounty || 'UNSPECIFIED').slice(0, 50),
+        privacyPreferencesJson: { notificationsEnabled }
+    };
+}
+
 // Picks least-loaded staff member, preferring currently AVAILABLE or BUSY workers,
 // then falling back to any profile if all staff are OFFLINE.
 // Assumption: staff profiles are provisioned via NGO admin user-management flows.
@@ -253,7 +271,7 @@ async function pickLeastLoadedStaff(ProfileModel, idField, transaction) {
 
 // Ensures every newly completed survivor signup has a survivor profile, auto-assigned
 // counsellor/legal counsel, and an assignment history record for auditing.
-async function ensureSurvivorStaffAutoAssignment(user) {
+async function ensureSurvivorStaffAutoAssignment(user, profileOverrides = null) {
     return sequelize.transaction(async (transaction) => {
         const existingProfile = await SurvivorProfile.findOne({
             where: { userId: user.userId },
@@ -267,11 +285,14 @@ async function ensureSurvivorStaffAutoAssignment(user) {
         const assignedCounsellor = await pickLeastLoadedStaff(CounsellorProfile, 'counsellorId', transaction);
         const assignedLegalCounsel = await pickLeastLoadedStaff(LegalCounselProfile, 'legalCounselId', transaction);
         const defaults = buildDefaultSurvivorProfileFields(user);
+        const profileData = profileOverrides && typeof profileOverrides === 'object'
+            ? { ...defaults, ...profileOverrides }
+            : defaults;
 
         const survivorProfile = await SurvivorProfile.create({
             survivorId: randomUUID(),
             userId: user.userId,
-            ...defaults,
+            ...profileData,
             assignedCounsellorId: assignedCounsellor?.counsellorId || null,
             assignedLegalCounselId: assignedLegalCounsel?.legalCounselId || null
         }, { transaction });
@@ -381,7 +402,7 @@ const requestOTP = async (req, res) => {
  * - or authenticates existing account by OTP signin
  */
 const verifyOTP = async (req, res) => {
-    const { phoneNumber, otp, password, authIntent } = req.body;
+    const { phoneNumber, otp, password, authIntent, profileDetails } = req.body;
     const normalizedPhone = normalizePhoneNumber(phoneNumber);
     const resolvedIntent = resolveAuthIntent(authIntent);
 
@@ -464,7 +485,16 @@ const verifyOTP = async (req, res) => {
         await user.save();
 
         if (effectiveIntent === AUTH_INTENTS.SIGNUP_OTP && isFirstTimeSignup) {
-            await ensureSurvivorStaffAutoAssignment(user);
+            // Signup completion bundles three side effects:
+            // 1) sanitize/persist survivor profile fields from onboarding UI,
+            // 2) auto-assign counsellor/legal counsel based on workload,
+            // 3) pre-create direct chat channels for immediate visibility.
+            const sanitizedProfileInput = sanitizeSignupSurvivorProfileInput(profileDetails, user);
+            const survivorProfile = await ensureSurvivorStaffAutoAssignment(user, sanitizedProfileInput);
+
+            // Eagerly provision direct-chat channels so assigned counsellor/legal counsel
+            // and the survivor can see each other immediately on the chat page.
+            await ensureAutoChannelsForSurvivor(survivorProfile);
         }
 
         const token = issueAuthToken(user);

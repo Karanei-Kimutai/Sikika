@@ -24,6 +24,14 @@ export async function getReports() {
   return response.data;
 }
 
+export async function getReportById(reportId) {
+  const response = await axios.get(`${API_BASE_URL}/api/reports/${reportId}`, {
+    headers: getAuthHeaders()
+  });
+
+  return response.data;
+}
+
 export async function createReport(payload) {
   const response = await axios.post(`${API_BASE_URL}/api/reports`, payload, {
     headers: getAuthHeaders()

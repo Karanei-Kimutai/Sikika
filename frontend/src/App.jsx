@@ -10,6 +10,7 @@ import CommunityPage from "./pages/CommunityPage";
 import ModerationDashboardPage from "./pages/ModerationDashboardPage";
 import NgoAdminDashboardPage from "./pages/NgoAdminDashboardPage";
 import SystemAdminDashboardPage from "./pages/SystemAdminDashboardPage";
+import ManageProfilePage from "./pages/ManageProfilePage";
 import "./App.css";
 
 /**
@@ -39,6 +40,7 @@ const publicRoutes = {
   "/chat": DirectChatPage,
   "/reports": ReportingPage,
   "/community": CommunityPage,
+  "/profile": ManageProfilePage,
   "/moderation": ModerationDashboardPage,
   "/ngo-admin": NgoAdminDashboardPage,
   "/system-admin": SystemAdminDashboardPage
@@ -55,21 +57,28 @@ const ngoAdminRoutes = {
   "/community": CommunityPage,
   "/moderation": (props) => <NgoAdminDashboardPage {...props} initialSection="moderation-desk" />,
   "/library": LibraryPage,
+  "/profile": ManageProfilePage,
   "/join": AuthPage
 };
 
 const systemAdminRoutes = {
   "/": (props) => <SystemAdminDashboardPage {...props} initialSection="infrastructure" />,
   "/home": (props) => <SystemAdminDashboardPage {...props} initialSection="infrastructure" />,
+  // System admins are intentionally granted report/evidence read navigation.
+  // Backend remains source-of-truth for read-only enforcement.
+  "/reports": ReportingPage,
   "/chat": (props) => <SystemAdminDashboardPage {...props} initialSection="maintenance" />,
   "/community": (props) => <SystemAdminDashboardPage {...props} initialSection="ops-logs" />,
   "/library": (props) => <SystemAdminDashboardPage {...props} initialSection="admin-access" />,
+  "/profile": ManageProfilePage,
   "/join": AuthPage
 };
 
 function getRoutesForRole(role, isAuthenticated) {
   if (!isAuthenticated) return publicRoutes;
   if (role === "NGO_ADMIN") return ngoAdminRoutes;
+  // Role-specific app mapping mirrors backend governance model:
+  // NGO admins run operations, system admins monitor infrastructure and oversight views.
   if (role === "SYSTEM_ADMIN") return systemAdminRoutes;
   return publicRoutes;
 }
@@ -194,7 +203,7 @@ function App() {
     };
   }, []);
 
-  const protectedPaths = new Set(["/chat", "/community", "/moderation", "/reports", "/ngo-admin", "/system-admin"]);
+  const protectedPaths = new Set(["/chat", "/community", "/profile", "/moderation", "/reports", "/ngo-admin", "/system-admin"]);
   const resolvedPath = protectedPaths.has(currentPath) && !isAuthenticated ? "/join" : currentPath;
   const roleResolvedPath = (() => {
     if (["/ngo-admin", "/system-admin"].includes(resolvedPath)) {

@@ -21,6 +21,7 @@ const {
   StaffAssignmentHistory,
   ResourceAccessEvent
 } = require('../models');
+const { ensureAutoChannelsForSurvivor } = require('../services/chatAccessService');
 
 /**
  * Admin Controller
@@ -168,6 +169,57 @@ async function refreshWorkloadScores() {
     ...counsellors.map((profile) => profile.update({ currentWorkloadScore: counsellorCountMap.get(profile.counsellorId) || 0 })),
     ...legalCounsel.map((profile) => profile.update({ currentWorkloadScore: legalCountMap.get(profile.legalCounselId) || 0 }))
   ]);
+}
+
+async function applySurvivorReassignment({ survivorId, counsellorId = null, legalCounselId = null, reason }) {
+  const survivor = await SurvivorProfile.findByPk(survivorId);
+  if (!survivor) {
+    const error = new Error('Survivor profile not found.');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (counsellorId) {
+    const counsellor = await CounsellorProfile.findByPk(counsellorId);
+    if (!counsellor) {
+      const error = new Error('Counsellor profile not found.');
+      error.statusCode = 404;
+      throw error;
+    }
+  }
+
+  if (legalCounselId) {
+    const legalCounsel = await LegalCounselProfile.findByPk(legalCounselId);
+    if (!legalCounsel) {
+      const error = new Error('Legal counsel profile not found.');
+      error.statusCode = 404;
+      throw error;
+    }
+  }
+
+  await survivor.update({
+    assignedCounsellorId: counsellorId || null,
+    assignedLegalCounselId: legalCounselId || null
+  });
+
+  await StaffAssignmentHistory.create({
+    assignmentHistoryId: randomUUID(),
+    survivorId: survivor.survivorId,
+    counsellorId: survivor.assignedCounsellorId,
+    legalCounselId: survivor.assignedLegalCounselId,
+    assignmentReason: String(reason || '').trim() || 'Manual reassignment by NGO Admin'
+  });
+
+  // Keep direct-chat visibility in sync with latest survivor/staff assignment.
+  await ensureAutoChannelsForSurvivor(survivor);
+
+  await refreshWorkloadScores();
+
+  return {
+    survivorId: survivor.survivorId,
+    counsellorId: survivor.assignedCounsellorId,
+    legalCounselId: survivor.assignedLegalCounselId
+  };
 }
 
 /**
@@ -720,50 +772,22 @@ async function reassignSurvivor(req, res) {
       return res.status(400).json({ error: 'survivorId is required.' });
     }
 
-    const survivor = await SurvivorProfile.findByPk(survivorId);
-    if (!survivor) {
-      return res.status(404).json({ error: 'Survivor profile not found.' });
-    }
-
-    if (counsellorId) {
-      const counsellor = await CounsellorProfile.findByPk(counsellorId);
-      if (!counsellor) {
-        return res.status(404).json({ error: 'Counsellor profile not found.' });
-      }
-    }
-
-    if (legalCounselId) {
-      const legalCounsel = await LegalCounselProfile.findByPk(legalCounselId);
-      if (!legalCounsel) {
-        return res.status(404).json({ error: 'Legal counsel profile not found.' });
-      }
-    }
-
-    await survivor.update({
-      assignedCounsellorId: counsellorId || null,
-      assignedLegalCounselId: legalCounselId || null
+    const assignment = await applySurvivorReassignment({
+      survivorId,
+      counsellorId,
+      legalCounselId,
+      reason
     });
-
-    await StaffAssignmentHistory.create({
-      assignmentHistoryId: randomUUID(),
-      survivorId: survivor.survivorId,
-      counsellorId: survivor.assignedCounsellorId,
-      legalCounselId: survivor.assignedLegalCounselId,
-      assignmentReason: reason
-    });
-
-    await refreshWorkloadScores();
 
     return res.json({
       message: 'Assignment updated successfully.',
-      assignment: {
-        survivorId: survivor.survivorId,
-        counsellorId: survivor.assignedCounsellorId,
-        legalCounselId: survivor.assignedLegalCounselId
-      }
+      assignment
     });
   } catch (error) {
     console.error('Reassign survivor error:', error);
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
     return res.status(500).json({ error: 'Failed to reassign survivor.' });
   }
 }
@@ -1330,6 +1354,7 @@ module.exports = {
   performRuntimeAction,
   createStaffAccount,
   updateStaffAccountStatus,
+  applySurvivorReassignment,
   getMaintenanceModeState,
   maintenanceGuard
 };

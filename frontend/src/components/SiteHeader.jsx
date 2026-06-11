@@ -24,6 +24,7 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
         { path: "/moderation", label: "Moderation Desk" },
         { path: "/community", label: "Community Chat" },
         { path: "/chat", label: "Staffing" },
+        { path: "/profile", label: "Profile" },
         { path: "/library", label: "Resources" }
       ];
     }
@@ -31,8 +32,12 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
     if (role === "SYSTEM_ADMIN") {
       return [
         { path: "/home", label: "Home" },
+        // Report tab is read-oriented for system admins; mutation permissions
+        // are still restricted in backend report status endpoints.
+        { path: "/reports", label: "Reports" },
         { path: "/community", label: "Infra Logs" },
         { path: "/chat", label: "Maintenance" },
+        { path: "/profile", label: "Profile" },
         { path: "/library", label: "Access Control" }
       ];
     }
@@ -42,7 +47,8 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
       { path: "/library", label: "Library" },
       { path: "/reports", label: "Reports" },
       { path: "/chat", label: "Direct Chat" },
-      { path: "/community", label: "Community" }
+      { path: "/community", label: "Community" },
+      { path: "/profile", label: "Profile" }
     ];
   })();
 
