@@ -217,42 +217,75 @@ function App() {
   const finalPath = activeRoutes[roleResolvedPath] ? roleResolvedPath : fallbackPath;
   const Page = activeRoutes[finalPath] || LandingPage;
 
-  // During active maintenance, only system admins keep normal UI access.
-  const shouldShowMaintenanceScreen = maintenanceMode.enabled && role !== "SYSTEM_ADMIN";
+  // During active maintenance, non-system-admin sessions are redirected to a
+  // read-only status card instead of normal app pages.
+  // Exception: keep /join reachable so signed-out operators can still recover
+  // access by authenticating as SYSTEM_ADMIN.
+  const shouldShowMaintenanceScreen =
+    maintenanceMode.enabled &&
+    role !== "SYSTEM_ADMIN" &&
+    finalPath !== "/join";
 
   if (shouldShowMaintenanceScreen) {
     return (
       <div className="app-shell">
-        <main className="admin-page system-admin-theme">
-          <section className="admin-shell">
-            <article className="admin-panel full-span">
-              <h1>System Under Maintenance</h1>
-              <p>
-                Core services are temporarily unavailable while administrators perform platform updates.
-                Please check back shortly.
-              </p>
-              <p>
-                Reason: {maintenanceMode.reason || "Scheduled platform maintenance"}
-              </p>
-              <p>
-                Last update: {maintenanceMode.updatedAt ? new Date(maintenanceMode.updatedAt).toLocaleString() : "-"}
-              </p>
-              <p>
-                Expected back: {maintenanceMode.expectedUntil ? new Date(maintenanceMode.expectedUntil).toLocaleString() : "Not specified"}
-              </p>
-              {maintenanceMode.expectedUntil && (
-                <p>
-                  Countdown: {formatMaintenanceCountdown(maintenanceMode.expectedUntil)}
-                </p>
-              )}
+        {/*
+          Dedicated maintenance surface for non-system-admin sessions.
+          This keeps users informed while backend maintenance guard returns 503s.
+        */}
+        <main className="maintenance-page" role="main" aria-label="Maintenance status page">
+          {/*
+            aria-live allows periodic maintenance-status polling updates
+            (reason/time changes) to be announced in assistive technologies.
+          */}
+          <section className="maintenance-card" aria-live="polite">
+            <p className="maintenance-pill">Service Care Window</p>
+            <h1>System Under Maintenance</h1>
+            <p className="maintenance-lead">
+              We are performing scheduled service updates to keep the platform secure, stable, and safe for everyone.
+            </p>
+
+            <div className="maintenance-meta-grid">
+              {/* Operational reason set by system admins while enabling maintenance. */}
+              <article className="maintenance-meta-item">
+                <h2>Current activity</h2>
+                <p>{maintenanceMode.reason || "Scheduled platform maintenance"}</p>
+              </article>
+              {/* Last maintenance-state write time from backend control plane. */}
+              <article className="maintenance-meta-item">
+                <h2>Last status update</h2>
+                <p>{maintenanceMode.updatedAt ? new Date(maintenanceMode.updatedAt).toLocaleString() : "-"}</p>
+              </article>
+              {/* Optional ETA authored by system admin; may be intentionally absent. */}
+              <article className="maintenance-meta-item">
+                <h2>Estimated return</h2>
+                <p>{maintenanceMode.expectedUntil ? new Date(maintenanceMode.expectedUntil).toLocaleString() : "Not specified"}</p>
+              </article>
+              {/* Human-readable countdown derived from expectedUntil for quick scanning. */}
+              <article className="maintenance-meta-item">
+                <h2>Time remaining</h2>
+                <p>{maintenanceMode.expectedUntil ? formatMaintenanceCountdown(maintenanceMode.expectedUntil) : "Awaiting estimate"}</p>
+              </article>
+            </div>
+
+            <div className="maintenance-actions">
               <button
                 type="button"
-                className="admin-action-btn"
+                className="maintenance-btn maintenance-btn-secondary"
                 onClick={() => window.location.reload()}
               >
                 Refresh Status
               </button>
-            </article>
+              <button
+                type="button"
+                className="maintenance-btn maintenance-btn-danger"
+                // Escape hatch for accidental non-admin sessions during maintenance.
+                // Clears current auth context and returns user to /join.
+                onClick={handleSignOut}
+              >
+                Sign Out
+              </button>
+            </div>
           </section>
         </main>
       </div>
