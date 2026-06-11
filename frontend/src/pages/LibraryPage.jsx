@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { fallbackCategories, fallbackResources } from "../data/fallbackResources";
-import { createResource, deleteResource, getResources, updateResource } from "../services/resources";
+import { createResource, deleteResource, getResources, trackResourceAccess, updateResource } from "../services/resources";
 
 const MANAGEMENT_ROLES = new Set(["COUNSELLOR", "LEGAL_COUNSEL", "NGO_ADMIN"]);
 
@@ -83,6 +83,16 @@ function LibraryPage() {
   const [editFileInputKey, setEditFileInputKey] = useState(0);
   const [updating, setUpdating] = useState(false);
   const [deletingId, setDeletingId] = useState("");
+
+  async function handleResourceOpen(resource) {
+    try {
+      if (resource?.id) {
+        await trackResourceAccess(resource.id);
+      }
+    } catch {
+      // Analytics should never block resource access.
+    }
+  }
 
   useEffect(() => {
     let isMounted = true;
@@ -399,7 +409,13 @@ function LibraryPage() {
               </div>
 
               <div className="resource-tile-actions">
-                <a className="tile-action" href={resource.fileUrl} target="_blank" rel="noreferrer">
+                <a
+                  className="tile-action"
+                  href={resource.fileUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => handleResourceOpen(resource)}
+                >
                   View / Download
                 </a>
 

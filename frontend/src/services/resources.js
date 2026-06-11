@@ -81,3 +81,14 @@ export async function deleteResource(resourceId) {
     headers: getAuthHeaders()
   });
 }
+
+/**
+ * Sends a best-effort analytics event whenever a user opens a resource.
+ * Auth header is optional so anonymous visitors can still be counted.
+ */
+export async function trackResourceAccess(resourceId) {
+  const token = localStorage.getItem("authToken");
+  const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+
+  await axios.post(`${API_BASE_URL}/api/resources/${resourceId}/track-access`, {}, { headers });
+}
