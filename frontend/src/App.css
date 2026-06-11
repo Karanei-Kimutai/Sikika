@@ -2657,6 +2657,12 @@ input:focus {
   margin: 0;
 }
 
+.report-details-modal {
+  width: min(760px, 100%);
+  max-height: min(82vh, 900px);
+  overflow-y: auto;
+}
+
 .admin-confirm-actions {
   margin-top: 0.3rem;
   display: flex;
