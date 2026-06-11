@@ -46,6 +46,7 @@ const InAppNotification         = require('./inAppNotification');
 const SupportResource           = require('./supportResource');
 const ResourceAccessEvent       = require('./resourceAccessEvent');
 const StaffAssignmentHistory    = require('./staffAssignmentHistory');
+const StaffReassignmentRequest  = require('./staffReassignmentRequest');
 const UssdCallbackRequest       = require('./ussdCallbackRequest');
 const OtpVerificationRequest    = require('./otpVerificationRequest');
 
@@ -236,6 +237,25 @@ StaffAssignmentHistory.belongsTo(CounsellorProfile,  { foreignKey: 'counsellorId
 LegalCounselProfile.hasMany(StaffAssignmentHistory,    { foreignKey: 'legalCounselId', onDelete: 'SET NULL' });
 StaffAssignmentHistory.belongsTo(LegalCounselProfile,  { foreignKey: 'legalCounselId' });
 
+// ── StaffReassignmentRequest ───────────────────────────────────────────────
+
+SurvivorProfile.hasMany(StaffReassignmentRequest, {
+  foreignKey: 'survivorId',
+  onDelete: 'CASCADE'
+});
+StaffReassignmentRequest.belongsTo(SurvivorProfile, {
+  foreignKey: 'survivorId'
+});
+
+UserAccount.hasMany(StaffReassignmentRequest, {
+  foreignKey: 'ngoAdminReviewerUserId',
+  as: 'reviewedReassignmentRequests'
+});
+StaffReassignmentRequest.belongsTo(UserAccount, {
+  foreignKey: 'ngoAdminReviewerUserId',
+  as: 'reviewedByNgoAdmin'
+});
+
 
 // ════════════════════════════════════════════════════════════════════════════
 // EXPORTS
@@ -278,6 +298,7 @@ module.exports = {
 
   // Assignments and external services
   StaffAssignmentHistory,
+  StaffReassignmentRequest,
   UssdCallbackRequest,
   OtpVerificationRequest
 };
