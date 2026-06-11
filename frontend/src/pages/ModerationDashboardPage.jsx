@@ -141,9 +141,9 @@ function ModerationDashboardPage() {
                   <button
                     type="button"
                     className="secondary-btn"
-                    onClick={() => review(report.contentReportId, "APPROVED", "suspend_user")}
+                    onClick={() => review(report.contentReportId, "APPROVED", "block_user")}
                   >
-                    Approve + Suspend User
+                    Approve + Block User
                   </button>
                 </div>
               </article>

@@ -1,4 +1,4 @@
-# Backend API
+# Backend
 
 Express + Sequelize (MySQL) backend for authentication, support resources, incident reporting, direct chat, community rooms, moderation, notifications, and websocket relay.
 
@@ -310,6 +310,13 @@ Direct chat:
 - GET /api/chat/:chatId/messages
 - PATCH /api/chat/:chatId/read
 
+Direct chat assignment behavior:
+
+- Survivor channels are assignment-driven, not global.
+- On survivor access (and during signup completion), backend ensures channels exist for assigned counsellor and assigned legal counsel.
+- Channel creation is idempotent (`findOrCreate`) so repeated logins do not duplicate channels.
+- Channel membership is enforced by survivorId/supportStaffCounterpartId access checks.
+
 Community and moderation:
 
 - GET /api/community/rooms
@@ -321,6 +328,13 @@ Community and moderation:
 - DELETE /api/community/messages/:messageId
 - GET /api/community/moderation/reports
 - PATCH /api/community/moderation/reports/:reportId
+
+Moderation action behavior:
+
+- `remove_message` replaces message content with a moderation-safe placeholder.
+- `block_user` (alias of `suspend_user`) sets the target account status to `SUSPENDED`.
+- `issue_warning` writes a moderation log entry without account suspension.
+- All approved moderation actions write an audit-style moderation action record.
 
 Community access model:
 

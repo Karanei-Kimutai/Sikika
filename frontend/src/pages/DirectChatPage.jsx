@@ -307,8 +307,9 @@ const DirectChatPage = () => {
           }))
         );
 
-        const shouldAddDemoTranscript = import.meta.env.DEV && decryptedHistory.length < 8;
-        // Keep production timelines untouched; only enrich sparse dev timelines.
+        const demoTranscriptEnabled = String(import.meta.env.VITE_ENABLE_CHAT_DEMO_TRANSCRIPT || '').toLowerCase() === 'true';
+        const shouldAddDemoTranscript = import.meta.env.DEV && demoTranscriptEnabled && decryptedHistory.length < 8;
+        // Demo transcript is now explicit opt-in to avoid confusing real user timelines.
         setMessages(
           shouldAddDemoTranscript
             ? [...decryptedHistory, ...buildDemoTranscript(currentUserRole)]
