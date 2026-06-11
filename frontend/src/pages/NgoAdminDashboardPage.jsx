@@ -7,8 +7,11 @@ import {
   createNgoResource,
   updateNgoResource,
   reassignSurvivorCase,
-  createNgoStaffAccount
+  createNgoStaffAccount,
+  getNgoReassignmentRequests,
+  reviewNgoReassignmentRequest
 } from "../services/admin";
+import { getEvidenceAccessUrl, getReportById } from "../services/reports";
 
 /**
  * NGO Admin Dashboard
@@ -56,6 +59,13 @@ function prettifyLabel(value) {
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function availabilityClass(value) {
+  const normalized = String(value || "").toUpperCase();
+  if (normalized === "AVAILABLE") return "availability-pill available";
+  if (normalized === "BUSY") return "availability-pill busy";
+  return "availability-pill offline";
 }
 
 function buildLineChartPoints(series) {
@@ -130,6 +140,12 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     query: ""
   });
   const [selectedCaseReportId, setSelectedCaseReportId] = useState("");
+  const [selectedReportDetails, setSelectedReportDetails] = useState(null);
+  const [loadingReportDetailsFor, setLoadingReportDetailsFor] = useState("");
+  const [openingEvidenceId, setOpeningEvidenceId] = useState("");
+  const [reassignmentRequests, setReassignmentRequests] = useState([]);
+  const [reassignmentFilter, setReassignmentFilter] = useState("PENDING");
+  const [reviewingRequestId, setReviewingRequestId] = useState("");
 
   function resetReportFilters() {
     setReportFilters({
@@ -158,6 +174,21 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     // Initial load only; explicit refreshes happen after mutation actions.
     loadDashboard();
   }, []);
+
+  useEffect(() => {
+    if (activeSection !== "team-capacity") return;
+
+    async function loadReassignmentRequests() {
+      try {
+        const data = await getNgoReassignmentRequests(reassignmentFilter);
+        setReassignmentRequests(data.requests || []);
+      } catch {
+        // Keep broader dashboard available even if request queue fails.
+      }
+    }
+
+    loadReassignmentRequests();
+  }, [activeSection, reassignmentFilter]);
 
   useEffect(() => {
     // App route aliases map to section ids through initialSection prop.
@@ -231,9 +262,53 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
   }
 
   function handleViewReportDetails(reportId) {
-    // Toggle behavior: clicking the same row twice hides the detail summary.
+    // Toggle behavior: clicking the same row twice closes the popup.
     const value = String(reportId || "");
-    setSelectedCaseReportId((prev) => (prev === value ? "" : value));
+    if (!value) return;
+
+    if (selectedCaseReportId === value) {
+      setSelectedCaseReportId("");
+      setSelectedReportDetails(null);
+      return;
+    }
+
+    setSelectedCaseReportId(value);
+    loadReportDetails(value);
+  }
+
+  function closeReportDetailsModal() {
+    setSelectedCaseReportId("");
+    setSelectedReportDetails(null);
+    setLoadingReportDetailsFor("");
+  }
+
+  async function loadReportDetails(reportId) {
+    setLoadingReportDetailsFor(reportId);
+    setErrorMessage("");
+
+    try {
+      const data = await getReportById(reportId);
+      setSelectedReportDetails(data.report || null);
+    } catch (error) {
+      setSelectedReportDetails(null);
+      setErrorMessage(error.response?.data?.error || "Could not load full report details.");
+    } finally {
+      setLoadingReportDetailsFor("");
+    }
+  }
+
+  async function handleOpenEvidence(reportId, evidenceId) {
+    setOpeningEvidenceId(evidenceId);
+    setErrorMessage("");
+
+    try {
+      const data = await getEvidenceAccessUrl(reportId, evidenceId);
+      window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Could not open evidence file.");
+    } finally {
+      setOpeningEvidenceId("");
+    }
   }
 
   function startEditResource(resource) {
@@ -274,6 +349,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
 
       setEditingResourceId("");
       setResourceForm({ title: "", category: "", fileUrl: "", description: "" });
+                    <th>Action</th>
       await loadDashboard();
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Failed to save resource.");
@@ -284,11 +360,74 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     event.preventDefault();
     setErrorMessage("");
     setSuccessMessage("");
+                      <td>
+                        <button
+                          type="button"
+                          className="admin-action-btn"
+                          onClick={() => handleViewReportDetails(row.reportId)}
+                          disabled={loadingReportDetailsFor === row.reportId}
+                        >
+                          {loadingReportDetailsFor === row.reportId
+                            ? "Loading..."
+                            : selectedCaseReportId === String(row.reportId)
+                              ? "Hide Details"
+                              : "View Details"}
+                        </button>
+                      </td>
 
     if (!assignmentForm.survivorId) {
       setErrorMessage("Select a survivor before reassigning.");
       return;
     }
+            {selectedCaseReportId && (
+              <article className="admin-panel" style={{ marginTop: "1rem" }}>
+                <h3>Report Details</h3>
+                {loadingReportDetailsFor === selectedCaseReportId ? (
+                  <p className="admin-empty">Loading detailed report view...</p>
+                ) : selectedReportDetails ? (
+                  <>
+                    <p><strong>Report ID:</strong> {selectedReportDetails.reportId}</p>
+                    <p><strong>Status:</strong> {prettifyLabel(selectedReportDetails.reportStatus)}</p>
+                    <p><strong>Category:</strong> {prettifyLabel(selectedReportDetails.category)}</p>
+                    <p><strong>Severity:</strong> {selectedReportDetails.severityLevel}</p>
+                    <p><strong>Created:</strong> {formatDate(selectedReportDetails.createdAt)}</p>
+                    <p><strong>Incident date:</strong> {selectedReportDetails.date || "Not provided"}</p>
+                    <p><strong>Location:</strong> {selectedReportDetails.location || "Not provided"}</p>
+                    <p><strong>Description:</strong> {selectedReportDetails.description || "Not provided"}</p>
+
+                    {selectedReportDetails.legalCase && (
+                      <p>
+                        <strong>Legal case:</strong> {selectedReportDetails.legalCase.caseStatus}
+                        {selectedReportDetails.legalCase.legalCaseId ? ` (${selectedReportDetails.legalCase.legalCaseId})` : ""}
+                      </p>
+                    )}
+
+                    {(selectedReportDetails.evidence || []).length > 0 ? (
+                      <div className="evidence-list">
+                        <strong>Evidence files</strong>
+                        {selectedReportDetails.evidence.map((evidence) => (
+                          <button
+                            key={evidence.evidenceId}
+                            type="button"
+                            className="footer-link"
+                            onClick={() => handleOpenEvidence(selectedReportDetails.reportId, evidence.evidenceId)}
+                            disabled={openingEvidenceId === evidence.evidenceId}
+                          >
+                            {openingEvidenceId === evidence.evidenceId
+                              ? "Opening..."
+                              : evidence.originalFileName || `${evidence.fileType} evidence`}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="admin-empty">No evidence files attached.</p>
+                    )}
+                  </>
+                ) : (
+                  <p className="admin-empty">Full details are not available for this report right now.</p>
+                )}
+              </article>
+            )}
 
     try {
       await reassignSurvivorCase({
@@ -340,6 +479,27 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
       await loadDashboard();
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Failed to create staff account.");
+    }
+  }
+
+  async function refreshReassignmentRequests() {
+    const data = await getNgoReassignmentRequests(reassignmentFilter);
+    setReassignmentRequests(data.requests || []);
+  }
+
+  async function handleReviewReassignmentRequest(requestId, requestStatus) {
+    setReviewingRequestId(requestId);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      await reviewNgoReassignmentRequest(requestId, { requestStatus });
+      setSuccessMessage(`Request ${requestStatus.toLowerCase()} successfully.`);
+      await Promise.all([loadDashboard(), refreshReassignmentRequests()]);
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Failed to review reassignment request.");
+    } finally {
+      setReviewingRequestId("");
     }
   }
 
@@ -431,6 +591,25 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     () => (dashboard?.survivorAssignments || []).find((item) => item.survivorId === assignmentForm.survivorId) || null,
     [dashboard, assignmentForm.survivorId]
   );
+  const teamStats = useMemo(() => {
+    const directory = dashboard?.staffDirectory || [];
+    const assignments = dashboard?.survivorAssignments || [];
+
+    const availableStaff = directory.filter(
+      (staff) => String(staff.availability || "").toUpperCase() === "AVAILABLE"
+    ).length;
+    const highLoadStaff = directory.filter((staff) => Number(staff.activeCases || 0) >= 6).length;
+    const partiallyUnassignedSurvivors = assignments.filter(
+      (survivor) => !survivor.assignedCounsellorId || !survivor.assignedLegalCounselId
+    ).length;
+
+    return {
+      totalStaff: directory.length,
+      availableStaff,
+      highLoadStaff,
+      partiallyUnassignedSurvivors
+    };
+  }, [dashboard]);
 
   function yForValue(value) {
     const width = 620;
@@ -839,6 +1018,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
                     <th>Category</th>
                     <th>Priority</th>
                     <th>Status</th>
+                    <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -849,6 +1029,20 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
                       <td>{row.incidentCategory}</td>
                       <td><span className={priorityClass(row.severityLevel)}>{row.severityLevel}</span></td>
                       <td>{row.currentReportStatus}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="admin-action-btn"
+                          onClick={() => handleViewReportDetails(row.reportId)}
+                          disabled={loadingReportDetailsFor === String(row.reportId)}
+                        >
+                          {loadingReportDetailsFor === String(row.reportId)
+                            ? "Loading..."
+                            : selectedCaseReportId === String(row.reportId)
+                              ? "Hide Details"
+                              : "View Details"}
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -859,8 +1053,95 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
         </section>
       )}
 
+      {selectedCaseReportId && activeSection === "reports" && (
+        <div className="admin-confirm-overlay" role="presentation" onClick={closeReportDetailsModal}>
+          <article
+            className="admin-confirm-modal report-details-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Report details"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3>Report Details</h3>
+            {loadingReportDetailsFor === selectedCaseReportId ? (
+              <p>Loading detailed report view...</p>
+            ) : selectedReportDetails ? (
+              <>
+                <p><strong>Report ID:</strong> {selectedReportDetails.reportId}</p>
+                <p><strong>Status:</strong> {prettifyLabel(selectedReportDetails.reportStatus)}</p>
+                <p><strong>Category:</strong> {prettifyLabel(selectedReportDetails.category)}</p>
+                <p><strong>Severity:</strong> {selectedReportDetails.severityLevel}</p>
+                <p><strong>Created:</strong> {formatDate(selectedReportDetails.createdAt)}</p>
+                <p><strong>Incident date:</strong> {selectedReportDetails.date || "Not provided"}</p>
+                <p><strong>Location:</strong> {selectedReportDetails.location || "Not provided"}</p>
+                <p><strong>Description:</strong> {selectedReportDetails.description || "Not provided"}</p>
+
+                {selectedReportDetails.legalCase && (
+                  <p>
+                    <strong>Legal case:</strong> {selectedReportDetails.legalCase.caseStatus}
+                    {selectedReportDetails.legalCase.legalCaseId ? ` (${selectedReportDetails.legalCase.legalCaseId})` : ""}
+                  </p>
+                )}
+
+                {(selectedReportDetails.evidence || []).length > 0 ? (
+                  <div className="evidence-list">
+                    <strong>Evidence files</strong>
+                    {selectedReportDetails.evidence.map((evidence) => (
+                      <button
+                        key={evidence.evidenceId}
+                        type="button"
+                        className="footer-link"
+                        onClick={() => handleOpenEvidence(selectedReportDetails.reportId, evidence.evidenceId)}
+                        disabled={openingEvidenceId === evidence.evidenceId}
+                      >
+                        {openingEvidenceId === evidence.evidenceId
+                          ? "Opening..."
+                          : evidence.originalFileName || `${evidence.fileType} evidence`}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p>No evidence files attached.</p>
+                )}
+              </>
+            ) : (
+              <p>Full details are not available for this report right now.</p>
+            )}
+
+            <div className="admin-confirm-actions">
+              <button type="button" className="secondary-btn" onClick={closeReportDetailsModal}>
+                Close
+              </button>
+            </div>
+          </article>
+        </div>
+      )}
+
       {activeSection === "team-capacity" && (
         <section className="admin-module-grid" aria-label="Team capacity">
+          <article className="admin-panel full-span">
+            <h2>Team Capacity Snapshot</h2>
+            <p className="admin-note">Monitor staffing pressure before onboarding or reassignment actions.</p>
+            <div className="pulse-grid">
+              <div className="pulse-card">
+                <span>Total support staff</span>
+                <strong>{formatNumber(teamStats.totalStaff)}</strong>
+              </div>
+              <div className="pulse-card">
+                <span>Available now</span>
+                <strong>{formatNumber(teamStats.availableStaff)}</strong>
+              </div>
+              <div className="pulse-card">
+                <span>High workload (6+ cases)</span>
+                <strong>{formatNumber(teamStats.highLoadStaff)}</strong>
+              </div>
+              <div className="pulse-card">
+                <span>Partially unassigned survivors</span>
+                <strong>{formatNumber(teamStats.partiallyUnassignedSurvivors)}</strong>
+              </div>
+            </div>
+          </article>
+
           <article className="admin-panel full-span">
             <h2>Workload Distribution</h2>
             <div className="stacked-bars">
@@ -876,7 +1157,9 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
                   </div>
                 ))}
             </div>
-            <p className="admin-empty">Bars represent active assigned survivors per staff member.</p>
+            {(!dashboard.staffWorkload?.counsellors?.length && !dashboard.staffWorkload?.legalCounsel?.length)
+              ? <p className="admin-empty">No staff workload data available yet.</p>
+              : <p className="admin-empty">Bars represent active assigned survivors per staff member.</p>}
           </article>
 
           <article className="admin-panel full-span">
@@ -899,12 +1182,19 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
                       <td>{staff.type === "COUNSELLOR" ? "Counsellor" : "Legal Counsel"}</td>
                       <td>{staff.specialization}</td>
                       <td>{formatNumber(staff.activeCases)}</td>
-                      <td>{staff.availability}</td>
+                      <td>
+                        <span className={availabilityClass(staff.availability)}>
+                          {prettifyLabel(staff.availability)}
+                        </span>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            {(dashboard.staffDirectory || []).length === 0 && (
+              <p className="admin-empty" style={{ marginTop: "0.8rem" }}>No staff profiles available yet.</p>
+            )}
           </article>
 
           <article className="admin-panel full-span">
@@ -1035,6 +1325,76 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
               <button type="submit" className="admin-action-btn">Apply Reassignment</button>
             </form>
           </article>
+
+          <article className="admin-panel full-span">
+            <h2>Survivor Reassignment Requests</h2>
+            <div className="report-filter-row" style={{ marginBottom: "0.9rem" }}>
+              <select
+                value={reassignmentFilter}
+                onChange={(event) => setReassignmentFilter(event.target.value)}
+              >
+                <option value="PENDING">Pending</option>
+                <option value="APPROVED">Approved</option>
+                <option value="REJECTED">Rejected</option>
+                <option value="CANCELLED">Cancelled</option>
+                <option value="ALL">All statuses</option>
+              </select>
+            </div>
+            <div className="admin-table-wrap">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Requested</th>
+                    <th>Survivor</th>
+                    <th>Scope</th>
+                    <th>Reason</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reassignmentRequests.map((request) => (
+                    <tr key={request.requestId}>
+                      <td>{formatDate(request.requestTimestamp)}</td>
+                      <td>{request.survivor?.displayNickname || request.survivorId}</td>
+                      <td>{prettifyLabel(request.requestedScope)}</td>
+                      <td>{request.requestReasonText}</td>
+                      <td>{prettifyLabel(request.requestStatus)}</td>
+                      <td>
+                        {request.requestStatus === "PENDING" ? (
+                          <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              className="admin-action-btn"
+                              disabled={reviewingRequestId === request.requestId}
+                              onClick={() => handleReviewReassignmentRequest(request.requestId, "APPROVED")}
+                            >
+                              {reviewingRequestId === request.requestId ? "Working..." : "Approve"}
+                            </button>
+                            <button
+                              type="button"
+                              className="secondary-btn"
+                              disabled={reviewingRequestId === request.requestId}
+                              onClick={() => handleReviewReassignmentRequest(request.requestId, "REJECTED")}
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        ) : (
+                          "-"
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {reassignmentRequests.length === 0 && (
+              <p className="admin-empty" style={{ marginTop: "0.8rem" }}>
+                No reassignment requests found for this filter.
+              </p>
+            )}
+          </article>
         </section>
       )}
 
@@ -1082,46 +1442,62 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
         <section className="admin-module-grid" aria-label="Resources and operations">
           <article className="admin-panel full-span">
             <h2>Create or Edit Posted Resources</h2>
-            <form className="admin-search" onSubmit={handleResourceSubmit}>
-              <input
-                type="text"
-                placeholder="Resource title"
-                value={resourceForm.title}
-                onChange={(event) => setResourceForm((prev) => ({ ...prev, title: event.target.value }))}
-              />
-              <input
-                type="text"
-                placeholder="Category (example: legal_guidance)"
-                value={resourceForm.category}
-                onChange={(event) => setResourceForm((prev) => ({ ...prev, category: event.target.value }))}
-              />
-              <input
-                type="url"
-                placeholder="Resource URL"
-                value={resourceForm.fileUrl}
-                onChange={(event) => setResourceForm((prev) => ({ ...prev, fileUrl: event.target.value }))}
-              />
-              <input
-                type="text"
-                placeholder="Description (optional)"
-                value={resourceForm.description}
-                onChange={(event) => setResourceForm((prev) => ({ ...prev, description: event.target.value }))}
-              />
-              <button type="submit" className="admin-action-btn">
-                {editingResourceId ? "Save Changes" : "Create Resource"}
-              </button>
-              {editingResourceId && (
-                <button
-                  type="button"
-                  className="admin-action-btn"
-                  onClick={() => {
-                    setEditingResourceId("");
-                    setResourceForm({ title: "", category: "", fileUrl: "", description: "" });
-                  }}
-                >
-                  Cancel Edit
+            <p className="admin-note">Keep fields descriptive so support teams can discover the right resource faster.</p>
+            <form className="resource-form-grid" onSubmit={handleResourceSubmit}>
+              <label>
+                Resource title
+                <input
+                  type="text"
+                  placeholder="Resource title"
+                  value={resourceForm.title}
+                  onChange={(event) => setResourceForm((prev) => ({ ...prev, title: event.target.value }))}
+                />
+              </label>
+              <label>
+                Category
+                <input
+                  type="text"
+                  placeholder="Example: legal_guidance"
+                  value={resourceForm.category}
+                  onChange={(event) => setResourceForm((prev) => ({ ...prev, category: event.target.value }))}
+                />
+              </label>
+              <label>
+                Resource URL
+                <input
+                  type="url"
+                  placeholder="https://..."
+                  value={resourceForm.fileUrl}
+                  onChange={(event) => setResourceForm((prev) => ({ ...prev, fileUrl: event.target.value }))}
+                />
+              </label>
+              <label className="full-span">
+                Description (optional)
+                <input
+                  type="text"
+                  placeholder="Short context for counsellors and legal counsel"
+                  value={resourceForm.description}
+                  onChange={(event) => setResourceForm((prev) => ({ ...prev, description: event.target.value }))}
+                />
+              </label>
+
+              <div className="resource-form-actions full-span">
+                <button type="submit" className="admin-action-btn">
+                  {editingResourceId ? "Save Changes" : "Create Resource"}
                 </button>
-              )}
+                {editingResourceId && (
+                  <button
+                    type="button"
+                    className="admin-action-btn"
+                    onClick={() => {
+                      setEditingResourceId("");
+                      setResourceForm({ title: "", category: "", fileUrl: "", description: "" });
+                    }}
+                  >
+                    Cancel Edit
+                  </button>
+                )}
+              </div>
             </form>
           </article>
 
@@ -1155,6 +1531,9 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
                 </tbody>
               </table>
             </div>
+            {(dashboard.resources || []).length === 0 && (
+              <p className="admin-empty" style={{ marginTop: "0.8rem" }}>No resources have been posted yet.</p>
+            )}
           </article>
 
           <article className="admin-panel full-span">

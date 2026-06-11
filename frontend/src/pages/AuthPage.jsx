@@ -35,6 +35,9 @@ function AuthPage({ onNavigate }) {
   const [signupPhone, setSignupPhone] = useState("");
   const [signupOtp, setSignupOtp] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
+  const [signupNickname, setSignupNickname] = useState("");
+  const [signupGender, setSignupGender] = useState("UNSPECIFIED");
+  const [signupCounty, setSignupCounty] = useState("");
   const [showSignupPassword, setShowSignupPassword] = useState(false);
 
   // Forgot/reset password flow.
@@ -76,6 +79,10 @@ function AuthPage({ onNavigate }) {
   const canSubmitSignupPhone = useMemo(() => signupPhone.trim().length >= 10, [signupPhone]);
   const canSubmitSignupOtp = useMemo(() => signupOtp.trim().length === 4, [signupOtp]);
   const canSubmitSignupPassword = useMemo(() => signupPassword.trim().length >= 8, [signupPassword]);
+  const canSubmitSignupProfile = useMemo(
+    () => signupNickname.trim().length >= 2 && signupCounty.trim().length >= 2,
+    [signupNickname, signupCounty]
+  );
   const canSubmitResetPhone = useMemo(() => resetPhone.trim().length >= 10, [resetPhone]);
   const canSubmitResetOtp = useMemo(() => resetOtp.trim().length === 4, [resetOtp]);
   const canSubmitResetPassword = useMemo(() => resetNewPassword.trim().length >= 8, [resetNewPassword]);
@@ -119,6 +126,9 @@ function AuthPage({ onNavigate }) {
     setSignupStep("request");
     setSignupOtp("");
     setSignupPassword("");
+    setSignupNickname("");
+    setSignupGender("UNSPECIFIED");
+    setSignupCounty("");
     setShowResetFlow(false);
     setResetStep("request");
     setShowFirstLoginResetFlow(false);
@@ -282,8 +292,8 @@ function AuthPage({ onNavigate }) {
 
   // Step 2 signup: verify OTP and create first password, then auto-login.
   const completeSignup = async () => {
-    if (!canSubmitSignupOtp || !canSubmitSignupPassword) {
-      setErrorMessage("Enter the 4-digit code and a new password (minimum 8 characters).");
+    if (!canSubmitSignupOtp || !canSubmitSignupPassword || !canSubmitSignupProfile) {
+      setErrorMessage("Enter OTP, password, nickname, and county to complete signup.");
       return;
     }
 
@@ -295,7 +305,13 @@ function AuthPage({ onNavigate }) {
         phoneNumber: signupPhone.trim(),
         otp: signupOtp.trim(),
         password: signupPassword.trim(),
-        authIntent: AUTH_INTENTS.SIGNUP_OTP
+        authIntent: AUTH_INTENTS.SIGNUP_OTP,
+        profileDetails: {
+          displayNickname: signupNickname.trim(),
+          assignedGender: signupGender,
+          residenceCounty: signupCounty.trim(),
+          notificationsEnabled: true
+        }
       });
 
       finalizeLogin(response.data.token, response.data.userId);
@@ -801,6 +817,39 @@ function AuthPage({ onNavigate }) {
                     </button>
                   </div>
 
+                  <label htmlFor="signupNickname">Preferred Nickname</label>
+                  <input
+                    id="signupNickname"
+                    type="text"
+                    placeholder="How should we identify you in community spaces?"
+                    value={signupNickname}
+                    onChange={(event) => setSignupNickname(event.target.value)}
+                    autoComplete="off"
+                  />
+
+                  <label htmlFor="signupGender">Gender</label>
+                  <select
+                    id="signupGender"
+                    value={signupGender}
+                    onChange={(event) => setSignupGender(event.target.value)}
+                  >
+                    <option value="UNSPECIFIED">Prefer not to say</option>
+                    <option value="FEMALE">Female</option>
+                    <option value="MALE">Male</option>
+                    <option value="NON_BINARY">Non-binary</option>
+                    <option value="OTHER">Other</option>
+                  </select>
+
+                  <label htmlFor="signupCounty">County</label>
+                  <input
+                    id="signupCounty"
+                    type="text"
+                    placeholder="e.g. Nairobi"
+                    value={signupCounty}
+                    onChange={(event) => setSignupCounty(event.target.value)}
+                    autoComplete="off"
+                  />
+
                   <button
                     type="button"
                     className="primary-btn auth-verify-btn"
@@ -821,6 +870,9 @@ function AuthPage({ onNavigate }) {
                       setSignupStep("request");
                       setSignupOtp("");
                       setSignupPassword("");
+                      setSignupNickname("");
+                      setSignupGender("UNSPECIFIED");
+                      setSignupCounty("");
                     }}
                     disabled={loading}
                   >
