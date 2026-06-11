@@ -1,6 +1,6 @@
 # Frontend
 
-React + Vite client for authentication, reporting, direct chat, community spaces, NGO operations, and system administration.
+React + Vite frontend for authentication, library resources, staff resource management, confidential reporting, direct encrypted chat, community rooms, and moderation dashboard workflows.
 
 ## Stack
 
@@ -172,7 +172,42 @@ Behavior:
 - resource opens call track-access endpoint
 - tracking runs best-effort and never blocks download/open actions
 
-## Community Forum Access Model
+## Resource Library and Management
+
+Main implementation:
+
+- src/pages/LibraryPage.jsx
+- src/services/resources.js
+
+Key behavior:
+
+- Resource browsing is public and works without authentication.
+- Search and category filtering are handled via /api/resources query params.
+- Staff write actions (create/update/delete) are available through authenticated service methods and are enforced by backend RBAC.
+- Resource write calls use multipart form-data with file field name file.
+- Backend stores files in Cloudinary and returns stable resource metadata + delivery URL for listing.
+
+## Direct Chat UI
+
+Main implementation:
+
+- src/pages/DirectChatPage.jsx
+- src/utils/cryptoUtils.js
+
+Key behavior:
+
+- Loads authorized channels through bearer-token REST calls.
+- Joins socket room for active chat channel.
+- Decrypts historical and live ciphertext client-side.
+- Encrypts outbound messages before socket emit.
+- Sends best-effort read acknowledgements without interrupting chat flow on failure.
+- Privacy mask auto-hides screen after inactivity and reopens on interaction.
+
+Development note:
+
+- In development mode, a demo transcript may be appended when channel history is sparse.
+
+## Community and Moderation UI
 
 Main implementation:
 
@@ -197,7 +232,6 @@ Main implementation:
 
 Behavior:
 
-- header Open Chat deep-links to /chat?channel=<lastActiveChatId> when available
 - Direct Chat resolves initial channel by: URL parameter, persisted channel, then API-most-recent fallback
 - active chat selection is persisted back to localStorage and URL via history.replaceState
 
@@ -221,6 +255,9 @@ Admin service functions: src/services/admin.js
 Resource service functions: src/services/resources.js
 
 - getResources
+- createResource
+- updateResource
+- deleteResource
 - trackResourceAccess
 
 ## Realtime Validation (Two Users)
