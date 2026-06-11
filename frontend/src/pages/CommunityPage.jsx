@@ -54,6 +54,13 @@ function sortRoomsByActivity(roomList) {
   });
 }
 
+function formatRoomTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 function CommunityPage() {
   const [rooms, setRooms] = useState([]);
   const [activeRoomId, setActiveRoomId] = useState("");
@@ -68,6 +75,7 @@ function CommunityPage() {
   const [showCreateRoomModal, setShowCreateRoomModal] = useState(false);
   const [submittingRoom, setSubmittingRoom] = useState(false);
   const [joiningRoom, setJoiningRoom] = useState(false);
+  const [roomQuery, setRoomQuery] = useState("");
   const activeRoomIdRef = useRef("");
   const messagesViewportRef = useRef(null);
 
@@ -76,6 +84,12 @@ function CommunityPage() {
   const activeRoom = rooms.find((room) => room.roomId === activeRoomId) || null;
   // Membership gate: only joined rooms can load/render message history.
   const canAccessActiveRoom = Boolean(activeRoom?.joined);
+  const filteredRooms = rooms.filter((room) => {
+    const query = roomQuery.trim().toLowerCase();
+    if (!query) return true;
+    const name = String(room.roomName || "").toLowerCase();
+    return name.includes(query);
+  });
 
   // Pulls rooms and preserves selection when possible.
   async function loadRooms({ silent = false } = {}) {
@@ -375,50 +389,53 @@ function CommunityPage() {
       <section className="community-shell" aria-label="Community forum">
         <aside className="community-sidebar">
           <div className="community-sidebar-head">
-            <h2>Community Rooms</h2>
+            <h2>Community</h2>
             {isNgoAdmin && (
               <button
                 type="button"
                 className="community-create-room-btn"
                 onClick={() => setShowCreateRoomModal(true)}
               >
-                + Create
+                + Room
               </button>
             )}
           </div>
 
-          <p className="community-access-note">
-            {isNgoAdmin
-              ? "You can create rooms for moderated support topics."
-              : "Rooms are created by NGO Admins. Select a room and join to participate."}
-          </p>
+          <input
+            type="text"
+            className="community-room-search"
+            placeholder="Search rooms"
+            value={roomQuery}
+            onChange={(event) => setRoomQuery(event.target.value)}
+          />
 
           <div className="community-room-list" aria-label="Available rooms">
-            {rooms.map((room) => (
+            {filteredRooms.map((room) => (
               <button
                 key={room.roomId}
                 type="button"
                 className={`community-room-item ${activeRoomId === room.roomId ? "active" : ""}`}
                 onClick={() => setActiveRoomId(room.roomId)}
               >
-                <strong>{room.roomName}</strong>
-                <small>{room.membersCount} members</small>
-                <small>{room.joined ? "Joined" : "Not joined"}</small>
+                <div className="community-room-title-row">
+                  <strong>{room.roomName}</strong>
+                  <small>{formatRoomTime(room.latestMessageDispatchTimestamp || room.roomCreationTimestamp)}</small>
+                </div>
+                <small>{room.joined ? `${room.membersCount} members` : "Tap to join"}</small>
               </button>
             ))}
+            {filteredRooms.length === 0 && (
+              <p className="community-empty-rooms">No rooms match your search.</p>
+            )}
           </div>
         </aside>
 
         <section className="community-main">
           <header className="community-main-head">
-            <h1>Community Support Forum</h1>
-            <p>Live room chat with nickname privacy and discreet moderation tools.</p>
+            <h1>{activeRoom?.roomName || "Community Chat"}</h1>
             {activeRoom && (
               <div className="community-active-room-bar">
-                <span>
-                  <strong>{activeRoom.roomName}</strong>
-                  {activeRoom.roomDescriptionText ? ` - ${activeRoom.roomDescriptionText}` : ""}
-                </span>
+                <span>{activeRoom.joined ? `${activeRoom.membersCount} members` : "Join to start chatting"}</span>
                 {!canAccessActiveRoom && (
                   <button type="button" className="primary-btn" onClick={handleJoinActiveRoom} disabled={joiningRoom}>
                     {joiningRoom ? "Joining..." : "Join Room"}
@@ -459,9 +476,11 @@ function CommunityPage() {
 
                   {activeMessageMenuId === message.communityMessageId && (
                     <div className="message-actions-menu">
-                      <button type="button" onClick={() => handleReportMessage(message.communityMessageId)}>
-                        Report Message
-                      </button>
+                      {message.senderUserId !== currentUserId && (
+                        <button type="button" onClick={() => handleReportMessage(message.communityMessageId)}>
+                          Report Message
+                        </button>
+                      )}
 
                       {message.senderUserId === currentUserId && (
                         <button type="button" onClick={() => handleDeleteMessage(message.communityMessageId)}>
