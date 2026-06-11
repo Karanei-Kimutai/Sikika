@@ -1329,6 +1329,21 @@ function maintenanceGuard(req, res, next) {
   // Allows health/admin/status endpoints so operators can recover the platform.
   if (!maintenanceModeEnabled) return next();
 
+  // Permit minimal auth recovery paths so operators can sign in to disable
+  // maintenance mode after being signed out.
+  const normalizedPath = String(req.path || '').toLowerCase();
+  // Password sign-in remains available so system admins are never trapped.
+  if (normalizedPath === '/api/auth/login-password') return next();
+  // OTP verification remains available for users who already requested a code.
+  if (normalizedPath === '/api/auth/verify-otp') return next();
+  if (normalizedPath === '/api/auth/request-otp') {
+    // Intentionally allow only sign-in OTP issuance during maintenance.
+    // Signup OTP requests stay blocked so maintenance windows cannot create
+    // fresh accounts while the system is in restricted mode.
+    const intent = String(req.body?.authIntent || '').trim().toLowerCase();
+    if (!intent || intent === 'signin_otp' || intent === 'signin') return next();
+  }
+
   if (req.path === '/api/system/public-status') return next();
   if (req.path.startsWith('/api/admin')) return next();
   if (req.path.startsWith('/api/health')) return next();
