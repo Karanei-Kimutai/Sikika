@@ -158,6 +158,12 @@ First-login forced reset behavior:
 - frontend must call POST /api/auth/set-password before entering the app
 - set-password clears the first-login reset requirement
 
+Operational intent:
+
+- NGO admins can safely share temporary credentials during onboarding
+- staff identity is verified at first login, then password ownership moves to the staff member
+- this removes long-term shared-password risk while preserving rapid onboarding
+
 ### Admin Routes
 
 All admin routes require auth token.
@@ -180,6 +186,14 @@ NGO staff lifecycle endpoints:
 
 - POST /api/admin/ngo/staff
 - PATCH /api/admin/ngo/staff/:userId/status
+
+NGO staff lifecycle rules:
+
+- endpoint caller must be an authenticated NGO_ADMIN account
+- role creation is limited to COUNSELLOR and LEGAL_COUNSEL
+- created staff are initialized with status=password_reset_required
+- status transitions are limited to ACTIVE and SUSPENDED
+- status endpoint only targets COUNSELLOR and LEGAL_COUNSEL accounts
 
 Shared admin utility:
 

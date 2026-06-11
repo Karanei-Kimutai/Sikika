@@ -114,6 +114,8 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     legalCounselId: "",
     reason: ""
   });
+  // Staff onboarding state is intentionally colocated with team-capacity controls
+  // because both concern day-to-day NGO workforce operations.
   const [staffForm, setStaffForm] = useState({
     phoneNumber: "",
     password: "",
@@ -305,6 +307,8 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
   }
 
   async function handleStaffCreate(event) {
+    // Onboarding is performed by NGO admins and creates staff in
+    // password_reset_required state for first-login credential rotation.
     event.preventDefault();
     setErrorMessage("");
     setSuccessMessage("");
@@ -325,6 +329,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     try {
       const data = await createNgoStaffAccount(payload);
       setSuccessMessage(data.message || "Staff account created.");
+      // Reset only staffing controls after success; keep broader dashboard context.
       setStaffForm({
         phoneNumber: "",
         password: "",
@@ -904,6 +909,10 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
 
           <article className="admin-panel full-span">
             <h2>Create Staff Account</h2>
+            <p className="admin-empty">
+              This panel reflects the branch governance change: NGO admins now own
+              counsellor/legal-counsel onboarding, while system admins focus on infrastructure.
+            </p>
             <p className="admin-empty">NGO admins can onboard counsellors and legal counsel. New staff must change the temporary password on first login.</p>
             <form className="reassignment-form" onSubmit={handleStaffCreate}>
               <label>
