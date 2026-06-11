@@ -13,6 +13,8 @@ const {
   CommunityMessage,
   CommunityRoom,
   RoomMembership,
+  DirectChatChannel,
+  DirectChatMessage,
   LegalCaseFile,
   SystemAdministratorProfile,
   NgoAdministratorProfile,
@@ -124,6 +126,71 @@ function buildLast30DaySeries(rows) {
   }
 
   return output;
+}
+
+function computeAverageStaffResponseMinutes({ channels, messages }) {
+  if (!Array.isArray(channels) || !Array.isArray(messages) || !channels.length || !messages.length) {
+    return { averageMinutes: 0, sampleSize: 0 };
+  }
+
+  const channelMetaById = new Map(
+    channels
+      .filter((row) => row?.chatId && row?.supportStaffCounterpartId && row?.survivorProfile?.userId)
+      .map((row) => [
+        row.chatId,
+        {
+          staffUserId: row.supportStaffCounterpartId,
+          survivorUserId: row.survivorProfile.userId
+        }
+      ])
+  );
+
+  const messagesByChannel = new Map();
+  for (const row of messages) {
+    if (!row?.chatId || !row?.messageDispatchTimestamp) continue;
+    const list = messagesByChannel.get(row.chatId) || [];
+    list.push(row);
+    messagesByChannel.set(row.chatId, list);
+  }
+
+  const responseMinutes = [];
+
+  for (const [chatId, messageRows] of messagesByChannel.entries()) {
+    const meta = channelMetaById.get(chatId);
+    if (!meta) continue;
+
+    const ordered = [...messageRows].sort(
+      (a, b) => new Date(a.messageDispatchTimestamp).getTime() - new Date(b.messageDispatchTimestamp).getTime()
+    );
+
+    const firstSurvivorMessage = ordered.find((row) => row.senderUserId === meta.survivorUserId);
+    if (!firstSurvivorMessage) continue;
+
+    const firstStaffReply = ordered.find((row) => {
+      if (row.senderUserId !== meta.staffUserId) return false;
+      return new Date(row.messageDispatchTimestamp).getTime() > new Date(firstSurvivorMessage.messageDispatchTimestamp).getTime();
+    });
+
+    if (!firstStaffReply) continue;
+
+    const minutes =
+      (new Date(firstStaffReply.messageDispatchTimestamp).getTime() -
+        new Date(firstSurvivorMessage.messageDispatchTimestamp).getTime()) /
+      60000;
+
+    if (Number.isFinite(minutes) && minutes >= 0) {
+      responseMinutes.push(minutes);
+    }
+  }
+
+  if (!responseMinutes.length) {
+    return { averageMinutes: 0, sampleSize: 0 };
+  }
+
+  return {
+    averageMinutes: Math.round(responseMinutes.reduce((sum, value) => sum + value, 0) / responseMinutes.length),
+    sampleSize: responseMinutes.length
+  };
 }
 
 function roleDisplay(role) {
@@ -245,7 +312,8 @@ async function getNgoDashboard(req, res) {
       previousMonthReports,
       activeLegalCases,
       activeSurvivors,
-      responseRows,
+      responseMessages,
+      responseChannels,
       reportsOverTimeRows,
       counsellorWorkload,
       legalWorkload,
@@ -286,14 +354,16 @@ async function getNgoDashboard(req, res) {
           ]
         }
       }),
-      IncidentReport.findAll({
-        attributes: [
-          [literal('TIMESTAMPDIFF(MINUTE, reportCreationTimestamp, NOW())'), 'responseMinutes']
-        ],
+      DirectChatMessage.findAll({
+        attributes: ['chatId', 'senderUserId', 'messageDispatchTimestamp'],
         where: {
-          currentReportStatus: { [Op.notIn]: ['SUBMITTED', 'WITHDRAWN'] }
+          messageDispatchTimestamp: { [Op.gte]: thirtyDaysAgo }
         },
         raw: true
+      }),
+      DirectChatChannel.findAll({
+        attributes: ['chatId', 'supportStaffCounterpartId'],
+        include: [{ model: SurvivorProfile, attributes: ['userId'] }]
       }),
       IncidentReport.findAll({
         attributes: [
@@ -326,7 +396,7 @@ async function getNgoDashboard(req, res) {
         raw: true
       }),
       HarmfulContentReport.findAll({
-        attributes: ['contentReportId', 'reportSubmissionTimestamp', 'reportReasonText', 'moderationReviewStatus'],
+        attributes: ['contentReportId', 'reportSubmissionTimestamp', 'reportReasonText', 'moderationReviewStatus', 'reporterUserId'],
         where: { moderationReviewStatus: 'PENDING' },
         include: [{
           model: CommunityMessage,
@@ -437,12 +507,11 @@ async function getNgoDashboard(req, res) {
       })
     ]);
 
-    const avgResponseMinutes = responseRows.length
-      ? Math.round(
-          responseRows.reduce((sum, row) => sum + Math.max(0, Number(row.responseMinutes || 0)), 0) /
-            responseRows.length
-        )
-      : 0;
+    const responseMetric = computeAverageStaffResponseMinutes({
+      channels: responseChannels,
+      messages: responseMessages
+    });
+    const avgResponseMinutes = responseMetric.averageMinutes;
 
     const reportTrend = previousMonthReports > 0
       ? Number((((monthReports - previousMonthReports) / previousMonthReports) * 100).toFixed(1))
@@ -525,6 +594,7 @@ async function getNgoDashboard(req, res) {
         reportTrendPercent: reportTrend,
         activeSurvivors,
         averageResponseMinutes: avgResponseMinutes,
+        averageResponseSampleCount: responseMetric.sampleSize,
         activeLegalCases
       },
       reportsOverTime: full30DaySeries,
@@ -591,8 +661,10 @@ async function getNgoDashboard(req, res) {
       moderationQueue: moderationQueue.map((row) => ({
         reportId: row.contentReportId,
         submittedAt: row.reportSubmissionTimestamp,
+        reporterLabel: row.reporterUserId ? `Reporter ${shortCode(row.reporterUserId)}` : 'Community Member',
         roomName: row.reportedMessage?.communityRoom?.roomName || 'General',
         snippet: row.reportedMessage?.publicMessageContent || row.reportReasonText,
+        reportReasonText: row.reportReasonText,
         status: row.moderationReviewStatus
       })),
       notifications: urgentNotifications,

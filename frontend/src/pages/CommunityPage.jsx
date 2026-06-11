@@ -69,10 +69,14 @@ function CommunityPage() {
   const [activeMessageMenuId, setActiveMessageMenuId] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
-  const [currentUserRole, setCurrentUserRole] = useState("");
+  const [currentUserRole] = useState(() => readRoleFromToken());
   const [roomName, setRoomName] = useState("");
   const [roomDescription, setRoomDescription] = useState("");
   const [showCreateRoomModal, setShowCreateRoomModal] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportTargetMessageId, setReportTargetMessageId] = useState("");
+  const [reportReasonText, setReportReasonText] = useState("");
+  const [submittingReport, setSubmittingReport] = useState(false);
   const [submittingRoom, setSubmittingRoom] = useState(false);
   const [joiningRoom, setJoiningRoom] = useState(false);
   const [roomQuery, setRoomQuery] = useState("");
@@ -140,8 +144,10 @@ function CommunityPage() {
   }
 
   useEffect(() => {
-    setCurrentUserRole(readRoleFromToken());
-    loadRooms();
+    const timerId = window.setTimeout(() => {
+      void loadRooms();
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, []);
 
   // Light polling keeps room ordering fresh if other users are active.
@@ -217,12 +223,17 @@ function CommunityPage() {
 
   useEffect(() => {
     if (activeRoomId && canAccessActiveRoom) {
-      loadMessages(activeRoomId);
+      const timerId = window.setTimeout(() => {
+        void loadMessages(activeRoomId);
+      }, 0);
       socket.emit("joinCommunityRoom", activeRoomId);
-      return;
+      return () => window.clearTimeout(timerId);
     }
 
-    setMessages([]);
+    const timerId = window.setTimeout(() => {
+      setMessages([]);
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, [activeRoomId, canAccessActiveRoom]);
 
   useEffect(() => {
@@ -341,27 +352,44 @@ function CommunityPage() {
     }
   }
 
-  async function handleReportMessage(messageId) {
-    const reason = String(window.prompt("Why are you reporting this message?") || "").trim();
-    if (!reason) {
-      setErrorMessage("Report cancelled. Add a reason to submit a report.");
+  function openReportModal(messageId) {
+    setReportTargetMessageId(messageId);
+    setReportReasonText("");
+    setShowReportModal(true);
+    setActiveMessageMenuId("");
+    setErrorMessage("");
+  }
+
+  function closeReportModal() {
+    setShowReportModal(false);
+    setReportTargetMessageId("");
+    setReportReasonText("");
+  }
+
+  async function handleReportMessage() {
+    const reason = String(reportReasonText || "").trim();
+    if (!reportTargetMessageId || !reason) {
+      setErrorMessage("Add a reason to submit a report.");
       return;
     }
 
     setErrorMessage("");
     setSuccessMessage("");
+    setSubmittingReport(true);
 
     try {
       await axios.post(
-        `${API_BASE_URL}/api/community/messages/${messageId}/report`,
+        `${API_BASE_URL}/api/community/messages/${reportTargetMessageId}/report`,
         { reason },
         { headers: getAuthHeaders() }
       );
 
       setSuccessMessage("Content reported successfully.");
-      setActiveMessageMenuId("");
+      closeReportModal();
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Could not report content.");
+    } finally {
+      setSubmittingReport(false);
     }
   }
 
@@ -477,7 +505,7 @@ function CommunityPage() {
                   {activeMessageMenuId === message.communityMessageId && (
                     <div className="message-actions-menu">
                       {message.senderUserId !== currentUserId && (
-                        <button type="button" onClick={() => handleReportMessage(message.communityMessageId)}>
+                        <button type="button" onClick={() => openReportModal(message.communityMessageId)}>
                           Report Message
                         </button>
                       )}
@@ -522,6 +550,42 @@ function CommunityPage() {
           </form>
         </section>
       </section>
+
+      {showReportModal && (
+        <div
+          className="admin-confirm-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="community-report-title"
+          onClick={closeReportModal}
+        >
+          <form
+            className="admin-confirm-modal community-report-modal"
+            onSubmit={(event) => {
+              event.preventDefault();
+              handleReportMessage();
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3 id="community-report-title">Report Message</h3>
+            <p>Help moderators understand what happened by adding a clear reason.</p>
+            <textarea
+              rows={4}
+              value={reportReasonText}
+              onChange={(event) => setReportReasonText(event.target.value)}
+              placeholder="Describe why this message should be reviewed."
+            />
+            <div className="admin-confirm-actions">
+              <button type="button" className="secondary-btn" onClick={closeReportModal} disabled={submittingReport}>
+                Cancel
+              </button>
+              <button type="submit" className="admin-action-btn" disabled={submittingReport || !reportReasonText.trim()}>
+                {submittingReport ? "Submitting..." : "Submit Report"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {showCreateRoomModal && isNgoAdmin && (
         <div

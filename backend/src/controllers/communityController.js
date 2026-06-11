@@ -5,8 +5,10 @@ const {
   CommunityMessage,
   HarmfulContentReport,
   ModerationActionLog,
+  InAppNotification,
   UserAccount,
-  SurvivorProfile
+  SurvivorProfile,
+  sequelize
 } = require("../models");
 
 /**
@@ -458,17 +460,24 @@ async function getModerationReports(req, res) {
 }
 
 async function reviewReport(req, res) {
+  const transaction = await sequelize.transaction();
+
+  try {
+
   const actor = await getActor(req);
   if (!actor) {
+    await transaction.rollback();
     return res.status(401).json({ error: "Authentication required." });
   }
 
   if (actor.role !== "NGO_ADMIN") {
+    await transaction.rollback();
     return res.status(403).json({ error: "Only NGO admins can review reports." });
   }
 
-  const report = await HarmfulContentReport.findByPk(req.params.reportId);
+  const report = await HarmfulContentReport.findByPk(req.params.reportId, { transaction });
   if (!report) {
+    await transaction.rollback();
     return res.status(404).json({ error: "Report not found." });
   }
 
@@ -476,19 +485,20 @@ async function reviewReport(req, res) {
   const action = String(req.body.action || "none").trim().toLowerCase();
 
   if (!["APPROVED", "REJECTED"].includes(reviewStatus)) {
+    await transaction.rollback();
     return res.status(400).json({ error: "reviewStatus must be APPROVED or REJECTED." });
   }
 
   report.moderationReviewStatus = reviewStatus;
-  await report.save();
+  await report.save({ transaction });
 
-  const message = await CommunityMessage.findByPk(report.reportedCommunityMessageId);
+  const message = await CommunityMessage.findByPk(report.reportedCommunityMessageId, { transaction });
 
   // Only approved reports can trigger moderation side-effects on users/messages.
   if (reviewStatus === "APPROVED" && message) {
     if (action === "remove_message") {
       message.publicMessageContent = "[Removed by moderators for community safety.]";
-      await message.save();
+      await message.save({ transaction });
 
       await ModerationActionLog.create({
         moderationActionId: randomUUID(),
@@ -496,13 +506,13 @@ async function reviewReport(req, res) {
         targetUserId: message.senderUserId,
         moderationActionType: "MESSAGE_DELETION",
         moderationActionReason: report.reportReasonText
-      });
+      }, { transaction });
     }
 
     if (action === "suspend_user") {
       await UserAccount.update(
         { accountStatus: "SUSPENDED" },
-        { where: { userId: message.senderUserId } }
+        { where: { userId: message.senderUserId }, transaction }
       );
 
       await ModerationActionLog.create({
@@ -511,7 +521,7 @@ async function reviewReport(req, res) {
         targetUserId: message.senderUserId,
         moderationActionType: "SUSPENSION",
         moderationActionReason: report.reportReasonText
-      });
+      }, { transaction });
     }
 
     if (action === "issue_warning") {
@@ -521,9 +531,21 @@ async function reviewReport(req, res) {
         targetUserId: message.senderUserId,
         moderationActionType: "WARNING",
         moderationActionReason: report.reportReasonText
-      });
+      }, { transaction });
+
+      // Warnings are stored as discreet in-app notifications so the target user
+      // can be informed without exposing sensitive moderation context in plain UI text.
+      await InAppNotification.create({
+        notificationId: randomUUID(),
+        recipientUserId: message.senderUserId,
+        notificationCategoryType: "MODERATION_ALERT",
+        discreetNotificationMessage: "A recent community post from your account was reviewed. Please follow community guidelines.",
+        notificationReadStatus: "UNREAD"
+      }, { transaction });
     }
   }
+
+  await transaction.commit();
 
   if (message) {
     req.app.locals.io?.to(`community-room:${message.roomId}`).emit("community:message-updated", {
@@ -538,7 +560,14 @@ async function reviewReport(req, res) {
     reviewStatus: report.moderationReviewStatus
   });
 
-  return res.json({ message: "Moderation review saved.", report });
+    return res.json({ message: "Moderation review saved.", report });
+  } catch (error) {
+    if (!transaction.finished) {
+      await transaction.rollback();
+    }
+    console.error("Community moderation review error:", error);
+    return res.status(500).json({ error: "Failed to save moderation review." });
+  }
 }
 
 module.exports = {
