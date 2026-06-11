@@ -23,6 +23,7 @@ const {
  * Core reporting workflow:
  * - Survivors create and manage their own submissions.
  * - Assigned staff (counsellor/legal) and NGO admins can review and advance status.
+ * - System admins have read-only visibility for oversight (no status mutations).
  * - Status changes are guarded by both transition rules and role permissions.
  * - Evidence files are stored in Cloudinary; clients receive short-lived signed URLs.
  */
@@ -256,7 +257,8 @@ async function canActorAccessReport(actor, report) {
   if (!actor || !report) return false;
 
   if (actor.role === "SYSTEM_ADMIN") {
-    return false;
+    // System admins have read-only report visibility for platform oversight.
+    return true;
   }
 
   if (actor.role === "NGO_ADMIN") {
@@ -440,10 +442,6 @@ async function listReports(req, res) {
     return res.status(401).json({ error: "Authentication required." });
   }
 
-  if (actor.role === "SYSTEM_ADMIN") {
-    return res.status(403).json({ error: "System administrators do not have access to survivor reports." });
-  }
-
   const where = {};
 
   if (req.query.status) {
@@ -500,10 +498,6 @@ async function getReport(req, res) {
 
   if (!actor) {
     return res.status(401).json({ error: "Authentication required." });
-  }
-
-  if (actor.role === "SYSTEM_ADMIN") {
-    return res.status(403).json({ error: "System administrators do not have access to survivor reports." });
   }
 
   const report = await fetchReportById(req.params.reportId);
@@ -941,10 +935,6 @@ async function getEvidenceAccessUrl(req, res) {
 
   if (!actor) {
     return res.status(401).json({ error: "Authentication required." });
-  }
-
-  if (actor.role === "SYSTEM_ADMIN") {
-    return res.status(403).json({ error: "System administrators do not have access to survivor evidence." });
   }
 
   const report = await IncidentReport.findByPk(req.params.reportId);
