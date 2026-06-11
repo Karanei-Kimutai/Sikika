@@ -1982,6 +1982,38 @@ input:focus {
   font-size: 1.03rem;
 }
 
+.admin-note {
+  margin: 0.45rem 0 0;
+  color: var(--admin-text);
+  font-size: 0.82rem;
+}
+
+.pulse-grid {
+  margin-top: 0.7rem;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.pulse-card {
+  border: 1px solid var(--admin-border);
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 0.58rem 0.62rem;
+  display: grid;
+  gap: 0.22rem;
+}
+
+.pulse-card span {
+  color: var(--admin-text);
+  font-size: 0.76rem;
+}
+
+.pulse-card strong {
+  color: var(--admin-title);
+  font-size: 1.08rem;
+}
+
 .chart-backdrop {
   fill: rgba(255, 255, 255, 0.72);
   stroke: var(--admin-border);
@@ -2197,6 +2229,29 @@ input:focus {
 .admin-table th {
   color: var(--admin-title);
   font-weight: 800;
+}
+
+.availability-pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.15rem 0.52rem;
+  font-size: 0.73rem;
+  font-weight: 800;
+}
+
+.availability-pill.available {
+  color: #165a39;
+  background: #d6f4df;
+}
+
+.availability-pill.busy {
+  color: #6f4c0b;
+  background: #ffeac8;
+}
+
+.availability-pill.offline {
+  color: #6f2a2a;
+  background: #ffd9d9;
 }
 
 .pill {
@@ -2447,6 +2502,51 @@ input:focus {
   min-height: 2.35rem;
   padding: 0 0.95rem;
   background: #ffffff;
+}
+
+.resource-form-grid {
+  margin-top: 0.7rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  border: 1px solid var(--admin-border);
+  border-radius: 0.85rem;
+  background: rgba(255, 255, 255, 0.84);
+  padding: 0.75rem;
+}
+
+.resource-form-grid label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--admin-title);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.resource-form-grid input {
+  border: 1px solid var(--admin-border);
+  border-radius: 0.6rem;
+  min-height: 2.35rem;
+  padding: 0 0.66rem;
+  color: var(--admin-title);
+  background: #ffffff;
+  font-size: 0.84rem;
+}
+
+.resource-form-grid input:focus {
+  outline: none;
+  border-color: #a95226;
+  box-shadow: 0 0 0 3px rgba(169, 82, 38, 0.18);
+}
+
+.resource-form-grid .full-span {
+  grid-column: 1 / -1;
+}
+
+.resource-form-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .search-results,
@@ -2797,8 +2897,13 @@ input:focus {
   .breakdown-grid,
   .chart-summary-row,
   .reassignment-form,
-  .report-filter-row {
+  .report-filter-row,
+  .resource-form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .pulse-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .admin-page {

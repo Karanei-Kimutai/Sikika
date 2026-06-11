@@ -60,6 +60,13 @@ function prettifyLabel(value) {
     .join(" ");
 }
 
+function availabilityClass(value) {
+  const normalized = String(value || "").toUpperCase();
+  if (normalized === "AVAILABLE") return "availability-pill available";
+  if (normalized === "BUSY") return "availability-pill busy";
+  return "availability-pill offline";
+}
+
 function buildLineChartPoints(series) {
   if (!series.length) return [];
 
@@ -472,6 +479,25 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     () => (dashboard?.survivorAssignments || []).find((item) => item.survivorId === assignmentForm.survivorId) || null,
     [dashboard, assignmentForm.survivorId]
   );
+  const teamStats = useMemo(() => {
+    const directory = dashboard?.staffDirectory || [];
+    const assignments = dashboard?.survivorAssignments || [];
+
+    const availableStaff = directory.filter(
+      (staff) => String(staff.availability || "").toUpperCase() === "AVAILABLE"
+    ).length;
+    const highLoadStaff = directory.filter((staff) => Number(staff.activeCases || 0) >= 6).length;
+    const partiallyUnassignedSurvivors = assignments.filter(
+      (survivor) => !survivor.assignedCounsellorId || !survivor.assignedLegalCounselId
+    ).length;
+
+    return {
+      totalStaff: directory.length,
+      availableStaff,
+      highLoadStaff,
+      partiallyUnassignedSurvivors
+    };
+  }, [dashboard]);
 
   function yForValue(value) {
     const width = 620;
@@ -903,6 +929,29 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
       {activeSection === "team-capacity" && (
         <section className="admin-module-grid" aria-label="Team capacity">
           <article className="admin-panel full-span">
+            <h2>Team Capacity Snapshot</h2>
+            <p className="admin-note">Monitor staffing pressure before onboarding or reassignment actions.</p>
+            <div className="pulse-grid">
+              <div className="pulse-card">
+                <span>Total support staff</span>
+                <strong>{formatNumber(teamStats.totalStaff)}</strong>
+              </div>
+              <div className="pulse-card">
+                <span>Available now</span>
+                <strong>{formatNumber(teamStats.availableStaff)}</strong>
+              </div>
+              <div className="pulse-card">
+                <span>High workload (6+ cases)</span>
+                <strong>{formatNumber(teamStats.highLoadStaff)}</strong>
+              </div>
+              <div className="pulse-card">
+                <span>Partially unassigned survivors</span>
+                <strong>{formatNumber(teamStats.partiallyUnassignedSurvivors)}</strong>
+              </div>
+            </div>
+          </article>
+
+          <article className="admin-panel full-span">
             <h2>Workload Distribution</h2>
             <div className="stacked-bars">
               {[...(dashboard.staffWorkload?.counsellors || []), ...(dashboard.staffWorkload?.legalCounsel || [])]
@@ -917,7 +966,9 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
                   </div>
                 ))}
             </div>
-            <p className="admin-empty">Bars represent active assigned survivors per staff member.</p>
+            {(!dashboard.staffWorkload?.counsellors?.length && !dashboard.staffWorkload?.legalCounsel?.length)
+              ? <p className="admin-empty">No staff workload data available yet.</p>
+              : <p className="admin-empty">Bars represent active assigned survivors per staff member.</p>}
           </article>
 
           <article className="admin-panel full-span">
@@ -940,12 +991,19 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
                       <td>{staff.type === "COUNSELLOR" ? "Counsellor" : "Legal Counsel"}</td>
                       <td>{staff.specialization}</td>
                       <td>{formatNumber(staff.activeCases)}</td>
-                      <td>{staff.availability}</td>
+                      <td>
+                        <span className={availabilityClass(staff.availability)}>
+                          {prettifyLabel(staff.availability)}
+                        </span>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            {(dashboard.staffDirectory || []).length === 0 && (
+              <p className="admin-empty" style={{ marginTop: "0.8rem" }}>No staff profiles available yet.</p>
+            )}
           </article>
 
           <article className="admin-panel full-span">
@@ -1193,46 +1251,62 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
         <section className="admin-module-grid" aria-label="Resources and operations">
           <article className="admin-panel full-span">
             <h2>Create or Edit Posted Resources</h2>
-            <form className="admin-search" onSubmit={handleResourceSubmit}>
-              <input
-                type="text"
-                placeholder="Resource title"
-                value={resourceForm.title}
-                onChange={(event) => setResourceForm((prev) => ({ ...prev, title: event.target.value }))}
-              />
-              <input
-                type="text"
-                placeholder="Category (example: legal_guidance)"
-                value={resourceForm.category}
-                onChange={(event) => setResourceForm((prev) => ({ ...prev, category: event.target.value }))}
-              />
-              <input
-                type="url"
-                placeholder="Resource URL"
-                value={resourceForm.fileUrl}
-                onChange={(event) => setResourceForm((prev) => ({ ...prev, fileUrl: event.target.value }))}
-              />
-              <input
-                type="text"
-                placeholder="Description (optional)"
-                value={resourceForm.description}
-                onChange={(event) => setResourceForm((prev) => ({ ...prev, description: event.target.value }))}
-              />
-              <button type="submit" className="admin-action-btn">
-                {editingResourceId ? "Save Changes" : "Create Resource"}
-              </button>
-              {editingResourceId && (
-                <button
-                  type="button"
-                  className="admin-action-btn"
-                  onClick={() => {
-                    setEditingResourceId("");
-                    setResourceForm({ title: "", category: "", fileUrl: "", description: "" });
-                  }}
-                >
-                  Cancel Edit
+            <p className="admin-note">Keep fields descriptive so support teams can discover the right resource faster.</p>
+            <form className="resource-form-grid" onSubmit={handleResourceSubmit}>
+              <label>
+                Resource title
+                <input
+                  type="text"
+                  placeholder="Resource title"
+                  value={resourceForm.title}
+                  onChange={(event) => setResourceForm((prev) => ({ ...prev, title: event.target.value }))}
+                />
+              </label>
+              <label>
+                Category
+                <input
+                  type="text"
+                  placeholder="Example: legal_guidance"
+                  value={resourceForm.category}
+                  onChange={(event) => setResourceForm((prev) => ({ ...prev, category: event.target.value }))}
+                />
+              </label>
+              <label>
+                Resource URL
+                <input
+                  type="url"
+                  placeholder="https://..."
+                  value={resourceForm.fileUrl}
+                  onChange={(event) => setResourceForm((prev) => ({ ...prev, fileUrl: event.target.value }))}
+                />
+              </label>
+              <label className="full-span">
+                Description (optional)
+                <input
+                  type="text"
+                  placeholder="Short context for counsellors and legal counsel"
+                  value={resourceForm.description}
+                  onChange={(event) => setResourceForm((prev) => ({ ...prev, description: event.target.value }))}
+                />
+              </label>
+
+              <div className="resource-form-actions full-span">
+                <button type="submit" className="admin-action-btn">
+                  {editingResourceId ? "Save Changes" : "Create Resource"}
                 </button>
-              )}
+                {editingResourceId && (
+                  <button
+                    type="button"
+                    className="admin-action-btn"
+                    onClick={() => {
+                      setEditingResourceId("");
+                      setResourceForm({ title: "", category: "", fileUrl: "", description: "" });
+                    }}
+                  >
+                    Cancel Edit
+                  </button>
+                )}
+              </div>
             </form>
           </article>
 
@@ -1266,6 +1340,9 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
                 </tbody>
               </table>
             </div>
+            {(dashboard.resources || []).length === 0 && (
+              <p className="admin-empty" style={{ marginTop: "0.8rem" }}>No resources have been posted yet.</p>
+            )}
           </article>
 
           <article className="admin-panel full-span">
