@@ -2,6 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { io } from "socket.io-client";
 
+/**
+ * CommunityPage
+ * -------------
+ * Membership-gated community forum UI.
+ *
+ * UX rules implemented here:
+ * - only joined rooms can display/post messages
+ * - NGO admins can create rooms via modal flow
+ * - room list prioritizes latest activity
+ * - chat viewport anchors to most recent messages
+ */
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
 const socket = io(API_BASE_URL, { autoConnect: false });
@@ -9,6 +21,37 @@ const socket = io(API_BASE_URL, { autoConnect: false });
 function getAuthHeaders() {
   const token = localStorage.getItem("authToken");
   return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+// Role claim is read client-side only for UI toggles (e.g., create-room button).
+// Actual authorization remains enforced by backend endpoints.
+function readRoleFromToken() {
+  try {
+    const token = localStorage.getItem("authToken") || "";
+    const [, payload] = token.split(".");
+    if (!payload) return "";
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), "=");
+    const json = JSON.parse(atob(padded));
+    return String(json?.role || "").toUpperCase();
+  } catch {
+    return "";
+  }
+}
+
+// Converts potentially invalid timestamps into sortable epoch values.
+function toEpoch(value) {
+  const parsed = Date.parse(String(value || ""));
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+// Keeps most recently active rooms at the top of the room list.
+function sortRoomsByActivity(roomList) {
+  return [...roomList].sort((a, b) => {
+    const aTime = toEpoch(a.latestMessageDispatchTimestamp) || toEpoch(a.roomCreationTimestamp);
+    const bTime = toEpoch(b.latestMessageDispatchTimestamp) || toEpoch(b.roomCreationTimestamp);
+    return bTime - aTime;
+  });
 }
 
 function CommunityPage() {
@@ -19,21 +62,38 @@ function CommunityPage() {
   const [activeMessageMenuId, setActiveMessageMenuId] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [currentUserRole, setCurrentUserRole] = useState("");
+  const [roomName, setRoomName] = useState("");
+  const [roomDescription, setRoomDescription] = useState("");
+  const [showCreateRoomModal, setShowCreateRoomModal] = useState(false);
+  const [submittingRoom, setSubmittingRoom] = useState(false);
+  const [joiningRoom, setJoiningRoom] = useState(false);
   const activeRoomIdRef = useRef("");
+  const messagesViewportRef = useRef(null);
 
   const currentUserId = localStorage.getItem("userId");
+  const isNgoAdmin = currentUserRole === "NGO_ADMIN";
+  const activeRoom = rooms.find((room) => room.roomId === activeRoomId) || null;
+  // Membership gate: only joined rooms can load/render message history.
+  const canAccessActiveRoom = Boolean(activeRoom?.joined);
 
-  async function loadRooms() {
-    setErrorMessage("");
+  // Pulls rooms and preserves selection when possible.
+  async function loadRooms({ silent = false } = {}) {
+    if (!silent) setErrorMessage("");
     try {
       const response = await axios.get(`${API_BASE_URL}/api/community/rooms`, {
         headers: getAuthHeaders()
       });
-      const nextRooms = response.data.rooms || [];
+      const nextRooms = sortRoomsByActivity(response.data.rooms || []);
       setRooms(nextRooms);
-      setActiveRoomId((current) => current || nextRooms[0]?.roomId || "");
+      setActiveRoomId((current) => {
+        if (nextRooms.some((room) => room.roomId === current)) return current;
+        return nextRooms[0]?.roomId || "";
+      });
     } catch (error) {
-      setErrorMessage(error.response?.data?.error || "Failed to load community rooms.");
+      if (!silent) {
+        setErrorMessage(error.response?.data?.error || "Failed to load community rooms.");
+      }
     }
   }
 
@@ -42,16 +102,23 @@ function CommunityPage() {
 
     setErrorMessage("");
     try {
-      await axios.post(
-        `${API_BASE_URL}/api/community/rooms/${roomId}/join`,
-        {},
-        { headers: getAuthHeaders() }
-      );
-
       const response = await axios.get(`${API_BASE_URL}/api/community/rooms/${roomId}/messages`, {
         headers: getAuthHeaders()
       });
-      setMessages(response.data.messages || []);
+      const nextMessages = response.data.messages || [];
+      setMessages(nextMessages);
+
+      // Sync local room ordering even when messages were loaded via REST.
+      const lastMessage = nextMessages[nextMessages.length - 1] || null;
+      if (lastMessage?.messageDispatchTimestamp) {
+        setRooms((current) => sortRoomsByActivity(
+          current.map((room) => (
+            room.roomId === roomId
+              ? { ...room, latestMessageDispatchTimestamp: lastMessage.messageDispatchTimestamp }
+              : room
+          ))
+        ));
+      }
     } catch (error) {
       setMessages([]);
       setErrorMessage(error.response?.data?.error || "Failed to load room messages.");
@@ -59,7 +126,17 @@ function CommunityPage() {
   }
 
   useEffect(() => {
+    setCurrentUserRole(readRoleFromToken());
     loadRooms();
+  }, []);
+
+  // Light polling keeps room ordering fresh if other users are active.
+  useEffect(() => {
+    const timerId = setInterval(() => {
+      loadRooms({ silent: true });
+    }, 15000);
+
+    return () => clearInterval(timerId);
   }, []);
 
   useEffect(() => {
@@ -74,6 +151,18 @@ function CommunityPage() {
     socket.connect();
 
     const handleIncomingMessage = ({ roomId, message }) => {
+      // Any incoming message bumps the corresponding room to the top.
+      setRooms((current) => sortRoomsByActivity(
+        current.map((room) => (
+          room.roomId === roomId
+            ? {
+              ...room,
+              latestMessageDispatchTimestamp: message?.messageDispatchTimestamp || new Date().toISOString()
+            }
+            : room
+        ))
+      ));
+
       if (roomId !== activeRoomIdRef.current) return;
 
       setMessages((current) => {
@@ -113,11 +202,109 @@ function CommunityPage() {
   }, []);
 
   useEffect(() => {
-    if (activeRoomId) {
+    if (activeRoomId && canAccessActiveRoom) {
       loadMessages(activeRoomId);
       socket.emit("joinCommunityRoom", activeRoomId);
+      return;
     }
-  }, [activeRoomId]);
+
+    setMessages([]);
+  }, [activeRoomId, canAccessActiveRoom]);
+
+  useEffect(() => {
+    if (!showCreateRoomModal) return undefined;
+
+    function onKeyDown(event) {
+      if (event.key === "Escape") {
+        setShowCreateRoomModal(false);
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showCreateRoomModal]);
+
+  useEffect(() => {
+    if (!canAccessActiveRoom) return;
+    const viewport = messagesViewportRef.current;
+    if (!viewport) return;
+    // Entering a room or receiving messages always anchors to the latest message.
+    viewport.scrollTop = viewport.scrollHeight;
+  }, [messages, activeRoomId, canAccessActiveRoom]);
+
+  async function handleCreateRoom(event) {
+    event.preventDefault();
+    const trimmedName = roomName.trim();
+    const trimmedDescription = roomDescription.trim();
+    if (!trimmedName) {
+      setErrorMessage("Room name is required.");
+      return;
+    }
+
+    setSubmittingRoom(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      const response = await axios.post(
+        `${API_BASE_URL}/api/community/rooms`,
+        {
+          roomName: trimmedName,
+          roomDescriptionText: trimmedDescription || undefined
+        },
+        { headers: getAuthHeaders() }
+      );
+      setRoomName("");
+      setRoomDescription("");
+      await loadRooms({ silent: true });
+      if (response.data?.room?.roomId) {
+        setActiveRoomId(response.data.room.roomId);
+      }
+      setShowCreateRoomModal(false);
+      setSuccessMessage("Room created.");
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Failed to create room.");
+    } finally {
+      setSubmittingRoom(false);
+    }
+  }
+
+  async function handleJoinActiveRoom() {
+    if (!activeRoomId) return;
+
+    setJoiningRoom(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      await axios.post(
+        `${API_BASE_URL}/api/community/rooms/${activeRoomId}/join`,
+        {},
+        { headers: getAuthHeaders() }
+      );
+
+      setRooms((current) => sortRoomsByActivity(
+        current.map((room) =>
+          room.roomId === activeRoomId
+            ? {
+              ...room,
+              joined: true,
+              membersCount: room.joined
+                ? Number(room.membersCount || 0)
+                : Number(room.membersCount || 0) + 1
+            }
+            : room
+        )
+      ));
+
+      await loadMessages(activeRoomId);
+      setSuccessMessage("Joined room successfully.");
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Failed to join room.");
+    } finally {
+      setJoiningRoom(false);
+    }
+  }
 
   async function handleSendMessage(event) {
     event.preventDefault();
@@ -187,31 +374,65 @@ function CommunityPage() {
     <main className="community-page">
       <section className="community-shell" aria-label="Community forum">
         <aside className="community-sidebar">
-          <h2>Community Rooms</h2>
-          {rooms.map((room) => (
-            <button
-              key={room.roomId}
-              type="button"
-              className={`community-room-item ${activeRoomId === room.roomId ? "active" : ""}`}
-              onClick={() => setActiveRoomId(room.roomId)}
-            >
-              <strong>{room.roomName}</strong>
-              <small>{room.membersCount} members</small>
-            </button>
-          ))}
+          <div className="community-sidebar-head">
+            <h2>Community Rooms</h2>
+            {isNgoAdmin && (
+              <button
+                type="button"
+                className="community-create-room-btn"
+                onClick={() => setShowCreateRoomModal(true)}
+              >
+                + Create
+              </button>
+            )}
+          </div>
+
+          <p className="community-access-note">
+            {isNgoAdmin
+              ? "You can create rooms for moderated support topics."
+              : "Rooms are created by NGO Admins. Select a room and join to participate."}
+          </p>
+
+          <div className="community-room-list" aria-label="Available rooms">
+            {rooms.map((room) => (
+              <button
+                key={room.roomId}
+                type="button"
+                className={`community-room-item ${activeRoomId === room.roomId ? "active" : ""}`}
+                onClick={() => setActiveRoomId(room.roomId)}
+              >
+                <strong>{room.roomName}</strong>
+                <small>{room.membersCount} members</small>
+                <small>{room.joined ? "Joined" : "Not joined"}</small>
+              </button>
+            ))}
+          </div>
         </aside>
 
         <section className="community-main">
-          <header>
+          <header className="community-main-head">
             <h1>Community Support Forum</h1>
             <p>Live room chat with nickname privacy and discreet moderation tools.</p>
+            {activeRoom && (
+              <div className="community-active-room-bar">
+                <span>
+                  <strong>{activeRoom.roomName}</strong>
+                  {activeRoom.roomDescriptionText ? ` - ${activeRoom.roomDescriptionText}` : ""}
+                </span>
+                {!canAccessActiveRoom && (
+                  <button type="button" className="primary-btn" onClick={handleJoinActiveRoom} disabled={joiningRoom}>
+                    {joiningRoom ? "Joining..." : "Join Room"}
+                  </button>
+                )}
+              </div>
+            )}
           </header>
 
           {errorMessage && <p className="status-message warning">{errorMessage}</p>}
           {successMessage && <p className="status-message">{successMessage}</p>}
 
-          <div className="community-messages">
-            {messages.map((message) => (
+          <div className="community-messages" ref={messagesViewportRef}>
+            {canAccessActiveRoom && messages.map((message) => (
               <article
                 key={message.communityMessageId}
                 className={`community-row ${message.senderUserId === currentUserId ? "mine" : "theirs"}`}
@@ -253,10 +474,17 @@ function CommunityPage() {
               </article>
             ))}
 
-            {messages.length === 0 && (
+            {canAccessActiveRoom && messages.length === 0 && (
               <div className="community-empty-state">
                 <h2>No messages yet</h2>
                 <p>Start the conversation with a supportive message.</p>
+              </div>
+            )}
+
+            {!canAccessActiveRoom && activeRoom && (
+              <div className="community-empty-state">
+                <h2>Join to view messages</h2>
+                <p>This room is membership-gated. Join first, then you can read and post messages.</p>
               </div>
             )}
           </div>
@@ -267,13 +495,62 @@ function CommunityPage() {
               placeholder="Share support, advice, or encouragement"
               value={newMessage}
               onChange={(event) => setNewMessage(event.target.value)}
+              disabled={!canAccessActiveRoom}
             />
-            <button type="submit" className="primary-btn" disabled={!newMessage.trim()}>
+            <button type="submit" className="primary-btn" disabled={!newMessage.trim() || !canAccessActiveRoom}>
               Post
             </button>
           </form>
         </section>
       </section>
+
+      {showCreateRoomModal && isNgoAdmin && (
+        <div
+          className="admin-confirm-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="create-community-room-title"
+          onClick={() => setShowCreateRoomModal(false)}
+        >
+          <form
+            className="admin-confirm-modal community-create-room-form"
+            onSubmit={handleCreateRoom}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3 id="create-community-room-title">Create Community Room</h3>
+            <p>Create a moderated room with a clear purpose so survivors can join safely.</p>
+            <input
+              type="text"
+              value={roomName}
+              onChange={(event) => setRoomName(event.target.value)}
+              placeholder="General Support"
+            />
+            <textarea
+              value={roomDescription}
+              onChange={(event) => setRoomDescription(event.target.value)}
+              placeholder="Purpose and moderation focus"
+              rows={3}
+            />
+            <div className="admin-confirm-actions">
+              <button
+                type="button"
+                className="admin-action-btn"
+                onClick={() => setShowCreateRoomModal(false)}
+                disabled={submittingRoom}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="admin-action-btn"
+                disabled={submittingRoom || !roomName.trim()}
+              >
+                {submittingRoom ? "Creating..." : "Create Room"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </main>
   );
 }

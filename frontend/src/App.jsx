@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import axios from "axios";
 import SiteHeader from "./components/SiteHeader";
 import AuthPage from "./pages/AuthPage";
 import LandingPage from "./pages/LandingPage";
@@ -7,11 +8,30 @@ import DirectChatPage from "./pages/DirectChatPage";
 import ReportingPage from "./pages/ReportingPage";
 import CommunityPage from "./pages/CommunityPage";
 import ModerationDashboardPage from "./pages/ModerationDashboardPage";
+import NgoAdminDashboardPage from "./pages/NgoAdminDashboardPage";
+import SystemAdminDashboardPage from "./pages/SystemAdminDashboardPage";
 import "./App.css";
 
-const QUICK_EXIT_URL = "https://www.google.com";
+/**
+ * App.jsx
+ * -------
+ * Top-level application shell.
+ *
+ * Core responsibilities:
+ * - route resolution and role-based route remapping
+ * - auth-aware route gating for protected views
+ * - global maintenance-mode screen switching
+ * - quick-exit behavior for survivor safety
+ */
 
-const routes = {
+const QUICK_EXIT_URL = "https://www.google.com";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_API_URL ||
+  "http://localhost:5000";
+
+// Public route map for unauthenticated users and fallback routing.
+const publicRoutes = {
   "/": LandingPage,
   "/home": LandingPage,
   "/library": LibraryPage,
@@ -19,8 +39,40 @@ const routes = {
   "/chat": DirectChatPage,
   "/reports": ReportingPage,
   "/community": CommunityPage,
-  "/moderation": ModerationDashboardPage
+  "/moderation": ModerationDashboardPage,
+  "/ngo-admin": NgoAdminDashboardPage,
+  "/system-admin": SystemAdminDashboardPage
 };
+
+const knownPaths = new Set(Object.keys(publicRoutes));
+
+// Role-specific route remapping used after successful authentication.
+const ngoAdminRoutes = {
+  "/": (props) => <NgoAdminDashboardPage {...props} initialSection="command-center" />,
+  "/home": (props) => <NgoAdminDashboardPage {...props} initialSection="command-center" />,
+  "/reports": (props) => <NgoAdminDashboardPage {...props} initialSection="reports" />,
+  "/chat": (props) => <NgoAdminDashboardPage {...props} initialSection="team-capacity" />,
+  "/community": CommunityPage,
+  "/moderation": (props) => <NgoAdminDashboardPage {...props} initialSection="moderation-desk" />,
+  "/library": LibraryPage,
+  "/join": AuthPage
+};
+
+const systemAdminRoutes = {
+  "/": (props) => <SystemAdminDashboardPage {...props} initialSection="infrastructure" />,
+  "/home": (props) => <SystemAdminDashboardPage {...props} initialSection="infrastructure" />,
+  "/chat": (props) => <SystemAdminDashboardPage {...props} initialSection="maintenance" />,
+  "/community": (props) => <SystemAdminDashboardPage {...props} initialSection="ops-logs" />,
+  "/library": (props) => <SystemAdminDashboardPage {...props} initialSection="admin-access" />,
+  "/join": AuthPage
+};
+
+function getRoutesForRole(role, isAuthenticated) {
+  if (!isAuthenticated) return publicRoutes;
+  if (role === "NGO_ADMIN") return ngoAdminRoutes;
+  if (role === "SYSTEM_ADMIN") return systemAdminRoutes;
+  return publicRoutes;
+}
 
 // UI-only route gating helper; API authorization still happens on the backend.
 function decodeRoleFromToken() {
@@ -36,7 +88,18 @@ function decodeRoleFromToken() {
 }
 
 function getCurrentPath() {
-  return window.location.pathname in routes ? window.location.pathname : "/";
+  return knownPaths.has(window.location.pathname) ? window.location.pathname : "/";
+}
+
+function formatMaintenanceCountdown(value) {
+  if (!value) return "";
+  const ms = new Date(value).getTime() - Date.now();
+  if (Number.isNaN(ms) || ms <= 0) return "Expected return time reached";
+
+  const totalMinutes = Math.floor(ms / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}h ${minutes}m remaining`;
 }
 
 function App() {
@@ -45,11 +108,33 @@ function App() {
   const quickExitIdleTimerRef = useRef(null);
   const isAuthenticated = Boolean(localStorage.getItem("authToken"));
   const role = decodeRoleFromToken();
+  const [maintenanceMode, setMaintenanceMode] = useState({ enabled: false, updatedAt: null });
 
   useEffect(() => {
     const handlePopState = () => setCurrentPath(getCurrentPath());
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
+    let timerId = null;
+
+    async function refreshPublicStatus() {
+      try {
+        // Used by global maintenance banner/screen for non-system-admin users.
+        const response = await axios.get(`${API_BASE_URL}/api/system/public-status`);
+        setMaintenanceMode(response.data?.maintenanceMode || { enabled: false, updatedAt: null });
+      } catch {
+        // Preserve the latest known status if the check fails.
+      }
+    }
+
+    refreshPublicStatus();
+    timerId = setInterval(refreshPublicStatus, 15000);
+
+    return () => {
+      if (timerId) clearInterval(timerId);
+    };
   }, []);
 
   const navigate = (path) => {
@@ -109,15 +194,66 @@ function App() {
     };
   }, []);
 
-  const protectedPaths = new Set(["/chat", "/community", "/moderation", "/reports"]);
+  const protectedPaths = new Set(["/chat", "/community", "/moderation", "/reports", "/ngo-admin", "/system-admin"]);
   const resolvedPath = protectedPaths.has(currentPath) && !isAuthenticated ? "/join" : currentPath;
-  const roleResolvedPath = resolvedPath === "/moderation" && role !== "NGO_ADMIN" ? "/community" : resolvedPath;
-  const Page = routes[roleResolvedPath] || LandingPage;
+  const roleResolvedPath = (() => {
+    if (["/ngo-admin", "/system-admin"].includes(resolvedPath)) {
+      return "/home";
+    }
+
+    return resolvedPath;
+  })();
+  const activeRoutes = getRoutesForRole(role, isAuthenticated);
+  const fallbackPath = isAuthenticated ? "/home" : "/";
+  const finalPath = activeRoutes[roleResolvedPath] ? roleResolvedPath : fallbackPath;
+  const Page = activeRoutes[finalPath] || LandingPage;
+
+  // During active maintenance, only system admins keep normal UI access.
+  const shouldShowMaintenanceScreen = maintenanceMode.enabled && role !== "SYSTEM_ADMIN";
+
+  if (shouldShowMaintenanceScreen) {
+    return (
+      <div className="app-shell">
+        <main className="admin-page system-admin-theme">
+          <section className="admin-shell">
+            <article className="admin-panel full-span">
+              <h1>System Under Maintenance</h1>
+              <p>
+                Core services are temporarily unavailable while administrators perform platform updates.
+                Please check back shortly.
+              </p>
+              <p>
+                Reason: {maintenanceMode.reason || "Scheduled platform maintenance"}
+              </p>
+              <p>
+                Last update: {maintenanceMode.updatedAt ? new Date(maintenanceMode.updatedAt).toLocaleString() : "-"}
+              </p>
+              <p>
+                Expected back: {maintenanceMode.expectedUntil ? new Date(maintenanceMode.expectedUntil).toLocaleString() : "Not specified"}
+              </p>
+              {maintenanceMode.expectedUntil && (
+                <p>
+                  Countdown: {formatMaintenanceCountdown(maintenanceMode.expectedUntil)}
+                </p>
+              )}
+              <button
+                type="button"
+                className="admin-action-btn"
+                onClick={() => window.location.reload()}
+              >
+                Refresh Status
+              </button>
+            </article>
+          </section>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">
       <SiteHeader
-        currentPath={roleResolvedPath}
+        currentPath={finalPath}
         onNavigate={navigate}
         isAuthenticated={isAuthenticated}
         role={role}
@@ -133,7 +269,7 @@ function App() {
       >
         <span className="app-quick-exit-label">Quick Exit</span>
       </button>
-      <Page onNavigate={navigate} />
+      <Page onNavigate={navigate} role={role} onSignOut={handleSignOut} />
     </div>
   );
 }
