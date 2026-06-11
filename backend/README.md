@@ -149,7 +149,7 @@ Authentication behavior highlights:
 - OTP and password flows both support lockout protections
 - JWT payload includes id and userId compatibility claims
 - suspended/deactivated accounts are blocked from login
-- staff created by system admin are flagged for forced password change on first login
+- staff created by NGO admin are flagged for forced password change on first login
 
 First-login forced reset behavior:
 
@@ -175,8 +175,11 @@ System admin endpoints:
 - GET /api/admin/system/logs
 - POST /api/admin/system/runtime-action
 - POST /api/admin/system/maintenance-mode
-- POST /api/admin/system/staff
-- PATCH /api/admin/system/staff/:userId/status
+
+NGO staff lifecycle endpoints:
+
+- POST /api/admin/ngo/staff
+- PATCH /api/admin/ngo/staff/:userId/status
 
 Shared admin utility:
 

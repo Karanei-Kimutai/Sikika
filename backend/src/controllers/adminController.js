@@ -1090,7 +1090,7 @@ async function performRuntimeAction(req, res) {
 /**
  * createStaffAccount
  * ------------------
- * System-admin onboarding endpoint for internal staff roles.
+ * NGO-admin onboarding endpoint for counsellor/legal-counsel staff roles.
  *
  * Security/operations notes:
  * - role is strictly allow-listed
@@ -1108,9 +1108,9 @@ async function createStaffAccount(req, res) {
       await transaction.rollback();
       return res.status(401).json({ error: 'Authentication required.' });
     }
-    if (actor.role !== 'SYSTEM_ADMIN') {
+    if (actor.role !== 'NGO_ADMIN') {
       await transaction.rollback();
-      return roleForbidden(res, ['SYSTEM_ADMIN']);
+      return roleForbidden(res, ['NGO_ADMIN']);
     }
 
     const phoneNumber = String(req.body?.phoneNumber || '').trim();
@@ -1126,10 +1126,10 @@ async function createStaffAccount(req, res) {
       return res.status(400).json({ error: 'password must be at least 6 characters.' });
     }
 
-    const allowedRoles = ['COUNSELLOR', 'LEGAL_COUNSEL', 'NGO_ADMIN', 'SYSTEM_ADMIN'];
+    const allowedRoles = ['COUNSELLOR', 'LEGAL_COUNSEL'];
     if (!allowedRoles.includes(role)) {
       await transaction.rollback();
-      return res.status(400).json({ error: 'role must be COUNSELLOR, LEGAL_COUNSEL, NGO_ADMIN, or SYSTEM_ADMIN.' });
+      return res.status(400).json({ error: 'role must be COUNSELLOR or LEGAL_COUNSEL.' });
     }
 
     const existing = await UserAccount.findOne({ where: { phoneNumber }, transaction });
@@ -1172,24 +1172,6 @@ async function createStaffAccount(req, res) {
       }, { transaction });
     }
 
-    if (role === 'NGO_ADMIN') {
-      await NgoAdministratorProfile.create({
-        ngoAdminId: randomUUID(),
-        userId: user.userId,
-        administrativeDepartment: String(req.body?.administrativeDepartment || '').trim() || 'Operations',
-        administratorAccessLevel: Number(req.body?.accessLevel || 1)
-      }, { transaction });
-    }
-
-    if (role === 'SYSTEM_ADMIN') {
-      await SystemAdministratorProfile.create({
-        systemAdminId: randomUUID(),
-        userId: user.userId,
-        maintenancePrivileges: String(req.body?.maintenancePrivileges || '').trim() || 'server_restart,log_access,cache_control',
-        systemAccessLevel: Number(req.body?.accessLevel || 1)
-      }, { transaction });
-    }
-
     await AuditLog.create({
       auditId: randomUUID(),
       actorUserId: actor.userId,
@@ -1227,7 +1209,7 @@ async function updateStaffAccountStatus(req, res) {
   try {
     const actor = await getActor(req);
     if (!actor) return res.status(401).json({ error: 'Authentication required.' });
-    if (actor.role !== 'SYSTEM_ADMIN') return roleForbidden(res, ['SYSTEM_ADMIN']);
+    if (actor.role !== 'NGO_ADMIN') return roleForbidden(res, ['NGO_ADMIN']);
 
     const userId = String(req.params.userId || '').trim();
     const status = String(req.body?.status || '').trim().toUpperCase();
@@ -1248,12 +1230,12 @@ async function updateStaffAccountStatus(req, res) {
       return res.status(404).json({ error: 'Staff account not found.' });
     }
 
-    if (!['COUNSELLOR', 'LEGAL_COUNSEL', 'NGO_ADMIN', 'SYSTEM_ADMIN'].includes(targetUser.userRole)) {
-      return res.status(400).json({ error: 'Only staff accounts can be suspended or reactivated.' });
+    if (!['COUNSELLOR', 'LEGAL_COUNSEL'].includes(targetUser.userRole)) {
+      return res.status(400).json({ error: 'Only counsellor and legal-counsel accounts can be suspended or reactivated.' });
     }
 
     if (targetUser.userId === actor.userId && status === 'SUSPENDED') {
-      return res.status(400).json({ error: 'You cannot suspend your own active system admin account.' });
+      return res.status(400).json({ error: 'You cannot suspend your own active NGO admin account.' });
     }
 
     targetUser.accountStatus = status;
