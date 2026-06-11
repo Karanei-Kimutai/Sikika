@@ -1,35 +1,39 @@
 # Backend API
 
-Express + Sequelize (MySQL) backend for authentication, incident reporting, direct chat, community rooms, moderation, notifications, and websocket relay.
+Express + Sequelize backend for the GBV support platform. This service provides:
 
-## Tech Stack
+- authentication and password reset flows
+- role-aware admin operations for NGO admins and system admins
+- incident reporting, evidence uploads, chat, community moderation
+- operational controls such as maintenance mode, runtime actions, and audit logs
+
+## Core Stack
 
 - Node.js 18+
 - Express
-- Sequelize
-- MySQL 8+
+- Sequelize + MySQL
 - Socket.io
-- Multer (multipart evidence uploads)
-- Cloudinary (evidence storage and signed URLs)
+- bcrypt
+- JWT
+- Cloudinary (evidence URLs)
 
-## Backend Architecture
+## Startup Responsibilities
 
-Main server bootstrap lives in backend/index.js and wires:
+Main bootstrap file: backend/index.js
 
-- REST routes
-- shared auth middleware
-- socket gateways for direct chat and community
-- DB bootstrap and model sync
+On startup the server:
 
-Socket namespaces are implemented through room naming conventions:
-
-- Direct chat room: chatId
-- Community room: community-room:<roomId>
-- Community moderation feed: community-moderation
+1. Loads environment config
+2. Validates required env vars
+3. Ensures DB exists
+4. Authenticates Sequelize
+5. Syncs models
+6. Mounts REST routes and socket handlers
+7. Applies global maintenance gate middleware
 
 ## Environment Variables
 
-Copy example file first:
+Copy env template first:
 
 ```bash
 cp .env.example .env
@@ -41,19 +45,27 @@ Required:
 - DB_PORT
 - DB_NAME
 - DB_USER
-- DB_PASSWORD
 - JWT_SECRET
 - AFRICASTALKING_API_KEY
 - AFRICASTALKING_USERNAME
 
-Recommended for local development:
+Recommended:
 
 - PORT (default 5000)
 - FRONTEND_ORIGIN (default http://localhost:5173)
-- SKIP_SMS_IN_DEV=true (development OTP bypass)
-- NODE_ENV=development
+- NODE_ENV (development or production)
+- SKIP_SMS_IN_DEV=true (dev-only OTP bypass)
+- DB_SYNC_ALTER=false (leave false for stable local DB)
 
-Required for evidence upload flow:
+Optional:
+
+- DB_PASSWORD (omit only if your local MySQL user has no password)
+
+Operational flags:
+
+- ALLOW_ADMIN_RESTART=true enables admin-triggered process exit for supervised restart
+
+Cloudinary evidence support:
 
 - CLOUDINARY_CLOUD_NAME
 - CLOUDINARY_API_KEY
@@ -61,7 +73,7 @@ Required for evidence upload flow:
 
 Without Cloudinary config, reporting APIs still work but evidence upload/access endpoints return service-unavailable responses.
 
-## Setup and Run
+## Local Setup
 
 Install dependencies:
 
@@ -69,13 +81,13 @@ Install dependencies:
 npm install
 ```
 
-Start in development:
+Run in development:
 
 ```bash
 npm run dev
 ```
 
-Start in production mode:
+Run in production mode:
 
 ```bash
 npm start
@@ -83,86 +95,106 @@ npm start
 
 ## Testing
 
-Manual test commands:
+Run full backend tests:
 
 ```bash
 npm test
 ```
 
+Run auth-focused tests:
+
 ```bash
 npm run test:auth
 ```
+
+Watch mode:
 
 ```bash
 npm run test:watch
 ```
 
-What each command does:
+## Seed Data
 
-- `npm test`: runs the complete backend Jest test suite once.
-- `npm run test:auth`: runs only the auth regression suite.
-- `npm run test:watch`: reruns tests automatically while files change.
-
-Current execution policy:
-
-- Auth tests are intentionally run manually by developers before pushing or opening PRs.
-- No automatic GitHub workflow gate is enabled for backend auth tests.
-
-At startup, backend validates required environment variables, ensures the configured database exists, authenticates Sequelize, then syncs models.
-
-## Database and Seeders
-
-Manual DB creation is optional when DB user has CREATE DATABASE permission.
-
-Optional SQL:
-
-```sql
-CREATE DATABASE CSProjectDB;
-```
-
-Seed sample data:
+Seeder command:
 
 ```bash
 node src/seeders/index.js
 ```
 
-Important seeding note:
+Seeder warning:
 
-- Seeder uses force sync and recreates tables.
-- Use only in local/development environments.
+- the seeder resets/syncs tables for demo data generation
+- use in local or disposable environments only
 
-## API Surface
+## API Index
 
-### Health
+### Health and Status
 
 - GET /api/hello
 - GET /api/health
 - GET /api/health/db
+- GET /api/system/public-status
 
-### Auth
+### Authentication
 
 - POST /api/auth/request-otp
 - POST /api/auth/verify-otp
 - POST /api/auth/login-password
-- POST /api/auth/set-password (bearer token)
-- GET /api/auth/session (bearer token)
+- POST /api/auth/forgot-password/request
+- POST /api/auth/forgot-password/reset
+- POST /api/auth/set-password (auth required)
+- GET /api/auth/session (auth required)
 
-Auth compatibility behavior:
+Authentication behavior highlights:
 
-- JWT includes both id and userId claims.
-- Login responses include userId and canonical role.
-- Phone numbers are normalized before account lookup.
-- First-time OTP signup creates a survivor profile automatically.
-- New survivors are auto-assigned the least-loaded counsellor and legal counsel.
-- Assignment creates an initial staff-assignment-history audit record.
-- Staff profiles are expected to be created by NGO admins in user-management flows.
-- Signup does not change survivor role; role changes remain an admin operation.
+- phone numbers are normalized before lookup
+- OTP and password flows both support lockout protections
+- JWT payload includes id and userId compatibility claims
+- suspended/deactivated accounts are blocked from login
+- staff created by system admin are flagged for forced password change on first login
+
+First-login forced reset behavior:
+
+- newly created staff accounts are marked with status=password_reset_required
+- login still returns a token but authStage=PASSWORD_RESET_REQUIRED
+- frontend must call POST /api/auth/set-password before entering the app
+- set-password clears the first-login reset requirement
+
+### Admin Routes
+
+All admin routes require auth token.
+
+NGO admin endpoints:
+
+- GET /api/admin/ngo/dashboard
+- PATCH /api/admin/ngo/reassignments
+- POST /api/admin/ngo/resources
+- PATCH /api/admin/ngo/resources/:resourceId
+
+System admin endpoints:
+
+- GET /api/admin/system/dashboard
+- GET /api/admin/system/logs
+- POST /api/admin/system/runtime-action
+- POST /api/admin/system/maintenance-mode
+- POST /api/admin/system/staff
+- PATCH /api/admin/system/staff/:userId/status
+
+Shared admin utility:
+
+- GET /api/admin/search?q=...
 
 ### Resources
 
 - GET /api/resources
+- POST /api/resources/:resourceId/track-access
 
-### Reporting
+Resource analytics behavior:
+
+- each resource open can create a ResourceAccessEvent
+- NGO dashboard returns top-accessed resources and usage by category
+
+### Reports
 
 - POST /api/reports
 - GET /api/reports
@@ -175,28 +207,18 @@ Auth compatibility behavior:
 - GET /api/reports/:reportId/evidence/:evidenceId/access-url
 - GET /api/reports/analytics/summary
 
-Reporting workflow protections:
+### Chat and Community
 
-- Transition graph is explicit and validated server-side.
-- Role permissions are checked separately from transition validity.
-- Escalation to legal case requires legal counsel role and survivorConsent=true.
-
-### Direct Chat
+Direct chat:
 
 - GET /api/chat/channels
 - GET /api/chat/:chatId/messages
 - PATCH /api/chat/:chatId/read
 
-Direct chat security behavior:
-
-- Channel membership is validated for reads and socket sends.
-- Server stores encrypted payloads as opaque ciphertext.
-- Notifications are generated with discreet content.
-
-### Community and Moderation
+Community and moderation:
 
 - GET /api/community/rooms
-- POST /api/community/rooms
+- POST /api/community/rooms (NGO_ADMIN only)
 - POST /api/community/rooms/:roomId/join
 - GET /api/community/rooms/:roomId/messages
 - POST /api/community/rooms/:roomId/messages
@@ -205,15 +227,86 @@ Direct chat security behavior:
 - GET /api/community/moderation/reports
 - PATCH /api/community/moderation/reports/:reportId
 
-Community behavior notes:
+Community access model:
 
-- Survivors display pseudonymous nicknames in room timelines.
-- Room membership gates message listing and socket room joins.
-- NGO moderation actions are audit-logged.
+- only authenticated users can list rooms
+- only NGO admins can create rooms
+- users must explicitly join a room before reading messages
+- survivors are rendered with nickname-only identities in room timelines
+- room list responses include latestMessageDispatchTimestamp per room
+- room list is sorted by latest activity (newest message first)
+
+## Admin Feature Documentation
+
+### NGO Admin Dashboard
+
+Returned by GET /api/admin/ngo/dashboard:
+
+- overview KPIs and trend percentage
+- full 30-day report series (including zero-filled days)
+- report breakdowns by category, status, and county
+- urgent case list and moderation queue
+- community room/message metrics
+- staff workload and reassignment data
+- posted resources and resource usage analytics
+
+### System Admin Dashboard
+
+Returned by GET /api/admin/system/dashboard:
+
+- infrastructure status badge
+- uptime and DB latency
+- OTP gateway configuration status
+- live audit-derived logs
+- maintenance state (enabled, updatedAt, reason, expectedUntil)
+- runtime action timestamps (last cache clear/restart request)
+- system admin directory
+- all staff directory with password-reset-required indicator
+
+### Maintenance Mode
+
+Controlled by POST /api/admin/system/maintenance-mode.
+
+State fields:
+
+- enabled
+- updatedAt
+- reason
+- expectedUntil
+
+Runtime behavior:
+
+- middleware denies non-admin business traffic with HTTP 503
+- /api/system/public-status remains accessible
+- system admin routes remain accessible
+
+### Runtime Actions
+
+POST /api/admin/system/runtime-action supports:
+
+- CLEAR_CACHE: records timestamp and audit entry
+- RESTART_SERVER: records restart request, optionally exits process when ALLOW_ADMIN_RESTART=true
+
+### Staff Lifecycle Management
+
+Create staff:
+
+- POST /api/admin/system/staff
+- roles supported: COUNSELLOR, LEGAL_COUNSEL, NGO_ADMIN, SYSTEM_ADMIN
+- automatically creates role-specific profile rows
+- marks account for forced first-login password reset
+- writes STAFF_ACCOUNT_CREATED audit entry
+
+Update staff status:
+
+- PATCH /api/admin/system/staff/:userId/status
+- statuses supported: ACTIVE, SUSPENDED
+- blocks suspending own active system admin account
+- writes STAFF_ACCOUNT_SUSPENDED or STAFF_ACCOUNT_REACTIVATED audit entry
 
 ## Socket Events
 
-### Direct Chat Socket
+Direct chat socket:
 
 Client emits:
 
@@ -225,7 +318,7 @@ Server emits:
 - receiveMessage(savedMessage)
 - messageError({ error })
 
-### Community Socket
+Community socket:
 
 Client emits:
 
@@ -241,18 +334,16 @@ Server emits:
 - community:report-reviewed
 - community:error
 
-## Local Test Accounts
-
-Seeded password logins:
+## Demo Accounts (Seeded)
 
 - Survivor: +254711000001 / Survivor@2026!
 - Counsellor: +254700000020 / Counsellor@2026!
 
-These accounts are suitable for two-tab realtime chat validation.
-
 ## Troubleshooting
 
-- Invalid or expired token: verify Authorization header uses Bearer token and JWT_SECRET matches token issuer.
-- SMS failures in development: set SKIP_SMS_IN_DEV=true to enable OTP bypass behavior.
-- Evidence upload unavailable: confirm Cloudinary variables are present and valid.
-- CORS issues from frontend: confirm FRONTEND_ORIGIN matches the active frontend URL.
+- Port conflict on 5000: stop existing backend process using that port
+- 503 maintenance responses: check /api/system/public-status for active maintenance state
+- login denied with suspension error: verify accountStatus is ACTIVE
+- repeated auth failures: wait for lockout window or reset password
+- evidence URL issues: verify Cloudinary env vars
+- CORS failures: align FRONTEND_ORIGIN with active frontend URL
