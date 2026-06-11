@@ -71,32 +71,34 @@ function peerRoleLabelFromSession(role) {
 function buildDemoTranscript(currentRole) {
   const selfLabel = roleLabelFromSession(currentRole);
   const peerLabel = peerRoleLabelFromSession(currentRole);
+  const isSurvivorView = currentRole === 'survivor';
 
   const turns = [
-    { mine: false, text: 'Hi, thank you for reaching out today. Are you in a safe place to chat right now?' },
-    { mine: true, text: 'Yes, I am safe for now. I just feel overwhelmed and needed to talk to someone.' },
-    { mine: false, text: 'I hear you. We can go step by step. What feels most urgent for you this evening?' },
-    { mine: true, text: 'I need a plan for tonight and maybe where to get help tomorrow morning.' },
-    { mine: false, text: 'That makes sense. For tonight, can we identify one trusted person and one safe location?' },
-    { mine: true, text: 'I can stay with my cousin tonight. She knows part of what is happening.' },
-    { mine: false, text: 'That is a strong step. Do you want me to share a short checklist you can follow before leaving?' },
-    { mine: true, text: 'Yes please. A checklist would help because my mind is racing.' },
-    { mine: false, text: 'Checklist: phone charged, IDs, medicine, emergency contacts, and important documents if possible.' },
-    { mine: true, text: 'Got it. I can pack those in a small bag in ten minutes.' },
-    { mine: false, text: 'Great. Tomorrow we can connect you to legal and psychosocial support based on your location.' },
-    { mine: true, text: 'Thank you. I also want to report, but I am scared of doing it wrong.' },
-    { mine: false, text: 'You are not alone in that. We can complete the report together in simple steps when you are ready.' },
-    { mine: true, text: 'Okay. That helps. I feel calmer now and I can move to my cousin\'s place.' },
-    { mine: false, text: 'You are doing well. Message me once you arrive, and we will continue from there.' },
-    { mine: true, text: 'I will. Thank you for staying with me through this.' }
+    { speaker: 'staff', text: 'Hi, thank you for reaching out today. Are you in a safe place to chat right now?' },
+    { speaker: 'survivor', text: 'Yes, I am safe for now. I just feel overwhelmed and needed to talk to someone.' },
+    { speaker: 'staff', text: 'I hear you. We can go step by step. What feels most urgent for you this evening?' },
+    { speaker: 'survivor', text: 'I need a plan for tonight and maybe where to get help tomorrow morning.' },
+    { speaker: 'staff', text: 'That makes sense. For tonight, can we identify one trusted person and one safe location?' },
+    { speaker: 'survivor', text: 'I can stay with my cousin tonight. She knows part of what is happening.' },
+    { speaker: 'staff', text: 'That is a strong step. Do you want me to share a short checklist you can follow before leaving?' },
+    { speaker: 'survivor', text: 'Yes please. A checklist would help because my mind is racing.' },
+    { speaker: 'staff', text: 'Checklist: phone charged, IDs, medicine, emergency contacts, and important documents if possible.' },
+    { speaker: 'survivor', text: 'Got it. I can pack those in a small bag in ten minutes.' },
+    { speaker: 'staff', text: 'Great. Tomorrow we can connect you to legal and psychosocial support based on your location.' },
+    { speaker: 'survivor', text: 'Thank you. I also want to report, but I am scared of doing it wrong.' },
+    { speaker: 'staff', text: 'You are not alone in that. We can complete the report together in simple steps when you are ready.' },
+    { speaker: 'survivor', text: 'Okay. That helps. I feel calmer now and I can move to my cousin\'s place.' },
+    { speaker: 'staff', text: 'You are doing well. Message me once you arrive, and we will continue from there.' },
+    { speaker: 'survivor', text: 'I will. Thank you for staying with me through this.' }
   ];
 
   return turns.map((turn, index) => ({
+    // Demo message ownership mirrors viewer role so staff never appears to send survivor lines.
+    isMine: isSurvivorView ? turn.speaker === 'survivor' : turn.speaker === 'staff',
     messageId: `demo-${index + 1}`,
-    senderUserId: turn.mine ? 'demo-self' : 'demo-peer',
+    senderUserId: (isSurvivorView ? turn.speaker === 'survivor' : turn.speaker === 'staff') ? 'demo-self' : 'demo-peer',
     plaintext: turn.text,
-    isMine: turn.mine,
-    senderLabel: turn.mine ? selfLabel : peerLabel
+    senderLabel: (isSurvivorView ? turn.speaker === 'survivor' : turn.speaker === 'staff') ? selfLabel : peerLabel
   }));
 }
 

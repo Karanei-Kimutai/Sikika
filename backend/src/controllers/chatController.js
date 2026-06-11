@@ -24,6 +24,22 @@ function getUserIdFromRequest(req) {
 }
 
 /**
+ * updateChannelStatus
+ * -------------------
+ * Survivor-only endpoint for chat lifecycle actions.
+ *
+ * Allowed transitions:
+ * - active -> archived
+ * - archived -> active
+ * - active/archived -> deleted
+ *
+ * Security notes:
+ * - actor must be a survivor account
+ * - actor can only mutate channels linked to their own survivor profile
+ * - deleted channels are terminal and cannot be modified again
+ */
+
+/**
  * Returns active direct-chat channels for the authenticated user.
  *
  * Data-model note:
@@ -230,6 +246,13 @@ const getMessages = async (req, res) => {
   }
 };
 
+/**
+ * markChannelRead
+ * ---------------
+ * Marks all unread messages in a channel as READ for the authenticated actor.
+ *
+ * This powers unread badge clearing on the chat list when a channel is opened.
+ */
 const markChannelRead = async (req, res) => {
   try {
     const { chatId } = req.params;
@@ -255,6 +278,7 @@ const markChannelRead = async (req, res) => {
       }
     );
 
+    // Read operations are idempotent so clients can safely call this on view open.
     return res.json({ message: 'Messages marked as read.' });
   } catch (error) {
     return res.status(500).json({ error: 'Failed to mark messages as read.' });

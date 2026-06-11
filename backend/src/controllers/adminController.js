@@ -81,6 +81,14 @@ function getRoleFromAuthHeader(req) {
   }
 }
 
+/**
+ * getActor
+ * --------
+ * Resolves ACTIVE authenticated actor context from auth middleware claims.
+ *
+ * Returns null when token identity is missing, user does not exist, or account
+ * is not in ACTIVE status.
+ */
 async function getActor(req) {
   const userId = getUserIdFromRequest(req);
   if (!userId) return null;
@@ -203,6 +211,12 @@ function shortCode(value) {
   return String(value || '').replace(/-/g, '').slice(0, 6).toUpperCase();
 }
 
+/**
+ * refreshWorkloadScores
+ * ---------------------
+ * Recomputes counsellor/legal-counsel workload from current survivor
+ * assignment links so dashboard workload metrics remain consistent.
+ */
 async function refreshWorkloadScores() {
   // Recompute staff workload from live survivor assignments after reassignments.
   const [counsellors, legalCounsel] = await Promise.all([
@@ -238,6 +252,16 @@ async function refreshWorkloadScores() {
   ]);
 }
 
+/**
+ * applySurvivorReassignment
+ * -------------------------
+ * Validates and applies a survivor staffing reassignment.
+ *
+ * Side effects:
+ * - writes assignment history
+ * - ensures direct-chat channels match new assignment topology
+ * - refreshes workload scores for staff dashboards
+ */
 async function applySurvivorReassignment({ survivorId, counsellorId = null, legalCounselId = null, reason }) {
   const survivor = await SurvivorProfile.findByPk(survivorId);
   if (!survivor) {
@@ -1030,6 +1054,12 @@ async function getSystemDashboard(req, res) {
   }
 }
 
+/**
+ * setMaintenanceMode
+ * ------------------
+ * Toggles global maintenance mode and stores optional public-facing metadata
+ * (reason and expected completion time).
+ */
 async function setMaintenanceMode(req, res) {
   try {
     const actor = await getActor(req);
