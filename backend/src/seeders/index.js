@@ -25,7 +25,7 @@
 
 require('dotenv').config();
 const { v4: uuidv4 } = require('uuid');
-const bcrypt         = require('bcrypt');
+      chatChannelType:            'legal_channel',
 const {
   sequelize,
   UserAccount,

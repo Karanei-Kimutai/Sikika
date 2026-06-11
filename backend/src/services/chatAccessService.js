@@ -81,13 +81,13 @@ async function ensureAutoChannelsForSurvivor(survivorProfile) {
         where: {
           survivorId: survivorProfile.survivorId,
           supportStaffCounterpartId: assignedLegal.userId,
-          chatChannelType: "legal_counsel_channel"
+          chatChannelType: "legal_channel"
         },
         defaults: {
           chatId: randomUUID(),
           survivorId: survivorProfile.survivorId,
           supportStaffCounterpartId: assignedLegal.userId,
-          chatChannelType: "legal_counsel_channel",
+          chatChannelType: "legal_channel",
           chatChannelStatus: "active"
         }
       });
