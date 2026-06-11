@@ -11,6 +11,7 @@ import {
   getNgoReassignmentRequests,
   reviewNgoReassignmentRequest
 } from "../services/admin";
+import { getEvidenceAccessUrl, getReportById } from "../services/reports";
 
 /**
  * NGO Admin Dashboard
@@ -139,6 +140,9 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     query: ""
   });
   const [selectedCaseReportId, setSelectedCaseReportId] = useState("");
+  const [selectedReportDetails, setSelectedReportDetails] = useState(null);
+  const [loadingReportDetailsFor, setLoadingReportDetailsFor] = useState("");
+  const [openingEvidenceId, setOpeningEvidenceId] = useState("");
   const [reassignmentRequests, setReassignmentRequests] = useState([]);
   const [reassignmentFilter, setReassignmentFilter] = useState("PENDING");
   const [reviewingRequestId, setReviewingRequestId] = useState("");
@@ -258,9 +262,53 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
   }
 
   function handleViewReportDetails(reportId) {
-    // Toggle behavior: clicking the same row twice hides the detail summary.
+    // Toggle behavior: clicking the same row twice closes the popup.
     const value = String(reportId || "");
-    setSelectedCaseReportId((prev) => (prev === value ? "" : value));
+    if (!value) return;
+
+    if (selectedCaseReportId === value) {
+      setSelectedCaseReportId("");
+      setSelectedReportDetails(null);
+      return;
+    }
+
+    setSelectedCaseReportId(value);
+    loadReportDetails(value);
+  }
+
+  function closeReportDetailsModal() {
+    setSelectedCaseReportId("");
+    setSelectedReportDetails(null);
+    setLoadingReportDetailsFor("");
+  }
+
+  async function loadReportDetails(reportId) {
+    setLoadingReportDetailsFor(reportId);
+    setErrorMessage("");
+
+    try {
+      const data = await getReportById(reportId);
+      setSelectedReportDetails(data.report || null);
+    } catch (error) {
+      setSelectedReportDetails(null);
+      setErrorMessage(error.response?.data?.error || "Could not load full report details.");
+    } finally {
+      setLoadingReportDetailsFor("");
+    }
+  }
+
+  async function handleOpenEvidence(reportId, evidenceId) {
+    setOpeningEvidenceId(evidenceId);
+    setErrorMessage("");
+
+    try {
+      const data = await getEvidenceAccessUrl(reportId, evidenceId);
+      window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Could not open evidence file.");
+    } finally {
+      setOpeningEvidenceId("");
+    }
   }
 
   function startEditResource(resource) {
@@ -301,6 +349,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
 
       setEditingResourceId("");
       setResourceForm({ title: "", category: "", fileUrl: "", description: "" });
+                    <th>Action</th>
       await loadDashboard();
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Failed to save resource.");
@@ -311,11 +360,74 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     event.preventDefault();
     setErrorMessage("");
     setSuccessMessage("");
+                      <td>
+                        <button
+                          type="button"
+                          className="admin-action-btn"
+                          onClick={() => handleViewReportDetails(row.reportId)}
+                          disabled={loadingReportDetailsFor === row.reportId}
+                        >
+                          {loadingReportDetailsFor === row.reportId
+                            ? "Loading..."
+                            : selectedCaseReportId === String(row.reportId)
+                              ? "Hide Details"
+                              : "View Details"}
+                        </button>
+                      </td>
 
     if (!assignmentForm.survivorId) {
       setErrorMessage("Select a survivor before reassigning.");
       return;
     }
+            {selectedCaseReportId && (
+              <article className="admin-panel" style={{ marginTop: "1rem" }}>
+                <h3>Report Details</h3>
+                {loadingReportDetailsFor === selectedCaseReportId ? (
+                  <p className="admin-empty">Loading detailed report view...</p>
+                ) : selectedReportDetails ? (
+                  <>
+                    <p><strong>Report ID:</strong> {selectedReportDetails.reportId}</p>
+                    <p><strong>Status:</strong> {prettifyLabel(selectedReportDetails.reportStatus)}</p>
+                    <p><strong>Category:</strong> {prettifyLabel(selectedReportDetails.category)}</p>
+                    <p><strong>Severity:</strong> {selectedReportDetails.severityLevel}</p>
+                    <p><strong>Created:</strong> {formatDate(selectedReportDetails.createdAt)}</p>
+                    <p><strong>Incident date:</strong> {selectedReportDetails.date || "Not provided"}</p>
+                    <p><strong>Location:</strong> {selectedReportDetails.location || "Not provided"}</p>
+                    <p><strong>Description:</strong> {selectedReportDetails.description || "Not provided"}</p>
+
+                    {selectedReportDetails.legalCase && (
+                      <p>
+                        <strong>Legal case:</strong> {selectedReportDetails.legalCase.caseStatus}
+                        {selectedReportDetails.legalCase.legalCaseId ? ` (${selectedReportDetails.legalCase.legalCaseId})` : ""}
+                      </p>
+                    )}
+
+                    {(selectedReportDetails.evidence || []).length > 0 ? (
+                      <div className="evidence-list">
+                        <strong>Evidence files</strong>
+                        {selectedReportDetails.evidence.map((evidence) => (
+                          <button
+                            key={evidence.evidenceId}
+                            type="button"
+                            className="footer-link"
+                            onClick={() => handleOpenEvidence(selectedReportDetails.reportId, evidence.evidenceId)}
+                            disabled={openingEvidenceId === evidence.evidenceId}
+                          >
+                            {openingEvidenceId === evidence.evidenceId
+                              ? "Opening..."
+                              : evidence.originalFileName || `${evidence.fileType} evidence`}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="admin-empty">No evidence files attached.</p>
+                    )}
+                  </>
+                ) : (
+                  <p className="admin-empty">Full details are not available for this report right now.</p>
+                )}
+              </article>
+            )}
 
     try {
       await reassignSurvivorCase({
@@ -906,6 +1018,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
                     <th>Category</th>
                     <th>Priority</th>
                     <th>Status</th>
+                    <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -916,6 +1029,20 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
                       <td>{row.incidentCategory}</td>
                       <td><span className={priorityClass(row.severityLevel)}>{row.severityLevel}</span></td>
                       <td>{row.currentReportStatus}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="admin-action-btn"
+                          onClick={() => handleViewReportDetails(row.reportId)}
+                          disabled={loadingReportDetailsFor === String(row.reportId)}
+                        >
+                          {loadingReportDetailsFor === String(row.reportId)
+                            ? "Loading..."
+                            : selectedCaseReportId === String(row.reportId)
+                              ? "Hide Details"
+                              : "View Details"}
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -924,6 +1051,70 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
             {filteredReports.length === 0 && <p className="admin-empty">No reports match the selected filters.</p>}
           </article>
         </section>
+      )}
+
+      {selectedCaseReportId && activeSection === "reports" && (
+        <div className="admin-confirm-overlay" role="presentation" onClick={closeReportDetailsModal}>
+          <article
+            className="admin-confirm-modal report-details-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Report details"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3>Report Details</h3>
+            {loadingReportDetailsFor === selectedCaseReportId ? (
+              <p>Loading detailed report view...</p>
+            ) : selectedReportDetails ? (
+              <>
+                <p><strong>Report ID:</strong> {selectedReportDetails.reportId}</p>
+                <p><strong>Status:</strong> {prettifyLabel(selectedReportDetails.reportStatus)}</p>
+                <p><strong>Category:</strong> {prettifyLabel(selectedReportDetails.category)}</p>
+                <p><strong>Severity:</strong> {selectedReportDetails.severityLevel}</p>
+                <p><strong>Created:</strong> {formatDate(selectedReportDetails.createdAt)}</p>
+                <p><strong>Incident date:</strong> {selectedReportDetails.date || "Not provided"}</p>
+                <p><strong>Location:</strong> {selectedReportDetails.location || "Not provided"}</p>
+                <p><strong>Description:</strong> {selectedReportDetails.description || "Not provided"}</p>
+
+                {selectedReportDetails.legalCase && (
+                  <p>
+                    <strong>Legal case:</strong> {selectedReportDetails.legalCase.caseStatus}
+                    {selectedReportDetails.legalCase.legalCaseId ? ` (${selectedReportDetails.legalCase.legalCaseId})` : ""}
+                  </p>
+                )}
+
+                {(selectedReportDetails.evidence || []).length > 0 ? (
+                  <div className="evidence-list">
+                    <strong>Evidence files</strong>
+                    {selectedReportDetails.evidence.map((evidence) => (
+                      <button
+                        key={evidence.evidenceId}
+                        type="button"
+                        className="footer-link"
+                        onClick={() => handleOpenEvidence(selectedReportDetails.reportId, evidence.evidenceId)}
+                        disabled={openingEvidenceId === evidence.evidenceId}
+                      >
+                        {openingEvidenceId === evidence.evidenceId
+                          ? "Opening..."
+                          : evidence.originalFileName || `${evidence.fileType} evidence`}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p>No evidence files attached.</p>
+                )}
+              </>
+            ) : (
+              <p>Full details are not available for this report right now.</p>
+            )}
+
+            <div className="admin-confirm-actions">
+              <button type="button" className="secondary-btn" onClick={closeReportDetailsModal}>
+                Close
+              </button>
+            </div>
+          </article>
+        </div>
       )}
 
       {activeSection === "team-capacity" && (

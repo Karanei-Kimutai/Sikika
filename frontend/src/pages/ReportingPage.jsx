@@ -533,10 +533,18 @@ function ReportingPage({ onNavigate }) {
               <div>
                 <span className="resource-category">{formatStatus(report.reportStatus)}</span>
                 <h2>{report.category}</h2>
+                <p><strong>Report ID:</strong> {report.reportId}</p>
+                <p><strong>Submitted:</strong> {report.createdAt ? new Date(report.createdAt).toLocaleString() : "-"}</p>
                 <p>{report.description}</p>
                 <p><strong>Severity:</strong> {report.severityLevel}</p>
                 <p><strong>Location:</strong> {report.location || "Not provided"}</p>
                 <p><strong>Date:</strong> {report.date || "Not provided"}</p>
+                {report.legalCase && (
+                  <p>
+                    <strong>Legal case:</strong> {report.legalCase.caseStatus}
+                    {report.legalCase.legalCaseId ? ` (${report.legalCase.legalCaseId})` : ""}
+                  </p>
+                )}
               </div>
 
               <div className="report-actions">
