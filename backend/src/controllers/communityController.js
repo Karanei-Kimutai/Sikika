@@ -5,8 +5,10 @@ const {
   CommunityMessage,
   HarmfulContentReport,
   ModerationActionLog,
+  InAppNotification,
   UserAccount,
-  SurvivorProfile
+  SurvivorProfile,
+  sequelize
 } = require("../models");
 
 /**
@@ -46,6 +48,14 @@ async function getActor(req) {
   };
 }
 
+/**
+ * getDisplayIdentity
+ * ------------------
+ * Returns privacy-safe display metadata for public community rendering.
+ *
+ * Survivors are pseudonymized while verified staff roles are shown with
+ * explicit role badges.
+ */
 async function getDisplayIdentity(userId) {
   const user = await UserAccount.findByPk(userId, { attributes: ["userId", "userRole"] });
   if (!user) {
@@ -83,6 +93,12 @@ async function getDisplayIdentity(userId) {
   return { displayName: "Community Member", role, badge: null };
 }
 
+/**
+ * ensureGeneralRoomExists
+ * -----------------------
+ * Seeds core community rooms if they do not exist yet.
+ * Safe to call on every rooms-list request due idempotent name checks.
+ */
 async function ensureGeneralRoomExists() {
   // Keep default rooms idempotent so repeated requests cannot duplicate seeds.
   const defaultRooms = [
@@ -121,6 +137,14 @@ async function ensureGeneralRoomExists() {
   return CommunityRoom.findOne({ order: [["roomCreationTimestamp", "ASC"]] });
 }
 
+/**
+ * seedDemoMessagesForRoom
+ * -----------------------
+ * Non-production helper that preloads starter messages in empty rooms.
+ *
+ * This improves early-stage demos and local development UX while keeping
+ * production data paths untouched.
+ */
 async function seedDemoMessagesForRoom(roomId, userId) {
   if (process.env.NODE_ENV === "production") return;
 
@@ -155,6 +179,12 @@ async function seedDemoMessagesForRoom(roomId, userId) {
   );
 }
 
+/**
+ * listRooms
+ * ---------
+ * Returns all community rooms plus actor membership and activity metadata.
+ * Response is sorted by latest activity timestamp for consistent client ordering.
+ */
 async function listRooms(req, res) {
   const actor = await getActor(req);
   if (!actor) {
@@ -196,6 +226,12 @@ async function listRooms(req, res) {
   return res.json({ rooms: response });
 }
 
+/**
+ * createRoom
+ * ----------
+ * NGO-admin-only endpoint for creating a new moderated community room.
+ * Creator is auto-joined so moderation actions are immediately available.
+ */
 async function createRoom(req, res) {
   const actor = await getActor(req);
   if (!actor) {
@@ -229,6 +265,11 @@ async function createRoom(req, res) {
   return res.status(201).json({ room: room.toJSON() });
 }
 
+/**
+ * joinRoom
+ * --------
+ * Idempotent membership endpoint for room participation.
+ */
 async function joinRoom(req, res) {
   const actor = await getActor(req);
   if (!actor) {
@@ -255,6 +296,14 @@ async function joinRoom(req, res) {
   return res.json({ message: "Joined room successfully." });
 }
 
+/**
+ * listMessages
+ * ------------
+ * Membership-gated message history endpoint.
+ *
+ * Also hydrates each message with a privacy-safe author identity object used
+ * by community clients.
+ */
 async function listMessages(req, res) {
   const actor = await getActor(req);
   if (!actor) {
@@ -295,6 +344,12 @@ async function listMessages(req, res) {
   return res.json({ messages: hydrated });
 }
 
+/**
+ * postMessage
+ * -----------
+ * Creates a room message and emits real-time socket event to room subscribers.
+ * Auto-joins actor to room on first post for simplified UX.
+ */
 async function postMessage(req, res) {
   const actor = await getActor(req);
   if (!actor) {
@@ -342,6 +397,12 @@ async function postMessage(req, res) {
   return res.status(201).json({ message: responsePayload });
 }
 
+/**
+ * reportMessage
+ * -------------
+ * Files a harmful-content moderation report for a community message.
+ * Self-reporting is blocked to keep moderation signals actionable.
+ */
 async function reportMessage(req, res) {
   const actor = await getActor(req);
   if (!actor) {
@@ -379,6 +440,12 @@ async function reportMessage(req, res) {
   return res.status(201).json({ report });
 }
 
+/**
+ * deleteMessage
+ * -------------
+ * Allows message owners to delete their own posts.
+ * NGO admins may also delete any message as a moderation action.
+ */
 async function deleteMessage(req, res) {
   const actor = await getActor(req);
   if (!actor) {
@@ -419,6 +486,12 @@ async function deleteMessage(req, res) {
   return res.json({ message: "Message deleted." });
 }
 
+/**
+ * getModerationReports
+ * --------------------
+ * NGO-admin-only moderation queue endpoint.
+ * Hydrates reports with message and identity context for moderation review UI.
+ */
 async function getModerationReports(req, res) {
   const actor = await getActor(req);
   if (!actor) {
@@ -457,18 +530,37 @@ async function getModerationReports(req, res) {
   return res.json({ reports: response });
 }
 
+/**
+ * reviewReport
+ * ------------
+ * Transactional moderation review endpoint.
+ *
+ * Within a single DB transaction it can:
+ * - approve/reject report
+ * - remove message
+ * - suspend user
+ * - issue warning notification
+ * - persist moderation action logs
+ */
 async function reviewReport(req, res) {
+  const transaction = await sequelize.transaction();
+
+  try {
+
   const actor = await getActor(req);
   if (!actor) {
+    await transaction.rollback();
     return res.status(401).json({ error: "Authentication required." });
   }
 
   if (actor.role !== "NGO_ADMIN") {
+    await transaction.rollback();
     return res.status(403).json({ error: "Only NGO admins can review reports." });
   }
 
-  const report = await HarmfulContentReport.findByPk(req.params.reportId);
+  const report = await HarmfulContentReport.findByPk(req.params.reportId, { transaction });
   if (!report) {
+    await transaction.rollback();
     return res.status(404).json({ error: "Report not found." });
   }
 
@@ -476,19 +568,20 @@ async function reviewReport(req, res) {
   const action = String(req.body.action || "none").trim().toLowerCase();
 
   if (!["APPROVED", "REJECTED"].includes(reviewStatus)) {
+    await transaction.rollback();
     return res.status(400).json({ error: "reviewStatus must be APPROVED or REJECTED." });
   }
 
   report.moderationReviewStatus = reviewStatus;
-  await report.save();
+  await report.save({ transaction });
 
-  const message = await CommunityMessage.findByPk(report.reportedCommunityMessageId);
+  const message = await CommunityMessage.findByPk(report.reportedCommunityMessageId, { transaction });
 
   // Only approved reports can trigger moderation side-effects on users/messages.
   if (reviewStatus === "APPROVED" && message) {
     if (action === "remove_message") {
       message.publicMessageContent = "[Removed by moderators for community safety.]";
-      await message.save();
+      await message.save({ transaction });
 
       await ModerationActionLog.create({
         moderationActionId: randomUUID(),
@@ -496,13 +589,13 @@ async function reviewReport(req, res) {
         targetUserId: message.senderUserId,
         moderationActionType: "MESSAGE_DELETION",
         moderationActionReason: report.reportReasonText
-      });
+      }, { transaction });
     }
 
     if (action === "suspend_user") {
       await UserAccount.update(
         { accountStatus: "SUSPENDED" },
-        { where: { userId: message.senderUserId } }
+        { where: { userId: message.senderUserId }, transaction }
       );
 
       await ModerationActionLog.create({
@@ -511,7 +604,7 @@ async function reviewReport(req, res) {
         targetUserId: message.senderUserId,
         moderationActionType: "SUSPENSION",
         moderationActionReason: report.reportReasonText
-      });
+      }, { transaction });
     }
 
     if (action === "issue_warning") {
@@ -521,9 +614,21 @@ async function reviewReport(req, res) {
         targetUserId: message.senderUserId,
         moderationActionType: "WARNING",
         moderationActionReason: report.reportReasonText
-      });
+      }, { transaction });
+
+      // Warnings are stored as discreet in-app notifications so the target user
+      // can be informed without exposing sensitive moderation context in plain UI text.
+      await InAppNotification.create({
+        notificationId: randomUUID(),
+        recipientUserId: message.senderUserId,
+        notificationCategoryType: "MODERATION_ALERT",
+        discreetNotificationMessage: "A recent community post from your account was reviewed. Please follow community guidelines.",
+        notificationReadStatus: "UNREAD"
+      }, { transaction });
     }
   }
+
+  await transaction.commit();
 
   if (message) {
     req.app.locals.io?.to(`community-room:${message.roomId}`).emit("community:message-updated", {
@@ -538,7 +643,14 @@ async function reviewReport(req, res) {
     reviewStatus: report.moderationReviewStatus
   });
 
-  return res.json({ message: "Moderation review saved.", report });
+    return res.json({ message: "Moderation review saved.", report });
+  } catch (error) {
+    if (!transaction.finished) {
+      await transaction.rollback();
+    }
+    console.error("Community moderation review error:", error);
+    return res.status(500).json({ error: "Failed to save moderation review." });
+  }
 }
 
 module.exports = {
