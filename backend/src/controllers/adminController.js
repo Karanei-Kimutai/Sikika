@@ -210,6 +210,9 @@ async function applySurvivorReassignment({ survivorId, counsellorId = null, lega
     assignmentReason: String(reason || '').trim() || 'Manual reassignment by NGO Admin'
   });
 
+  // Keep direct-chat visibility in sync with latest survivor/staff assignment.
+  await ensureAutoChannelsForSurvivor(survivor);
+
   await refreshWorkloadScores();
 
   return {
@@ -775,14 +778,6 @@ async function reassignSurvivor(req, res) {
       legalCounselId,
       reason
     });
-
-    // `applySurvivorReassignment` persists assignment history + workload updates.
-    // This follow-up step only guarantees direct-chat continuity for the new
-    // survivor/staff relationship after reassignment completes.
-    const survivor = await SurvivorProfile.findByPk(assignment.survivorId);
-    if (survivor) {
-      await ensureAutoChannelsForSurvivor(survivor);
-    }
 
     return res.json({
       message: 'Assignment updated successfully.',
