@@ -353,6 +353,11 @@ async function reportMessage(req, res) {
     return res.status(404).json({ error: "Message not found." });
   }
 
+  // Users cannot report their own messages; this keeps moderation signals meaningful.
+  if (message.senderUserId === actor.userId) {
+    return res.status(400).json({ error: "You cannot report your own message." });
+  }
+
   const reason = String(req.body.reason || "").trim();
   if (!reason) {
     return res.status(400).json({ error: "reason is required." });
