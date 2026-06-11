@@ -77,6 +77,7 @@ const chatRoutes = require("./src/routes/chatRoutes");
 const reportRoutes = require("./src/routes/reportRoutes");
 const communityRoutes = require("./src/routes/communityRoutes");
 const adminRoutes = require("./src/routes/adminRoutes");
+const profileRoutes = require("./src/routes/profileRoutes");
 
 // Lightweight API smoke-test endpoint.
 app.get("/api/hello", (req, res) => {
@@ -111,6 +112,7 @@ app.use("/api/chat", chatRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/community", communityRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/profile", profileRoutes);
 
 /**
  * Session inspection endpoint.
