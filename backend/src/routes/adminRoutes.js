@@ -31,6 +31,8 @@ router.get('/ngo/dashboard', getNgoDashboard);
 router.patch('/ngo/reassignments', reassignSurvivor);
 router.post('/ngo/resources', createNgoResource);
 router.patch('/ngo/resources/:resourceId', updateNgoResource);
+// Staff lifecycle moved to NGO scope so onboarding/suspension follows
+// operational ownership boundaries rather than infra ownership.
 router.post('/ngo/staff', createStaffAccount);
 router.patch('/ngo/staff/:userId/status', updateStaffAccountStatus);
 
@@ -38,6 +40,7 @@ router.patch('/ngo/staff/:userId/status', updateStaffAccountStatus);
 router.get('/system/dashboard', getSystemDashboard);
 router.get('/system/logs', getSystemLogs);
 router.post('/system/runtime-action', performRuntimeAction);
+// Intentionally no /system/staff routes: staffing is delegated to NGO admins.
 
 // Shared admin utility
 router.get('/search', globalSearch);

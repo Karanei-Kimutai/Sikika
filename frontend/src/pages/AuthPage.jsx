@@ -129,6 +129,9 @@ function AuthPage({ onNavigate }) {
 
   const beginFirstLoginResetFlow = (responseData, phoneValue) => {
     // Preserve temporary auth token so set-password can be called in-session.
+    // The token is intentionally retained because backend has already authenticated
+    // the user but is gating full access until password rotation completes.
+    // This avoids forcing a second login roundtrip immediately after reset.
     setShowFirstLoginResetFlow(true);
     setFirstLoginAuthToken(responseData.token || "");
     setFirstLoginUserId(responseData.userId || "");
@@ -139,6 +142,8 @@ function AuthPage({ onNavigate }) {
 
   const completeFirstLoginPasswordReset = async () => {
     // Uses authenticated set-password endpoint instead of forgot-password flow.
+    // This path is specific to first-login remediation for staff provisioned
+    // with temporary credentials by NGO admins.
     if (!canSubmitFirstLoginResetPassword || !firstLoginAuthToken) {
       setErrorMessage("Enter a new password (minimum 8 characters).");
       return;
@@ -154,6 +159,8 @@ function AuthPage({ onNavigate }) {
         { headers: { Authorization: `Bearer ${firstLoginAuthToken}` } }
       );
 
+      // On success, keep the same session token and continue into the app.
+      // Backend clears password_reset_required during set-password.
       setShowFirstLoginResetFlow(false);
       finalizeLogin(firstLoginAuthToken, firstLoginUserId || null);
     } catch (error) {
@@ -322,6 +329,8 @@ function AuthPage({ onNavigate }) {
       });
 
       if (response.data?.authStage === "PASSWORD_RESET_REQUIRED") {
+        // Expected for staff created through NGO onboarding: block app entry,
+        // collect a new private password, then continue with same auth context.
         beginFirstLoginResetFlow(response.data, signinPhone.trim());
         return;
       }
@@ -391,6 +400,7 @@ function AuthPage({ onNavigate }) {
       });
 
       if (response.data?.authStage === "PASSWORD_RESET_REQUIRED") {
+        // OTP sign-in can also hit first-login reset for temporary staff credentials.
         beginFirstLoginResetFlow(response.data, signinPhone.trim());
         return;
       }

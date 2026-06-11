@@ -74,6 +74,12 @@ export async function performSystemRuntimeAction(action) {
 }
 
 // NGO-admin staff onboarding entrypoint for counsellor/legal counsel accounts.
+// Request contract (backend-enforced):
+// - phoneNumber: required
+// - password: required temporary credential
+// - role: COUNSELLOR | LEGAL_COUNSEL
+// - specialization, availabilityStatus: optional role metadata
+// Response includes created staff summary used for success toasts and refresh.
 export async function createNgoStaffAccount(payload) {
   const response = await axios.post(
     `${API_BASE_URL}/api/admin/ngo/staff`,
@@ -84,6 +90,8 @@ export async function createNgoStaffAccount(payload) {
 }
 
 // Suspends or reactivates a counsellor/legal-counsel account.
+// This mirrors backend's narrow lifecycle model and intentionally does not
+// expose DEACTIVATED state transitions in this client helper.
 export async function updateNgoStaffStatus(userId, status) {
   const response = await axios.patch(
     `${API_BASE_URL}/api/admin/ngo/staff/${userId}/status`,
@@ -128,3 +136,7 @@ export async function reassignSurvivorCase(payload) {
   });
   return response.data;
 }
+
+// Governance note:
+// System-admin staff lifecycle helpers were intentionally removed from this file.
+// Staffing ownership now lives under NGO admin routes and UI flows.

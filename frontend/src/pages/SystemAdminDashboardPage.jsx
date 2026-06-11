@@ -17,6 +17,10 @@ import {
  * - Operational Logs: near-real-time audit stream
  * - Maintenance Control: global user-traffic gate + runtime actions
  * - Admin Access: read-only system-admin directory and delegated governance guidance
+ *
+ * Branch note:
+ * Staff lifecycle actions were intentionally removed from this screen and moved
+ * to NGO admin workflows so operational staffing and infrastructure duties are separated.
  */
 
 const systemMenu = [
@@ -125,6 +129,8 @@ function SystemAdminDashboardPage({ onNavigate, onSignOut, initialSection = "inf
   }, [activeSection]);
 
   async function toggleMaintenanceMode(enabled) {
+    // Maintenance controls remain system-admin-owned; this is intentionally
+    // unaffected by staffing governance changes.
     setActionMessage("");
     setErrorMessage("");
 
@@ -347,6 +353,9 @@ function SystemAdminDashboardPage({ onNavigate, onSignOut, initialSection = "inf
             <p>
               This directory shows system-admin accounts, privilege levels, and account status.
               Staff onboarding and counsellor/legal-counsel lifecycle actions are managed by NGO administrators.
+            </p>
+            <p>
+              Use this area for governance visibility only; staffing actions now occur in the NGO Team Capacity module.
             </p>
           </article>
           <article className="admin-panel full-span">

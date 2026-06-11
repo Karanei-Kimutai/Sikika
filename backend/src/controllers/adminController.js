@@ -1093,10 +1093,16 @@ async function performRuntimeAction(req, res) {
  * NGO-admin onboarding endpoint for counsellor/legal-counsel staff roles.
  *
  * Security/operations notes:
+ * - caller must be an ACTIVE NGO_ADMIN account
  * - role is strictly allow-listed
  * - account starts in `password_reset_required` status
  * - profile rows are created according to role
  * - action is audit-logged
+ *
+ * Why this endpoint exists under NGO governance:
+ * - NGO admins own frontline staffing operations
+ * - system admins retain infra/runtime controls only
+ * - separating these concerns narrows accidental privilege overlap
  */
 async function createStaffAccount(req, res) {
   // Transaction guarantees user + profile + audit log are either all committed or all rolled back.
@@ -1126,6 +1132,8 @@ async function createStaffAccount(req, res) {
       return res.status(400).json({ error: 'password must be at least 6 characters.' });
     }
 
+    // Intentionally limited to frontline staff roles only.
+    // NGO_ADMIN/SYSTEM_ADMIN accounts are out of scope for this provisioning path.
     const allowedRoles = ['COUNSELLOR', 'LEGAL_COUNSEL'];
     if (!allowedRoles.includes(role)) {
       await transaction.rollback();
@@ -1138,6 +1146,8 @@ async function createStaffAccount(req, res) {
       return res.status(409).json({ error: 'An account with this phone number already exists.' });
     }
 
+    // Hashing is done at creation time because a temporary plaintext password
+    // may be supplied by NGO operations during onboarding.
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // New staff must reset temporary password at first successful login.
@@ -1153,6 +1163,7 @@ async function createStaffAccount(req, res) {
     }, { transaction });
 
     if (role === 'COUNSELLOR') {
+      // Counsellor metadata seeds assignment and workload dashboards immediately.
       await CounsellorProfile.create({
         counsellorId: randomUUID(),
         userId: user.userId,
@@ -1163,6 +1174,7 @@ async function createStaffAccount(req, res) {
     }
 
     if (role === 'LEGAL_COUNSEL') {
+      // Legal-counsel metadata is parallel to counsellors for consistent UI/analytics shaping.
       await LegalCounselProfile.create({
         legalCounselId: randomUUID(),
         userId: user.userId,
@@ -1172,6 +1184,7 @@ async function createStaffAccount(req, res) {
       }, { transaction });
     }
 
+    // Auditing captures both actor and role-scoped target for traceability.
     await AuditLog.create({
       auditId: randomUUID(),
       actorUserId: actor.userId,
@@ -1204,6 +1217,11 @@ async function createStaffAccount(req, res) {
  *
  * Only ACTIVE <-> SUSPENDED is allowed from this route to avoid accidental
  * destructive state changes.
+ *
+ * Governance notes:
+ * - only NGO admins can trigger these transitions
+ * - only counsellor/legal-counsel accounts can be targeted
+ * - DEACTIVATED transitions remain intentionally unavailable here
  */
 async function updateStaffAccountStatus(req, res) {
   try {
@@ -1230,6 +1248,7 @@ async function updateStaffAccountStatus(req, res) {
       return res.status(404).json({ error: 'Staff account not found.' });
     }
 
+    // Restricting status actions to frontline staff avoids cross-admin role tampering.
     if (!['COUNSELLOR', 'LEGAL_COUNSEL'].includes(targetUser.userRole)) {
       return res.status(400).json({ error: 'Only counsellor and legal-counsel accounts can be suspended or reactivated.' });
     }
@@ -1238,6 +1257,7 @@ async function updateStaffAccountStatus(req, res) {
       return res.status(400).json({ error: 'You cannot suspend your own active NGO admin account.' });
     }
 
+    // Save the account lifecycle transition first, then record immutable audit trail.
     targetUser.accountStatus = status;
     await targetUser.save();
 
