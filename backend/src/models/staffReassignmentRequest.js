@@ -2,6 +2,21 @@ const { DataTypes } = require('sequelize');
 const { randomUUID } = require('crypto');
 const sequelize = require('../config/database');
 
+/**
+ * staffReassignmentRequest
+ * ------------------------
+ * Survivor-initiated request record for changing assigned counsellor/legal counsel.
+ *
+ * Lifecycle:
+ * - Created by survivor with requested scope + reason
+ * - Reviewed by NGO admin (approved/rejected)
+ * - May be cancelled by survivor before review
+ *
+ * Design notes:
+ * - `requestedScope` allows partial reassignment (counsellor only, legal only, or both)
+ * - `requestStatus` is the workflow gate used by controller logic
+ * - `ngoAdminReviewerUserId` + `reviewTimestamp` provide accountability trail
+ */
 const StaffReassignmentRequest = sequelize.define('staffReassignmentRequest', {
   requestId: {
     type: DataTypes.STRING(36),

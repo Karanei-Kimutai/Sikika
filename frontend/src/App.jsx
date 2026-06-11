@@ -64,6 +64,8 @@ const ngoAdminRoutes = {
 const systemAdminRoutes = {
   "/": (props) => <SystemAdminDashboardPage {...props} initialSection="infrastructure" />,
   "/home": (props) => <SystemAdminDashboardPage {...props} initialSection="infrastructure" />,
+  // System admins are intentionally granted report/evidence read navigation.
+  // Backend remains source-of-truth for read-only enforcement.
   "/reports": ReportingPage,
   "/chat": (props) => <SystemAdminDashboardPage {...props} initialSection="maintenance" />,
   "/community": (props) => <SystemAdminDashboardPage {...props} initialSection="ops-logs" />,
@@ -75,6 +77,8 @@ const systemAdminRoutes = {
 function getRoutesForRole(role, isAuthenticated) {
   if (!isAuthenticated) return publicRoutes;
   if (role === "NGO_ADMIN") return ngoAdminRoutes;
+  // Role-specific app mapping mirrors backend governance model:
+  // NGO admins run operations, system admins monitor infrastructure and oversight views.
   if (role === "SYSTEM_ADMIN") return systemAdminRoutes;
   return publicRoutes;
 }

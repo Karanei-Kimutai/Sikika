@@ -32,6 +32,8 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
     if (role === "SYSTEM_ADMIN") {
       return [
         { path: "/home", label: "Home" },
+        // Report tab is read-oriented for system admins; mutation permissions
+        // are still restricted in backend report status endpoints.
         { path: "/reports", label: "Reports" },
         { path: "/community", label: "Infra Logs" },
         { path: "/chat", label: "Maintenance" },
