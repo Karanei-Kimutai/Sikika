@@ -137,6 +137,48 @@ export async function reassignSurvivorCase(payload) {
   return response.data;
 }
 
+// Survivor reassignment request lifecycle helpers.
+export async function getMyReassignmentRequests() {
+  const response = await axios.get(`${API_BASE_URL}/api/reassignment-requests/me`, {
+    headers: getAuthHeaders()
+  });
+  return response.data;
+}
+
+export async function createMyReassignmentRequest(payload) {
+  const response = await axios.post(`${API_BASE_URL}/api/reassignment-requests/me`, payload, {
+    headers: getAuthHeaders()
+  });
+  return response.data;
+}
+
+export async function cancelMyReassignmentRequest(requestId) {
+  const response = await axios.patch(
+    `${API_BASE_URL}/api/reassignment-requests/me/${requestId}/cancel`,
+    {},
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+}
+
+// NGO-admin reassignment request triage helpers.
+export async function getNgoReassignmentRequests(status = "PENDING") {
+  const response = await axios.get(`${API_BASE_URL}/api/reassignment-requests/ngo`, {
+    headers: getAuthHeaders(),
+    params: { status }
+  });
+  return response.data;
+}
+
+export async function reviewNgoReassignmentRequest(requestId, payload) {
+  const response = await axios.patch(
+    `${API_BASE_URL}/api/reassignment-requests/ngo/${requestId}/review`,
+    payload,
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+}
+
 // Governance note:
 // System-admin staff lifecycle helpers were intentionally removed from this file.
 // Staffing ownership now lives under NGO admin routes and UI flows.

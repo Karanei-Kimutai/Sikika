@@ -7,7 +7,9 @@ import {
   createNgoResource,
   updateNgoResource,
   reassignSurvivorCase,
-  createNgoStaffAccount
+  createNgoStaffAccount,
+  getNgoReassignmentRequests,
+  reviewNgoReassignmentRequest
 } from "../services/admin";
 
 /**
@@ -130,6 +132,9 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     query: ""
   });
   const [selectedCaseReportId, setSelectedCaseReportId] = useState("");
+  const [reassignmentRequests, setReassignmentRequests] = useState([]);
+  const [reassignmentFilter, setReassignmentFilter] = useState("PENDING");
+  const [reviewingRequestId, setReviewingRequestId] = useState("");
 
   function resetReportFilters() {
     setReportFilters({
@@ -158,6 +163,21 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     // Initial load only; explicit refreshes happen after mutation actions.
     loadDashboard();
   }, []);
+
+  useEffect(() => {
+    if (activeSection !== "team-capacity") return;
+
+    async function loadReassignmentRequests() {
+      try {
+        const data = await getNgoReassignmentRequests(reassignmentFilter);
+        setReassignmentRequests(data.requests || []);
+      } catch {
+        // Keep broader dashboard available even if request queue fails.
+      }
+    }
+
+    loadReassignmentRequests();
+  }, [activeSection, reassignmentFilter]);
 
   useEffect(() => {
     // App route aliases map to section ids through initialSection prop.
@@ -340,6 +360,27 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
       await loadDashboard();
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Failed to create staff account.");
+    }
+  }
+
+  async function refreshReassignmentRequests() {
+    const data = await getNgoReassignmentRequests(reassignmentFilter);
+    setReassignmentRequests(data.requests || []);
+  }
+
+  async function handleReviewReassignmentRequest(requestId, requestStatus) {
+    setReviewingRequestId(requestId);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      await reviewNgoReassignmentRequest(requestId, { requestStatus });
+      setSuccessMessage(`Request ${requestStatus.toLowerCase()} successfully.`);
+      await Promise.all([loadDashboard(), refreshReassignmentRequests()]);
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Failed to review reassignment request.");
+    } finally {
+      setReviewingRequestId("");
     }
   }
 
@@ -1034,6 +1075,76 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
 
               <button type="submit" className="admin-action-btn">Apply Reassignment</button>
             </form>
+          </article>
+
+          <article className="admin-panel full-span">
+            <h2>Survivor Reassignment Requests</h2>
+            <div className="report-filter-row" style={{ marginBottom: "0.9rem" }}>
+              <select
+                value={reassignmentFilter}
+                onChange={(event) => setReassignmentFilter(event.target.value)}
+              >
+                <option value="PENDING">Pending</option>
+                <option value="APPROVED">Approved</option>
+                <option value="REJECTED">Rejected</option>
+                <option value="CANCELLED">Cancelled</option>
+                <option value="ALL">All statuses</option>
+              </select>
+            </div>
+            <div className="admin-table-wrap">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Requested</th>
+                    <th>Survivor</th>
+                    <th>Scope</th>
+                    <th>Reason</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reassignmentRequests.map((request) => (
+                    <tr key={request.requestId}>
+                      <td>{formatDate(request.requestTimestamp)}</td>
+                      <td>{request.survivor?.displayNickname || request.survivorId}</td>
+                      <td>{prettifyLabel(request.requestedScope)}</td>
+                      <td>{request.requestReasonText}</td>
+                      <td>{prettifyLabel(request.requestStatus)}</td>
+                      <td>
+                        {request.requestStatus === "PENDING" ? (
+                          <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              className="admin-action-btn"
+                              disabled={reviewingRequestId === request.requestId}
+                              onClick={() => handleReviewReassignmentRequest(request.requestId, "APPROVED")}
+                            >
+                              {reviewingRequestId === request.requestId ? "Working..." : "Approve"}
+                            </button>
+                            <button
+                              type="button"
+                              className="secondary-btn"
+                              disabled={reviewingRequestId === request.requestId}
+                              onClick={() => handleReviewReassignmentRequest(request.requestId, "REJECTED")}
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        ) : (
+                          "-"
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {reassignmentRequests.length === 0 && (
+              <p className="admin-empty" style={{ marginTop: "0.8rem" }}>
+                No reassignment requests found for this filter.
+              </p>
+            )}
           </article>
         </section>
       )}

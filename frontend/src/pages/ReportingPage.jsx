@@ -9,6 +9,11 @@ import {
   updateReportStatus,
   withdrawReport
 } from "../services/reports";
+import {
+  getMyReassignmentRequests as fetchMyReassignmentRequests,
+  createMyReassignmentRequest as submitMyReassignmentRequest,
+  cancelMyReassignmentRequest as cancelReassignmentRequest
+} from "../services/admin";
 
 const STATUS_OPTIONS = [
   "SUBMITTED",
@@ -75,6 +80,11 @@ function ReportingPage({ onNavigate }) {
   const [savingEdit, setSavingEdit] = useState(false);
   const [deletingReportId, setDeletingReportId] = useState("");
   const [openingEvidenceId, setOpeningEvidenceId] = useState("");
+  const [reassignmentRequests, setReassignmentRequests] = useState([]);
+  const [requestScope, setRequestScope] = useState("BOTH");
+  const [requestReasonText, setRequestReasonText] = useState("");
+  const [requestSubmitting, setRequestSubmitting] = useState(false);
+  const [requestCancellingId, setRequestCancellingId] = useState("");
 
   async function loadReports() {
     setLoading(true);
@@ -94,6 +104,72 @@ function ReportingPage({ onNavigate }) {
   useEffect(() => {
     loadReports();
   }, []);
+
+  useEffect(() => {
+    if (!canCreate) return;
+
+    async function loadReassignmentRequests() {
+      try {
+        const data = await fetchMyReassignmentRequests();
+        setReassignmentRequests(data.requests || []);
+      } catch {
+        // Keep reporting UI usable even if reassignment request history fails.
+      }
+    }
+
+    loadReassignmentRequests();
+  }, [canCreate]);
+
+  async function refreshMyReassignmentRequests() {
+    if (!canCreate) return;
+    const data = await fetchMyReassignmentRequests();
+    setReassignmentRequests(data.requests || []);
+  }
+
+  async function handleSubmitReassignmentRequest(event) {
+    event.preventDefault();
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    if (!requestReasonText.trim()) {
+      setErrorMessage("Please provide a reason for the reassignment request.");
+      return;
+    }
+
+    setRequestSubmitting(true);
+
+    try {
+      await submitMyReassignmentRequest({
+        requestedScope: requestScope,
+        requestReasonText: requestReasonText.trim()
+      });
+
+      setRequestReasonText("");
+      setRequestScope("BOTH");
+      setSuccessMessage("Your reassignment request has been submitted.");
+      await refreshMyReassignmentRequests();
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Could not submit reassignment request.");
+    } finally {
+      setRequestSubmitting(false);
+    }
+  }
+
+  async function handleCancelReassignmentRequest(requestId) {
+    setRequestCancellingId(requestId);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      await cancelReassignmentRequest(requestId);
+      setSuccessMessage("Reassignment request cancelled.");
+      await refreshMyReassignmentRequests();
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Could not cancel reassignment request.");
+    } finally {
+      setRequestCancellingId("");
+    }
+  }
 
   async function handleCreateReport(event) {
     event.preventDefault();
@@ -355,6 +431,88 @@ function ReportingPage({ onNavigate }) {
               {submitting ? "Submitting..." : "Submit Report"}
             </button>
           </form>
+        </section>
+      )}
+
+      {canCreate && (
+        <section className="library-toolbar" aria-label="Request staff reassignment">
+          <form className="report-form" onSubmit={handleSubmitReassignmentRequest}>
+            <h2>Request Staff Reassignment</h2>
+            <p>
+              If you need a different support staff assignment, submit a request and the NGO team will review it.
+            </p>
+
+            <label htmlFor="request-scope">
+              Requested change
+              <select
+                id="request-scope"
+                value={requestScope}
+                onChange={(event) => setRequestScope(event.target.value)}
+              >
+                <option value="BOTH">Counsellor and Legal Counsel</option>
+                <option value="COUNSELLOR">Counsellor only</option>
+                <option value="LEGAL_COUNSEL">Legal Counsel only</option>
+              </select>
+            </label>
+
+            <label htmlFor="request-reason">
+              Reason
+              <textarea
+                id="request-reason"
+                rows={3}
+                placeholder="Describe why reassignment would improve your support."
+                value={requestReasonText}
+                onChange={(event) => setRequestReasonText(event.target.value)}
+              />
+            </label>
+
+            <button type="submit" className="primary-btn" disabled={requestSubmitting}>
+              {requestSubmitting ? "Submitting..." : "Submit Reassignment Request"}
+            </button>
+          </form>
+
+          <div className="admin-table-wrap" style={{ marginTop: "1rem" }}>
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Requested</th>
+                  <th>Scope</th>
+                  <th>Status</th>
+                  <th>Review Note</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reassignmentRequests.map((request) => (
+                  <tr key={request.requestId}>
+                    <td>{request.requestTimestamp ? new Date(request.requestTimestamp).toLocaleString() : "-"}</td>
+                    <td>{formatStatus(request.requestedScope)}</td>
+                    <td>{formatStatus(request.requestStatus)}</td>
+                    <td>{request.ngoAdminReviewNote || "-"}</td>
+                    <td>
+                      {request.requestStatus === "PENDING" ? (
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => handleCancelReassignmentRequest(request.requestId)}
+                          disabled={requestCancellingId === request.requestId}
+                        >
+                          {requestCancellingId === request.requestId ? "Cancelling..." : "Cancel"}
+                        </button>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {reassignmentRequests.length === 0 && (
+              <p className="admin-empty" style={{ marginTop: "0.6rem" }}>
+                No reassignment requests submitted yet.
+              </p>
+            )}
+          </div>
         </section>
       )}
 
