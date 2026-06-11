@@ -115,8 +115,6 @@ app.use("/api/community", communityRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/reassignment-requests", reassignmentRequestRoutes);
-app.use("/api/profile", profileRoutes);
-app.use("/api/reassignment-requests", reassignmentRequestRoutes);
 
 /**
  * Session inspection endpoint.
