@@ -7,13 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview",
-    "test:e2e": "playwright test",
-    "test:e2e:headed": "playwright test --headed",
-    "test:e2e:auth": "playwright test tests/e2e/auth-flows.spec.js",
-    "test:e2e:survivor": "playwright test tests/e2e/survivor-flows.spec.js",
-    "test:e2e:admin": "playwright test tests/e2e/admin-flows.spec.js",
-    "test:e2e:profile-library": "playwright test tests/e2e/profile-library-flows.spec.js"
+    "preview": "vite preview"
   },
   "dependencies": {
     "axios": "^1.17.0",
@@ -23,7 +17,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@playwright/test": "^1.60.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
