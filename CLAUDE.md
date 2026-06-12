@@ -98,7 +98,7 @@ Tracked in `docs/pending-roadmap-items.md`. Implementation guidance in `CSProjec
 | Feature | Status | Notes |
 |---|---|---|
 | USSD live endpoint | Partial | Model + AT SMS exist; no `POST /api/ussd/callback` controller yet |
-| Emergency intercept for unauthenticated reporters | Not Done | Pure frontend change in `ReportingPage.jsx` |
+| Emergency intercept for unauthenticated reporters | Done | Intercept screen in `ReportingPage.jsx`; `/reports` removed from `protectedPaths` in `App.jsx` |
 | In-app notification center | Partial | Model + fan-out writes exist; no list/read/dismiss API or UI |
 | Survivor chat archive/delete controls | Not Done | Backend endpoint exists; UI only |
 | Staff presence indicators | Partial | `availabilityStatus` exists; no Socket.io presence events or frontend dot |

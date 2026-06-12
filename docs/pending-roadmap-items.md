@@ -48,16 +48,15 @@ What is still missing:
 - Dismissible-state implementation (separate from read state).
 
 ## 4) Unregistered User Emergency Flow
-Status: Not Done
+Status: Done
 
 What exists now:
-- Unauthenticated users can access landing and resources.
-- Protected routes redirect unauthenticated users to join/auth page.
-- Emergency contacts are visible in landing content.
-
-What is still missing:
-- Soft emergency intercept when unauthenticated users attempt report submission.
-- Explicit two-choice path: Register Now or View Emergency Contacts at interception point.
+- Unauthenticated users navigating to /reports see an intercept screen instead of a silent redirect.
+- Intercept screen offers two explicit choices: Create Account or View Emergency Contacts.
+- Emergency contacts modal shows Police (999/112), Childline Kenya (116), National GBV Hotline (1195).
+- Modal closes on Escape, backdrop click, or Close button.
+- Returning users have a Sign In link below the primary actions.
+- /reports removed from App.jsx protected paths so the intercept renders rather than bouncing to /join.
 
 ## 5) Specific Chat and Moderation Actions
 Status: Partial
