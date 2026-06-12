@@ -81,6 +81,13 @@ function ReportingPage({ onNavigate }) {
   const [deletingReportId, setDeletingReportId] = useState("");
   const [openingEvidenceId, setOpeningEvidenceId] = useState("");
   const [reassignmentRequests, setReassignmentRequests] = useState([]);
+
+  /**
+   * Controls visibility of the emergency contacts modal on the intercept screen.
+   * Declared here (not inside the early-return branch) to satisfy the rules of hooks —
+   * all hooks must be called unconditionally before any conditional render.
+   */
+  const [showEmergencyContacts, setShowEmergencyContacts] = useState(false);
   const [requestScope, setRequestScope] = useState("BOTH");
   const [requestReasonText, setRequestReasonText] = useState("");
   const [requestSubmitting, setRequestSubmitting] = useState(false);
@@ -102,6 +109,10 @@ function ReportingPage({ onNavigate }) {
   }
 
   useEffect(() => {
+    // Skip the API call entirely for unauthenticated visitors — they see the
+    // intercept screen and there are no reports to load for them.
+    if (!localStorage.getItem("authToken")) return;
+
     const timerId = window.setTimeout(() => {
       void loadReports();
     }, 0);
@@ -109,6 +120,8 @@ function ReportingPage({ onNavigate }) {
   }, []);
 
   useEffect(() => {
+    // Reassignment requests only exist for authenticated survivors.
+    if (!localStorage.getItem("authToken")) return;
     if (!canCreate) return;
 
     async function loadReassignmentRequests() {
@@ -122,6 +135,127 @@ function ReportingPage({ onNavigate }) {
 
     loadReassignmentRequests();
   }, [canCreate]);
+
+  /**
+   * Closes the emergency contacts modal when the user presses Escape.
+   * Only attaches the listener while the modal is open to avoid unnecessary overhead.
+   */
+  useEffect(() => {
+    if (!showEmergencyContacts) return;
+
+    function handleEscape(event) {
+      if (event.key === "Escape") setShowEmergencyContacts(false);
+    }
+
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [showEmergencyContacts]);
+
+  /**
+   * Emergency intercept screen — shown instead of the report form when the visitor
+   * has no auth token. Provides two explicit paths:
+   *   1. Create Account — proceeds to registration then reporting.
+   *   2. View Emergency Contacts — surfaces crisis numbers immediately without sign-up.
+   *
+   * This screen is a pure frontend concern; the backend already returns emergency
+   * contacts in the 401 body from report creation, but the intercept avoids making
+   * that round-trip at all.
+   */
+  const isAuthenticated = Boolean(localStorage.getItem("authToken"));
+
+  if (!isAuthenticated) {
+    return (
+      <main className="library-page">
+        {/* Centred intercept card with headline, actions, and sign-in escape hatch */}
+        <section className="emergency-intercept" aria-label="Account required to report">
+          <p className="eyebrow">Incident reporting</p>
+          <h1>You need an account to report an incident</h1>
+          <p className="emergency-intercept-lead">
+            Creating an account takes a few minutes and keeps your report confidential and
+            secure. If you need immediate help, emergency contacts are available below.
+          </p>
+
+          <div className="emergency-intercept-actions">
+            {/* Primary CTA — creating an account is the expected happy path */}
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={() => onNavigate("/join")}
+            >
+              Create Account
+            </button>
+
+            {/* Safety escape hatch — no account required to see crisis numbers */}
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={() => setShowEmergencyContacts(true)}
+            >
+              View Emergency Contacts
+            </button>
+          </div>
+
+          {/* Returning users can reach the sign-in form without scanning for a link */}
+          <button
+            type="button"
+            className="link-btn"
+            onClick={() => onNavigate("/join")}
+          >
+            I already have an account — Sign In
+          </button>
+        </section>
+
+        {/* Emergency contacts modal — rendered outside the intercept section so it
+            sits above everything in the stacking context */}
+        {showEmergencyContacts && (
+          <div
+            className="emergency-contacts-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Emergency contacts"
+            // Close when clicking the translucent backdrop (not the modal card itself)
+            onClick={(event) => {
+              if (event.target === event.currentTarget) setShowEmergencyContacts(false);
+            }}
+          >
+            <div className="emergency-contacts-modal">
+              <div className="emergency-contacts-header">
+                <h2>Emergency Contacts</h2>
+                <p>
+                  If you are in immediate danger, contact one of the services below. These
+                  lines are free and available 24 hours a day.
+                </p>
+              </div>
+
+              {/* Three Kenyan crisis contact numbers from the national GBV support network */}
+              <ul className="emergency-contact-list" aria-label="Crisis contact numbers">
+                <li className="emergency-contact-card">
+                  <strong>Police</strong>
+                  <span>999 / 112</span>
+                </li>
+                <li className="emergency-contact-card">
+                  <strong>Childline Kenya</strong>
+                  <span>116</span>
+                </li>
+                <li className="emergency-contact-card">
+                  <strong>National GBV Hotline</strong>
+                  <span>1195</span>
+                </li>
+              </ul>
+
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => setShowEmergencyContacts(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+      </main>
+    );
+  }
 
   async function refreshMyReassignmentRequests() {
     if (!canCreate) return;

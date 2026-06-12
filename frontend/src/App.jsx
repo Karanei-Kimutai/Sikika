@@ -203,7 +203,10 @@ function App() {
     };
   }, []);
 
-  const protectedPaths = new Set(["/chat", "/community", "/profile", "/moderation", "/reports", "/ngo-admin", "/system-admin"]);
+  // /reports is intentionally excluded from this set — unauthenticated users who navigate
+  // there receive a purpose-built emergency intercept screen inside ReportingPage rather
+  // than a silent redirect, so they can access crisis contacts without creating an account.
+  const protectedPaths = new Set(["/chat", "/community", "/profile", "/moderation", "/ngo-admin", "/system-admin"]);
   const resolvedPath = protectedPaths.has(currentPath) && !isAuthenticated ? "/join" : currentPath;
   const roleResolvedPath = (() => {
     if (["/ngo-admin", "/system-admin"].includes(resolvedPath)) {
