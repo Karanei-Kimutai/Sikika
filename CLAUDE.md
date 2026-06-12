@@ -97,7 +97,7 @@ Tracked in `docs/pending-roadmap-items.md`. Implementation guidance in `CSProjec
 
 | Feature | Status | Notes |
 |---|---|---|
-| USSD live endpoint | Partial | Model + AT SMS exist; no `POST /api/ussd/callback` controller yet |
+| USSD live endpoint | Done | `POST /api/ussd/callback` in `ussdController.js`; NGO admin endpoints + dashboard section included |
 | Emergency intercept for unauthenticated reporters | Done | Intercept screen in `ReportingPage.jsx`; `/reports` removed from `protectedPaths` in `App.jsx` |
 | In-app notification center | Partial | Model + fan-out writes exist; no list/read/dismiss API or UI |
 | Survivor chat archive/delete controls | Partial | `PATCH /api/chat/:chatId/status` exists; frontend UI controls missing |
