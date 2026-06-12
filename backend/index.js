@@ -79,6 +79,7 @@ const communityRoutes = require("./src/routes/communityRoutes");
 const adminRoutes = require("./src/routes/adminRoutes");
 const profileRoutes = require("./src/routes/profileRoutes");
 const reassignmentRequestRoutes = require("./src/routes/reassignmentRequestRoutes");
+const ussdRoutes = require("./src/routes/ussdRoutes");
 
 // Lightweight API smoke-test endpoint.
 app.get("/api/hello", (req, res) => {
@@ -115,6 +116,7 @@ app.use("/api/community", communityRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/reassignment-requests", reassignmentRequestRoutes);
+app.use("/api/ussd", ussdRoutes);
 
 /**
  * Session inspection endpoint.

@@ -8,18 +8,16 @@ Status legend:
 - Not Done: not implemented yet as a usable feature.
 
 ## 1) USSD Interface and Africa's Talking Integration
-Status: Partial
+Status: Done
 
 What exists now:
 - Data model exists for callback requests in backend models.
 - Seeder includes sample USSD callback request data.
 - Africa's Talking wiring exists for OTP SMS in authentication flow.
-
-What is still missing:
-- Live USSD endpoint/controller workflow.
-- Menu flow for callback request vs hotline option.
-- USSD session response handling and persistence path that creates callback records from actual USSD traffic.
-- Explicit hotline return flow in USSD session.
+- `POST /api/ussd/callback` handles AT session text and returns CON/END responses.
+- Two-branch menu: option 1 (request callback → confirm → persist UssdCallbackRequest) and option 2 (emergency contacts listing).
+- `GET /api/ussd/callback-requests` and `PATCH /api/ussd/callback-requests/:id` for NGO admin fulfillment.
+- NGO admin dashboard "USSD Callbacks" section to view and mark requests completed or cancelled.
 
 ## 2) Legal Case Escalation Workflow
 Status: Partial
@@ -123,11 +121,11 @@ What is still missing:
 - UI visibility for banned status and ban history in admin/user management surfaces.
 
 ## Suggested next implementation order
-1. Item 4 emergency intercept (high safety and UX value).
-2. Item 1 USSD live flow (major requirement gap).
-3. Item 7A response-time analytics.
+1. ~~Item 4 emergency intercept~~ Done
+2. ~~Item 1 USSD live flow~~ Done
+3. ~~Item 7A response-time analytics~~ Done
 4. Item 3 notification center API + UI.
-5. Item 5A chat archive/delete controls.
+5. Item 5A chat archive/delete controls (frontend only).
 6. Item 6 explicit presence indicator UX.
 7. Item 8 user banning workflow.
 8. Item 2 dedicated legal document drafting/export workflow.
