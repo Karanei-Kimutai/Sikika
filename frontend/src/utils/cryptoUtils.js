@@ -74,7 +74,7 @@ export const decryptMessage = async (encryptedPayload, cryptoKey) => {
     );
 
     return dec.decode(decryptedBuffer);
-  } catch (err) {
+  } catch {
     console.error("Decryption failed. Invalid key or corrupted payload.");
     return "[Encrypted Message - Unreadable]";
   }

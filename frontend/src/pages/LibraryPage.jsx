@@ -246,7 +246,7 @@ function LibraryPage() {
   async function handleDeleteResource(resource) {
     clearManagementNotices();
 
-    if (!window.confirm(`Delete resource \"${resource.title}\"? This action cannot be undone.`)) {
+    if (!window.confirm(`Delete resource "${resource.title}"? This action cannot be undone.`)) {
       return;
     }
 

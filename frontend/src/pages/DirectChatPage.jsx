@@ -6,12 +6,21 @@
  * The backend server only ever handles blind ciphertext payloads.
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import { getSharedKey, encryptMessage, decryptMessage } from '../utils/cryptoUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+
+function presenceLabel(value) {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (normalized === 'AVAILABLE') return 'Online';
+  if (normalized === 'BUSY') return 'Busy';
+  if (normalized === 'OFFLINE') return 'Offline';
+  return 'Unknown';
+}
 
 function createSocket(token) {
   return io(API_BASE_URL, {
@@ -62,32 +71,34 @@ function peerRoleLabelFromSession(role) {
 function buildDemoTranscript(currentRole) {
   const selfLabel = roleLabelFromSession(currentRole);
   const peerLabel = peerRoleLabelFromSession(currentRole);
+  const isSurvivorView = currentRole === 'survivor';
 
   const turns = [
-    { mine: false, text: 'Hi, thank you for reaching out today. Are you in a safe place to chat right now?' },
-    { mine: true, text: 'Yes, I am safe for now. I just feel overwhelmed and needed to talk to someone.' },
-    { mine: false, text: 'I hear you. We can go step by step. What feels most urgent for you this evening?' },
-    { mine: true, text: 'I need a plan for tonight and maybe where to get help tomorrow morning.' },
-    { mine: false, text: 'That makes sense. For tonight, can we identify one trusted person and one safe location?' },
-    { mine: true, text: 'I can stay with my cousin tonight. She knows part of what is happening.' },
-    { mine: false, text: 'That is a strong step. Do you want me to share a short checklist you can follow before leaving?' },
-    { mine: true, text: 'Yes please. A checklist would help because my mind is racing.' },
-    { mine: false, text: 'Checklist: phone charged, IDs, medicine, emergency contacts, and important documents if possible.' },
-    { mine: true, text: 'Got it. I can pack those in a small bag in ten minutes.' },
-    { mine: false, text: 'Great. Tomorrow we can connect you to legal and psychosocial support based on your location.' },
-    { mine: true, text: 'Thank you. I also want to report, but I am scared of doing it wrong.' },
-    { mine: false, text: 'You are not alone in that. We can complete the report together in simple steps when you are ready.' },
-    { mine: true, text: 'Okay. That helps. I feel calmer now and I can move to my cousin\'s place.' },
-    { mine: false, text: 'You are doing well. Message me once you arrive, and we will continue from there.' },
-    { mine: true, text: 'I will. Thank you for staying with me through this.' }
+    { speaker: 'staff', text: 'Hi, thank you for reaching out today. Are you in a safe place to chat right now?' },
+    { speaker: 'survivor', text: 'Yes, I am safe for now. I just feel overwhelmed and needed to talk to someone.' },
+    { speaker: 'staff', text: 'I hear you. We can go step by step. What feels most urgent for you this evening?' },
+    { speaker: 'survivor', text: 'I need a plan for tonight and maybe where to get help tomorrow morning.' },
+    { speaker: 'staff', text: 'That makes sense. For tonight, can we identify one trusted person and one safe location?' },
+    { speaker: 'survivor', text: 'I can stay with my cousin tonight. She knows part of what is happening.' },
+    { speaker: 'staff', text: 'That is a strong step. Do you want me to share a short checklist you can follow before leaving?' },
+    { speaker: 'survivor', text: 'Yes please. A checklist would help because my mind is racing.' },
+    { speaker: 'staff', text: 'Checklist: phone charged, IDs, medicine, emergency contacts, and important documents if possible.' },
+    { speaker: 'survivor', text: 'Got it. I can pack those in a small bag in ten minutes.' },
+    { speaker: 'staff', text: 'Great. Tomorrow we can connect you to legal and psychosocial support based on your location.' },
+    { speaker: 'survivor', text: 'Thank you. I also want to report, but I am scared of doing it wrong.' },
+    { speaker: 'staff', text: 'You are not alone in that. We can complete the report together in simple steps when you are ready.' },
+    { speaker: 'survivor', text: 'Okay. That helps. I feel calmer now and I can move to my cousin\'s place.' },
+    { speaker: 'staff', text: 'You are doing well. Message me once you arrive, and we will continue from there.' },
+    { speaker: 'survivor', text: 'I will. Thank you for staying with me through this.' }
   ];
 
   return turns.map((turn, index) => ({
+    // Demo message ownership mirrors viewer role so staff never appears to send survivor lines.
+    isMine: isSurvivorView ? turn.speaker === 'survivor' : turn.speaker === 'staff',
     messageId: `demo-${index + 1}`,
-    senderUserId: turn.mine ? 'demo-self' : 'demo-peer',
+    senderUserId: (isSurvivorView ? turn.speaker === 'survivor' : turn.speaker === 'staff') ? 'demo-self' : 'demo-peer',
     plaintext: turn.text,
-    isMine: turn.mine,
-    senderLabel: turn.mine ? selfLabel : peerLabel
+    senderLabel: (isSurvivorView ? turn.speaker === 'survivor' : turn.speaker === 'staff') ? selfLabel : peerLabel
   }));
 }
 
@@ -110,27 +121,55 @@ function decodeJwtPayload(token) {
     const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
     const payloadJson = atob(padded);
     return JSON.parse(payloadJson);
-  } catch (error) {
+  } catch {
     return null;
   }
 }
 
 const DirectChatPage = () => {
+  const initialToken = localStorage.getItem('authToken');
+  const initialPayload = initialToken ? decodeJwtPayload(initialToken) : null;
   const [channels, setChannels] = useState([]);
   const [activeChannelId, setActiveChannelId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [cryptoKey, setCryptoKey] = useState(null);
-  const [currentUserId, setCurrentUserId] = useState(null);
-  const [currentUserRole, setCurrentUserRole] = useState('');
+  const [currentUserId] = useState(initialPayload?.userId || initialPayload?.id || null);
+  const [currentUserRole] = useState((initialPayload?.role || '').toString().toLowerCase());
   const [errorMessage, setErrorMessage] = useState('');
   const [noticeMessage, setNoticeMessage] = useState('');
   const [isPrivacyMaskActive, setIsPrivacyMaskActive] = useState(false);
+  const [showArchivedChannels, setShowArchivedChannels] = useState(false);
+  const [menuChannelId, setMenuChannelId] = useState(null);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   
   const messagesEndRef = useRef(null);
   const socketRef = useRef(null);
   const inactivityTimerRef = useRef(null);
   const preferredChannelRef = useRef('');
+
+  useEffect(() => {
+    const handleOutsideMenuClick = (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest('.wa-chat-item-actions')) return;
+      if (target.closest('.wa-chat-options-menu')) return;
+      setMenuChannelId(null);
+    };
+
+    window.addEventListener('mousedown', handleOutsideMenuClick);
+    return () => window.removeEventListener('mousedown', handleOutsideMenuClick);
+  }, []);
+
+  useEffect(() => {
+    const closeMenu = () => setMenuChannelId(null);
+    window.addEventListener('resize', closeMenu);
+    window.addEventListener('scroll', closeMenu, true);
+    return () => {
+      window.removeEventListener('resize', closeMenu);
+      window.removeEventListener('scroll', closeMenu, true);
+    };
+  }, []);
 
   /**
    * 1. Initialize Channels and Socket Connection
@@ -139,22 +178,19 @@ const DirectChatPage = () => {
     // Session bootstrap comes from the same auth token written during login.
     const token = localStorage.getItem('authToken');
     if (!token) {
-      setErrorMessage('You need to log in first to access direct chat.');
-      return undefined;
+      const timerId = window.setTimeout(() => {
+        setErrorMessage('You need to log in first to access direct chat.');
+      }, 0);
+      return () => window.clearTimeout(timerId);
     }
 
-    const payload = decodeJwtPayload(token);
-    // Accept both claim names because backend currently emits both for
-    // compatibility with older/newer middleware consumers.
-    const userId = payload?.userId || payload?.id || null;
-    if (!userId) {
-      setErrorMessage('Could not read your session. Please log in again.');
-      return undefined;
+    if (!currentUserId) {
+      const timerId = window.setTimeout(() => {
+        setErrorMessage('Could not read your session. Please log in again.');
+      }, 0);
+      return () => window.clearTimeout(timerId);
     }
 
-    setCurrentUserId(userId);
-    // Role is used for labels in the chat list/header only.
-    setCurrentUserRole((payload?.role || '').toString().toLowerCase());
     preferredChannelRef.current = readPreferredChannelFromUrl() || String(localStorage.getItem('lastActiveDirectChatId') || '');
 
     socketRef.current = createSocket(token);
@@ -163,7 +199,8 @@ const DirectChatPage = () => {
       try {
         // Channel list is identity-scoped by Authorization token.
         const response = await axios.get(`${API_BASE_URL}/api/chat/channels`, {
-          headers: { Authorization: `Bearer ${token}` }
+          headers: { Authorization: `Bearer ${token}` },
+          params: showArchivedChannels && currentUserRole === 'survivor' ? { includeArchived: true } : undefined
         });
         const loadedChannels = Array.isArray(response.data) ? response.data : [];
         setChannels(loadedChannels);
@@ -174,7 +211,8 @@ const DirectChatPage = () => {
         // 3) fallback to most recent channel from API ordering
         const preferred = preferredChannelRef.current;
         const resolvedPreferred = loadedChannels.find((channel) => channel.chatId === preferred)?.chatId || null;
-        setActiveChannelId(resolvedPreferred || loadedChannels[0]?.chatId || null);
+        const activeFallback = loadedChannels.find((channel) => channel.chatChannelStatus === 'active')?.chatId || null;
+        setActiveChannelId(resolvedPreferred || activeFallback || loadedChannels[0]?.chatId || null);
       } catch (error) {
         setErrorMessage(error.response?.data?.error || 'Failed to load chat channels.');
       }
@@ -187,7 +225,42 @@ const DirectChatPage = () => {
         socketRef.current.disconnect();
       }
     };
-  }, []);
+  }, [showArchivedChannels, currentUserId, currentUserRole]);
+
+  const activeChannel = channels.find((channel) => channel.chatId === activeChannelId) || null;
+  const actionMenuChannel = channels.find((channel) => channel.chatId === menuChannelId) || null;
+
+  const updateChannelStatus = async (chatId, status) => {
+    if (!chatId) return;
+
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+
+    try {
+      await axios.patch(
+        `${API_BASE_URL}/api/chat/${chatId}/status`,
+        { status },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      const refreshed = await axios.get(`${API_BASE_URL}/api/chat/channels`, {
+        headers: { Authorization: `Bearer ${token}` },
+        params: showArchivedChannels && currentUserRole === 'survivor' ? { includeArchived: true } : undefined
+      });
+      const loadedChannels = Array.isArray(refreshed.data) ? refreshed.data : [];
+      setChannels(loadedChannels);
+      setMenuChannelId(null);
+
+      const nextActive = loadedChannels.find((channel) => channel.chatChannelStatus === 'active')?.chatId || loadedChannels[0]?.chatId || null;
+      if (status === 'deleted' && activeChannelId === chatId) {
+        setActiveChannelId(nextActive);
+      } else if (!loadedChannels.some((channel) => channel.chatId === activeChannelId)) {
+        setActiveChannelId(nextActive);
+      }
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || 'Failed to update chat channel status.');
+    }
+  };
 
   /**
    * 2. Handle Active Channel Change (Derive Key, Join Room, Fetch History)
@@ -234,8 +307,9 @@ const DirectChatPage = () => {
           }))
         );
 
-        const shouldAddDemoTranscript = import.meta.env.DEV && decryptedHistory.length < 8;
-        // Keep production timelines untouched; only enrich sparse dev timelines.
+        const demoTranscriptEnabled = String(import.meta.env.VITE_ENABLE_CHAT_DEMO_TRANSCRIPT || '').toLowerCase() === 'true';
+        const shouldAddDemoTranscript = import.meta.env.DEV && demoTranscriptEnabled && decryptedHistory.length < 8;
+        // Demo transcript is now explicit opt-in to avoid confusing real user timelines.
         setMessages(
           shouldAddDemoTranscript
             ? [...decryptedHistory, ...buildDemoTranscript(currentUserRole)]
@@ -248,7 +322,7 @@ const DirectChatPage = () => {
     };
 
     setupSecureChannel();
-  }, [activeChannelId, currentUserId]);
+  }, [activeChannelId, currentUserId, currentUserRole]);
 
   /**
    * 3. Listen for Incoming Live Messages
@@ -301,7 +375,7 @@ const DirectChatPage = () => {
           {},
           { headers: { Authorization: `Bearer ${token}` } }
         );
-      } catch (error) {
+      } catch {
         // No-op to avoid disrupting chat flow if read receipts fail.
       }
     };
@@ -379,28 +453,63 @@ const DirectChatPage = () => {
           <header className="wa-sidebar-header">
             <h2>Chats</h2>
             <span>{channels.length}</span>
+            {currentUserRole === 'survivor' && (
+              <button type="button" className="link-btn" onClick={() => setShowArchivedChannels((value) => !value)}>
+                {showArchivedChannels ? 'Hide Archived' : 'Show Archived'}
+              </button>
+            )}
           </header>
 
           <div className="wa-chat-list">
             {errorMessage && <p className="wa-error">{errorMessage}</p>}
 
             {channels.map((channel) => (
-              <button
-                key={channel.chatId}
-                onClick={() => setActiveChannelId(channel.chatId)}
-                className={`wa-chat-item ${activeChannelId === channel.chatId ? 'active' : ''}`}
-              >
-                {/* Initial badges intentionally avoid exposing personal names. */}
-                <span className="wa-avatar">{channel.chatChannelType === 'counsellor_channel' ? 'C' : 'L'}</span>
-                <span className="wa-chat-text">
-                  <strong>
-                    {currentUserRole === 'survivor'
-                      ? (channel.chatChannelType === 'counsellor_channel' ? 'Assigned Counsellor' : 'Assigned Legal Counsel')
-                      : 'Survivor'}
-                  </strong>
-                  <small>Channel {channel.chatId.slice(0, 8)}...</small>
-                </span>
-              </button>
+              <div key={channel.chatId} className={`wa-chat-item ${activeChannelId === channel.chatId ? 'active' : ''}`}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveChannelId(channel.chatId);
+                    setMenuChannelId(null);
+                  }}
+                  className="wa-chat-open"
+                >
+                  {/* Initial badges intentionally avoid exposing personal names. */}
+                  <span className="wa-avatar">{channel.chatChannelType === 'counsellor_channel' ? 'C' : 'L'}</span>
+                  <span className="wa-chat-text">
+                    <strong>
+                      {currentUserRole === 'survivor'
+                        ? (channel.chatChannelType === 'counsellor_channel' ? 'Assigned Counsellor' : 'Assigned Legal Counsel')
+                        : 'Survivor'}
+                    </strong>
+                    <small>Channel {channel.chatId.slice(0, 8)}...</small>
+                    <small>
+                      {presenceLabel(channel.counterpartAvailability)}
+                      {channel.chatChannelStatus === 'archived' ? ' · Archived' : ''}
+                    </small>
+                  </span>
+                </button>
+
+                {currentUserRole === 'survivor' && (
+                  <div className="wa-chat-item-actions">
+                    <button
+                      type="button"
+                      className="wa-chat-options-btn"
+                      aria-expanded={menuChannelId === channel.chatId}
+                      aria-label="Chat actions"
+                      onClick={(event) => {
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        setMenuPosition({
+                          top: rect.bottom + 6,
+                          left: Math.max(12, rect.right - 180)
+                        });
+                        setMenuChannelId((value) => (value === channel.chatId ? null : channel.chatId));
+                      }}
+                    >
+                      ⋯
+                    </button>
+                  </div>
+                )}
+              </div>
             ))}
 
             {channels.length === 0 && !errorMessage && (
@@ -418,10 +527,15 @@ const DirectChatPage = () => {
                   <div>
                     <strong>{currentUserRole === 'survivor' ? 'Secure Staff Channel' : 'Secure Survivor Channel'}</strong>
                     <small>end-to-end encrypted</small>
+                    {activeChannel?.counterpartAvailability && (
+                      <small>Staff status: {presenceLabel(activeChannel.counterpartAvailability)}</small>
+                    )}
                   </div>
                 </div>
                 {noticeMessage && <p className="wa-notice">{noticeMessage}</p>}
               </header>
+
+              {activeChannel?.asyncDeliveryHint && <p className="status-message warning">{activeChannel.asyncDeliveryHint}</p>}
 
               <div className="wa-messages">
                 {messages.length === 0 ? (
@@ -458,6 +572,24 @@ const DirectChatPage = () => {
           )}
         </div>
       </section>
+
+      {menuChannelId && actionMenuChannel && createPortal(
+        <div className="wa-chat-options-menu" style={{ top: menuPosition.top, left: menuPosition.left }}>
+          {actionMenuChannel.chatChannelStatus === 'archived' ? (
+            <button type="button" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'active')}>
+              Restore Chat
+            </button>
+          ) : (
+            <button type="button" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'archived')}>
+              Archive Chat
+            </button>
+          )}
+          <button type="button" className="danger" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'deleted')}>
+            Delete Chat
+          </button>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };

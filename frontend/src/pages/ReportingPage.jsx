@@ -50,7 +50,7 @@ function formatStatus(status) {
 }
 
 function ReportingPage({ onNavigate }) {
-  const role = useMemo(decodeTokenRole, []);
+  const role = useMemo(() => decodeTokenRole(), []);
   // Survivors can create/edit/withdraw/delete their own reports.
   const canCreate = role === "SURVIVOR";
   // Staff users can request status updates subject to backend transition rules.
@@ -102,7 +102,10 @@ function ReportingPage({ onNavigate }) {
   }
 
   useEffect(() => {
-    loadReports();
+    const timerId = window.setTimeout(() => {
+      void loadReports();
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, []);
 
   useEffect(() => {

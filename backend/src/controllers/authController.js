@@ -65,6 +65,31 @@ function getSafeErrorMessage(error) {
         'Unknown error';
 }
 
+// Africa's Talking may return HTTP success while rejecting one or more recipients.
+function getSmsDeliveryFailure(smsResponse) {
+    const recipients = smsResponse?.SMSMessageData?.Recipients;
+    if (!Array.isArray(recipients) || recipients.length === 0) {
+        return 'SMS provider returned no recipient delivery data.';
+    }
+
+    const isRecipientSuccess = (entry) => {
+        const normalizedStatus = String(entry?.status || '').trim().toLowerCase();
+        const statusCode = Number(entry?.statusCode);
+        if (normalizedStatus === 'success') return true;
+        return statusCode === 100 || statusCode === 101;
+    };
+
+    const failedRecipient = recipients.find((entry) => {
+        return !isRecipientSuccess(entry);
+    });
+
+    if (!failedRecipient) return null;
+
+    const status = failedRecipient.status || 'Rejected';
+    const code = failedRecipient.statusCode ?? 'unknown';
+    return `SMS delivery rejected: ${status} (code ${code}).`;
+}
+
 function getCanonicalRole(user) {
     return user.userRole || user.role;
 }
@@ -178,22 +203,46 @@ async function registerOtpFailure(user) {
 // Sends OTP via SMS unless local/dev mode bypasses external provider calls.
 async function sendOtpSms(phoneNumber, otpCode) {
     let warning = null;
+    const recipient = normalizePhoneNumber(phoneNumber);
+    const senderId = String(process.env.AFRICASTALKING_SENDER_ID || '').trim();
+
+    if (!recipient) {
+        throw new Error('Invalid phone number format.');
+    }
 
     if (!isLocalOtpMode()) {
         const options = {
-            to: [phoneNumber],
+            to: [recipient],
             message: `Your secure access code is: ${otpCode}. Do not share this code with anyone.`
         };
 
+        if (senderId) {
+            options.from = senderId;
+        }
+
         try {
-            await sms.send(options);
+            const smsResponse = await sms.send(options);
+            const deliveryFailure = getSmsDeliveryFailure(smsResponse);
+            if (deliveryFailure) {
+                throw new Error(deliveryFailure);
+            }
         } catch (error) {
             const safeMessage = getSafeErrorMessage(error);
-            if (process.env.NODE_ENV === 'production') {
-                throw error;
+            let enrichedMessage = safeMessage;
+
+            if (safeMessage.includes('UserInBlacklist')) {
+                enrichedMessage = `${safeMessage}. Check Africa's Talking SMS sender/product configuration and recipient opt-out status.`;
             }
 
-            warning = `SMS send failed in non-production mode: ${safeMessage}`;
+            if (safeMessage.includes('InvalidSenderId')) {
+                enrichedMessage = `${safeMessage}. Set AFRICASTALKING_SENDER_ID to an approved sender ID.`;
+            }
+
+            if (process.env.NODE_ENV === 'production') {
+                throw new Error(enrichedMessage);
+            }
+
+            warning = `SMS send failed in non-production mode: ${enrichedMessage}`;
             console.warn('SMS Warning:', warning);
         }
     }

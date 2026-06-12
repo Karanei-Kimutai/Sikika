@@ -74,6 +74,26 @@ Role decoding:
 - JWT role is decoded client-side for UI routing
 - backend authorization still validates all access independently
 
+## Frontend Architecture (Detailed)
+
+### App Shell and Feature Composition
+
+- `src/App.jsx` is the orchestration layer for route mapping, auth guards, and role-aware workspace routing.
+- Feature pages are grouped by domain (`Auth`, `Community`, `Direct Chat`, `Admin Workspaces`, `Resources`, `Reports`) and each page owns its screen-level state.
+- Shared top-level UI concerns (maintenance mode bannering, session redirects, quick-exit behavior) live in the app shell so every feature inherits the same safety behavior.
+
+### API and State Boundaries
+
+- UI components call backend through service modules (`src/services/*.js`) so endpoint URLs and auth header wiring remain centralized.
+- Route/page components keep view state (loading flags, success/error messages, selected entities) local to the page to reduce cross-feature coupling.
+- Backend remains the source of truth for permissions, account status, and moderation authority; frontend state only reflects server decisions.
+
+### Auth Session Lifecycle
+
+- On successful authentication, `authToken` and `userId` are persisted to `localStorage`.
+- Protected views derive session context from the token and redirect when session is missing/expired.
+- First-login forced password reset is treated as an explicit intermediate auth stage before final navigation.
+
 ## Session and Safety Controls
 
 - authToken and userId are stored in localStorage after successful login
@@ -202,10 +222,12 @@ Key behavior:
 - Encrypts outbound messages before socket emit.
 - Sends best-effort read acknowledgements without interrupting chat flow on failure.
 - Privacy mask auto-hides screen after inactivity and reopens on interaction.
+- Survivor channel list is assignment-driven from backend auto-provisioned channels, so each survivor should see one counsellor channel and one legal-counsel channel when both assignments exist.
 
 Development note:
 
-- In development mode, a demo transcript may be appended when channel history is sparse.
+- Demo transcript injection is opt-in only via `VITE_ENABLE_CHAT_DEMO_TRANSCRIPT=true` (development mode only).
+- If this env var is not enabled, chat history shows only real server-backed messages.
 
 ## Community and Moderation UI
 
@@ -222,6 +244,13 @@ Behavior:
 - moderation/report actions remain available in-room
 - room list is ordered by latest activity (newest message first)
 - chat view auto-scrolls to the latest message when entering a room
+- moderation actions support rejecting reports, removing messages, and blocking users (implemented as account suspension in backend).
+
+## Moderation Blocking Semantics
+
+- "Block User" in moderation maps to backend account suspension (`accountStatus = SUSPENDED`).
+- Suspended users are denied subsequent authenticated access until reactivated by admin workflows.
+- Moderation actions are written to moderation logs for audit tracking.
 
 ## Direct Chat Resume Behavior
 

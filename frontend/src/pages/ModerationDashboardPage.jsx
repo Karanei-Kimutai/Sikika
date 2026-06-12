@@ -2,6 +2,17 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { io } from "socket.io-client";
 
+/**
+ * ModerationDashboardPage
+ * -----------------------
+ * Focused queue for reviewing harmful-content reports.
+ *
+ * Design notes:
+ * - uses REST for initial list + mutation actions
+ * - subscribes to moderation socket feed for near-real-time refreshes
+ * - backend remains source-of-truth for moderation permissions
+ */
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 const moderationSocket = io(API_BASE_URL, { autoConnect: false });
 
@@ -33,13 +44,17 @@ function ModerationDashboardPage() {
   }
 
   useEffect(() => {
-    loadReports();
+    const timerId = window.setTimeout(() => {
+      void loadReports();
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, []);
 
   useEffect(() => {
     const token = localStorage.getItem("authToken");
     if (!token) return;
 
+    // Keep queue fresh when new reports are filed or reviewed by another moderator.
     moderationSocket.auth = { token };
     moderationSocket.connect();
     moderationSocket.emit("joinModerationFeed");
@@ -61,6 +76,7 @@ function ModerationDashboardPage() {
     setSuccessMessage("");
 
     try {
+      // `action` controls downstream moderation behavior (remove/suspend/none).
       await axios.patch(
         `${API_BASE_URL}/api/community/moderation/reports/${reportId}`,
         { reviewStatus, action },
@@ -125,9 +141,9 @@ function ModerationDashboardPage() {
                   <button
                     type="button"
                     className="secondary-btn"
-                    onClick={() => review(report.contentReportId, "APPROVED", "suspend_user")}
+                    onClick={() => review(report.contentReportId, "APPROVED", "block_user")}
                   >
-                    Approve + Suspend User
+                    Approve + Block User
                   </button>
                 </div>
               </article>

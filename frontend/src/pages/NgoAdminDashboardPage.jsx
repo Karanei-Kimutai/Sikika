@@ -146,6 +146,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
   const [reassignmentRequests, setReassignmentRequests] = useState([]);
   const [reassignmentFilter, setReassignmentFilter] = useState("PENDING");
   const [reviewingRequestId, setReviewingRequestId] = useState("");
+  const [selectedModerationRow, setSelectedModerationRow] = useState(null);
 
   function resetReportFilters() {
     setReportFilters({
@@ -172,7 +173,10 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
 
   useEffect(() => {
     // Initial load only; explicit refreshes happen after mutation actions.
-    loadDashboard();
+    const timerId = window.setTimeout(() => {
+      void loadDashboard();
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, []);
 
   useEffect(() => {
@@ -192,7 +196,10 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
 
   useEffect(() => {
     // App route aliases map to section ids through initialSection prop.
-    setActiveSection(initialSection);
+    const timerId = window.setTimeout(() => {
+      setActiveSection(initialSection);
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, [initialSection]);
 
   useEffect(() => {
@@ -205,11 +212,15 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     if (!selected) return;
 
     // Prefill with current assignment so reassignment edits are incremental.
-    setAssignmentForm((prev) => ({
-      ...prev,
-      counsellorId: selected.assignedCounsellorId || "",
-      legalCounselId: selected.assignedLegalCounselId || ""
-    }));
+    const timerId = window.setTimeout(() => {
+      setAssignmentForm((prev) => ({
+        ...prev,
+        counsellorId: selected.assignedCounsellorId || "",
+        legalCounselId: selected.assignedLegalCounselId || ""
+      }));
+    }, 0);
+
+    return () => window.clearTimeout(timerId);
   }, [assignmentForm.survivorId, dashboard]);
 
   function handleSectionSelect(sectionId) {
@@ -349,7 +360,6 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
 
       setEditingResourceId("");
       setResourceForm({ title: "", category: "", fileUrl: "", description: "" });
-                    <th>Action</th>
       await loadDashboard();
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Failed to save resource.");
@@ -360,74 +370,11 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     event.preventDefault();
     setErrorMessage("");
     setSuccessMessage("");
-                      <td>
-                        <button
-                          type="button"
-                          className="admin-action-btn"
-                          onClick={() => handleViewReportDetails(row.reportId)}
-                          disabled={loadingReportDetailsFor === row.reportId}
-                        >
-                          {loadingReportDetailsFor === row.reportId
-                            ? "Loading..."
-                            : selectedCaseReportId === String(row.reportId)
-                              ? "Hide Details"
-                              : "View Details"}
-                        </button>
-                      </td>
 
     if (!assignmentForm.survivorId) {
       setErrorMessage("Select a survivor before reassigning.");
       return;
     }
-            {selectedCaseReportId && (
-              <article className="admin-panel" style={{ marginTop: "1rem" }}>
-                <h3>Report Details</h3>
-                {loadingReportDetailsFor === selectedCaseReportId ? (
-                  <p className="admin-empty">Loading detailed report view...</p>
-                ) : selectedReportDetails ? (
-                  <>
-                    <p><strong>Report ID:</strong> {selectedReportDetails.reportId}</p>
-                    <p><strong>Status:</strong> {prettifyLabel(selectedReportDetails.reportStatus)}</p>
-                    <p><strong>Category:</strong> {prettifyLabel(selectedReportDetails.category)}</p>
-                    <p><strong>Severity:</strong> {selectedReportDetails.severityLevel}</p>
-                    <p><strong>Created:</strong> {formatDate(selectedReportDetails.createdAt)}</p>
-                    <p><strong>Incident date:</strong> {selectedReportDetails.date || "Not provided"}</p>
-                    <p><strong>Location:</strong> {selectedReportDetails.location || "Not provided"}</p>
-                    <p><strong>Description:</strong> {selectedReportDetails.description || "Not provided"}</p>
-
-                    {selectedReportDetails.legalCase && (
-                      <p>
-                        <strong>Legal case:</strong> {selectedReportDetails.legalCase.caseStatus}
-                        {selectedReportDetails.legalCase.legalCaseId ? ` (${selectedReportDetails.legalCase.legalCaseId})` : ""}
-                      </p>
-                    )}
-
-                    {(selectedReportDetails.evidence || []).length > 0 ? (
-                      <div className="evidence-list">
-                        <strong>Evidence files</strong>
-                        {selectedReportDetails.evidence.map((evidence) => (
-                          <button
-                            key={evidence.evidenceId}
-                            type="button"
-                            className="footer-link"
-                            onClick={() => handleOpenEvidence(selectedReportDetails.reportId, evidence.evidenceId)}
-                            disabled={openingEvidenceId === evidence.evidenceId}
-                          >
-                            {openingEvidenceId === evidence.evidenceId
-                              ? "Opening..."
-                              : evidence.originalFileName || `${evidence.fileType} evidence`}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="admin-empty">No evidence files attached.</p>
-                    )}
-                  </>
-                ) : (
-                  <p className="admin-empty">Full details are not available for this report right now.</p>
-                )}
-              </article>
-            )}
 
     try {
       await reassignSurvivorCase({
@@ -612,7 +559,6 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
   }, [dashboard]);
 
   function yForValue(value) {
-    const width = 620;
     const height = 220;
     const padTop = 16;
     const padBottom = 34;
@@ -682,7 +628,12 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
           <article className="admin-stat-card">
             <h3>Average Response Time</h3>
             <p className="admin-metric">{formatNumber(overview.averageResponseMinutes)} mins</p>
-            <span>Computed from open report timelines</span>
+            <span>
+              Computed from first survivor-to-staff replies in direct chat
+              {Number(overview.averageResponseSampleCount || 0) > 0
+                ? ` (${formatNumber(overview.averageResponseSampleCount)} samples)`
+                : ''}
+            </span>
           </article>
           <article className="admin-stat-card">
             <h3>Active Legal Cases</h3>
@@ -1417,7 +1368,15 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
                     <tr key={row.reportId}>
                       <td>{formatDate(row.submittedAt)}</td>
                       <td>{row.roomName}</td>
-                      <td>{row.snippet}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => setSelectedModerationRow(row)}
+                        >
+                          View Message + Reason
+                        </button>
+                      </td>
                       <td className="action-cell">
                         <button type="button" className="admin-action-btn" onClick={() => handleModerationAction(row.reportId, "remove_message")}>
                           Delete Message
@@ -1566,6 +1525,42 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
             </div>
           </article>
         </section>
+      )}
+
+      {selectedModerationRow && (
+        <div
+          className="admin-confirm-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="moderation-reason-title"
+          onClick={() => setSelectedModerationRow(null)}
+        >
+          <article className="admin-confirm-modal report-details-modal" onClick={(event) => event.stopPropagation()}>
+            <h3 id="moderation-reason-title">Moderation Report Details</h3>
+            <div className="moderation-detail-grid">
+              <p><strong>Room:</strong> {selectedModerationRow.roomName}</p>
+              <p><strong>Reported by:</strong> {selectedModerationRow.reporterLabel || "Community Member"}</p>
+              <p><strong>Submitted:</strong> {formatDate(selectedModerationRow.submittedAt)}</p>
+              <p><strong>Status:</strong> {prettifyLabel(selectedModerationRow.status)}</p>
+            </div>
+
+            <section className="moderation-detail-card">
+              <h4>Message</h4>
+              <p>{selectedModerationRow.snippet || "No message content available."}</p>
+            </section>
+
+            <section className="moderation-detail-card">
+              <h4>Reported Reason</h4>
+              <p>{selectedModerationRow.reportReasonText || "No reason provided."}</p>
+            </section>
+
+            <div className="admin-confirm-actions">
+              <button type="button" className="secondary-btn" onClick={() => setSelectedModerationRow(null)}>
+                Close
+              </button>
+            </div>
+          </article>
+        </div>
       )}
     </AdminWorkspace>
   );
