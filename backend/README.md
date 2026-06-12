@@ -169,6 +169,12 @@ Run auth-focused tests:
 npm run test:auth
 ```
 
+Run backend system route smoke tests:
+
+```bash
+npm run test:system
+```
+
 Watch mode:
 
 ```bash
