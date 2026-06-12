@@ -1,4 +1,4 @@
-# Backend API
+# Backend
 
 Express + Sequelize (MySQL) backend for authentication, support resources, incident reporting, direct chat, community rooms, moderation, notifications, and websocket relay.
 
@@ -31,6 +31,70 @@ On startup the server:
 5. Syncs models
 6. Mounts REST routes and socket handlers
 7. Applies global maintenance gate middleware
+
+## Data Model Architecture
+
+### How Models Are Defined
+
+- Every table is defined as a Sequelize model in `backend/src/models/*.js`.
+- Each model file defines:
+- table columns and data types
+- primary key strategy (UUID strings across most domain entities)
+- nullability/defaults
+- table-level comments and field-level comments used as schema documentation
+
+Common examples:
+
+- `userAccount.js` is the identity root for auth and role-based access.
+- `survivorProfile.js`, `counsellorProfile.js`, `legalCounselProfile.js` extend user identity with role-specific domain fields.
+- `incidentReport.js`, `evidenceFile.js`, `legalCaseFile.js` model the reporting and legal escalation flow.
+- `directChatChannel.js` and `directChatMessage.js` model survivor-to-staff private chat.
+
+### How Models Are Brought Together
+
+- `backend/src/models/index.js` is the registry and association hub.
+- It imports all model definitions, wires relationships (`hasOne`, `hasMany`, `belongsTo`), then exports both the models and `sequelize` instance.
+- All controllers/services import models from this single hub to keep associations consistent.
+
+Association highlights:
+
+- `UserAccount` has one role profile (survivor/counsellor/legal/ngo admin/system admin).
+- `SurvivorProfile` belongs to assigned counsellor and legal counsel.
+- `IncidentReport` belongs to a survivor and has many evidence files.
+- `DirectChatChannel` belongs to a survivor and a staff counterpart user account.
+- `CommunityRoom` has memberships and messages; moderation/reporting tables reference those messages.
+
+### How Tables Are Created
+
+- Table creation happens at backend startup in `backend/index.js`.
+- Boot flow:
+- validates env
+- creates the database if missing (`CREATE DATABASE IF NOT EXISTS`)
+- authenticates Sequelize
+- runs `db.sequelize.sync(...)` to create/update tables from model definitions
+
+This keeps local development bootstrapping simple because schema setup is automatic once env is valid.
+
+### How Seeding Works
+
+- Seeder entrypoint: `backend/src/seeders/index.js`.
+- Command: `node src/seeders/index.js`.
+- Seeder uses `sequelize.sync({ force: true })`, which drops and recreates tables before inserting demo data.
+- It seeds a full working graph:
+- system + NGO admins
+- counsellors + legal counsel
+- survivors and assignment history
+- reports/evidence/legal cases
+- direct chat + community data
+- notifications/resources/moderation/audit rows
+
+Because force sync is destructive, use seeding only for local/disposable environments.
+
+### Authentication-Specific Data Flow
+
+- OTP/password auth state is persisted on `UserAccount` (OTP value/purpose/expiry, failure counters, lockout fields, password hash).
+- On first-time survivor signup completion, auth flow can create missing survivor profile and auto-assignment records.
+- That signup completion path can also auto-provision direct-chat channels, which is why auth and chat model consistency must stay aligned.
 
 ## Environment Variables
 
@@ -246,6 +310,13 @@ Direct chat:
 - GET /api/chat/:chatId/messages
 - PATCH /api/chat/:chatId/read
 
+Direct chat assignment behavior:
+
+- Survivor channels are assignment-driven, not global.
+- On survivor access (and during signup completion), backend ensures channels exist for assigned counsellor and assigned legal counsel.
+- Channel creation is idempotent (`findOrCreate`) so repeated logins do not duplicate channels.
+- Channel membership is enforced by survivorId/supportStaffCounterpartId access checks.
+
 Community and moderation:
 
 - GET /api/community/rooms
@@ -257,6 +328,13 @@ Community and moderation:
 - DELETE /api/community/messages/:messageId
 - GET /api/community/moderation/reports
 - PATCH /api/community/moderation/reports/:reportId
+
+Moderation action behavior:
+
+- `remove_message` replaces message content with a moderation-safe placeholder.
+- `block_user` (alias of `suspend_user`) sets the target account status to `SUSPENDED`.
+- `issue_warning` writes a moderation log entry without account suspension.
+- All approved moderation actions write an audit-style moderation action record.
 
 Community access model:
 

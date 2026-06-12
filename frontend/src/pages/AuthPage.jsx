@@ -97,6 +97,13 @@ function AuthPage({ onNavigate }) {
     setSuccessMessage("");
   };
 
+  const formatApiError = (error, fallbackMessage) => {
+    const apiError = error?.response?.data?.error;
+    const apiDetails = error?.response?.data?.details;
+    if (apiError && apiDetails) return `${apiError} (${apiDetails})`;
+    return apiError || fallbackMessage;
+  };
+
   const finalizeLogin = (token, userId = null) => {
     // Persist token and identity for app session continuity across reloads.
     localStorage.setItem("authToken", token);
@@ -283,7 +290,7 @@ function AuthPage({ onNavigate }) {
         switchToSignin("otp");
         setErrorMessage("This phone already has an account. Sign in with OTP or password.");
       } else {
-        setErrorMessage(error.response?.data?.error || "Could not send access code. Please try again.");
+        setErrorMessage(formatApiError(error, "Could not send access code. Please try again."));
       }
     } finally {
       setLoading(false);
@@ -391,7 +398,7 @@ function AuthPage({ onNavigate }) {
         switchToSignup();
         setErrorMessage("This phone number has not completed signup yet. Create your account first.");
       } else {
-        setErrorMessage(error.response?.data?.error || "Could not send OTP for sign in.");
+        setErrorMessage(formatApiError(error, "Could not send OTP for sign in."));
       }
     } finally {
       setLoading(false);

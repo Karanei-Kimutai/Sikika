@@ -170,9 +170,8 @@ function ManageProfilePage() {
                   checked={Boolean(formValues.notificationsEnabled)}
                   onChange={(event) => setFormValues((prev) => ({ ...prev, notificationsEnabled: event.target.checked }))}
                 />
-                Receive profile-related notifications
+                <span>Enable Notifications</span>
               </label>
-
               <div className="profile-assigned-staff">
                 <p><strong>Assigned Counsellor:</strong> {profileData?.assignedStaff?.counsellor?.phoneNumber || "Not assigned"}</p>
                 <p><strong>Assigned Legal Counsel:</strong> {profileData?.assignedStaff?.legalCounsel?.phoneNumber || "Not assigned"}</p>
