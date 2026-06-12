@@ -100,11 +100,11 @@ Tracked in `docs/pending-roadmap-items.md`. Implementation guidance in `CSProjec
 | USSD live endpoint | Partial | Model + AT SMS exist; no `POST /api/ussd/callback` controller yet |
 | Emergency intercept for unauthenticated reporters | Done | Intercept screen in `ReportingPage.jsx`; `/reports` removed from `protectedPaths` in `App.jsx` |
 | In-app notification center | Partial | Model + fan-out writes exist; no list/read/dismiss API or UI |
-| Survivor chat archive/delete controls | Not Done | Backend endpoint exists; UI only |
+| Survivor chat archive/delete controls | Partial | `PATCH /api/chat/:chatId/status` exists; frontend UI controls missing |
 | Staff presence indicators | Partial | `availabilityStatus` exists; no Socket.io presence events or frontend dot |
 | User banning workflow | Partial | No `BANNED` status or ban/unban endpoints |
 | Legal case document drafting UI | Partial | Model exists; no authoring form or export |
-| Average response-time dashboard render | Partial | Computed server-side; may not render in frontend |
+| Average response-time dashboard render | Done | Computed in `adminController.js`, rendered in `NgoAdminDashboardPage.jsx` |
 
 ---
 
