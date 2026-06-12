@@ -66,9 +66,11 @@ Status: Not Done
 
 What exists now:
 - Direct chat channel model supports status values including archived/deleted.
+- Backend route `PATCH /api/chat/:chatId/status` exists and enforces survivor-only access with valid transitions (active → archived, archived → active, active/archived → deleted).
+- `includeArchived` query param on `GET /api/chat/channels` lets survivors fetch archived channels.
 
 What is still missing:
-- API endpoints and frontend actions for survivor archive/delete operations.
+- Frontend UI controls for survivors to archive, restore, and delete their direct chat channels.
 
 5B) Moderation warning action
 Status: Done
@@ -94,10 +96,11 @@ What is still missing:
 Status: Partial
 
 7A) Average response time
-Status: Not Done
+Status: Done
 
-What is still missing:
-- Average staff response-time calculation and dashboard visualization.
+What exists now:
+- Backend computes `avgResponseMinutes` and `sampleSize` in `adminController.js`.
+- NGO admin dashboard renders `averageResponseMinutes` and sample count in `NgoAdminDashboardPage.jsx`.
 
 7B) Workload visualizations by counsellor/legal counsel
 Status: Done
