@@ -9,7 +9,9 @@ import {
   reassignSurvivorCase,
   createNgoStaffAccount,
   getNgoReassignmentRequests,
-  reviewNgoReassignmentRequest
+  reviewNgoReassignmentRequest,
+  getUssdCallbackRequests,
+  updateUssdCallbackRequest
 } from "../services/admin";
 import { getEvidenceAccessUrl, getReportById } from "../services/reports";
 
@@ -34,7 +36,8 @@ const ngoMenu = [
   { id: "community-chat", label: "Community Chat", description: "Room safety and support conversations" },
   { id: "team-capacity", label: "Team Capacity", description: "Counsellor and legal workload" },
   { id: "moderation-desk", label: "Moderation Desk", description: "Community safety decisions" },
-  { id: "resources", label: "Resources", description: "Resource center and case intelligence" }
+  { id: "resources", label: "Resources", description: "Resource center and case intelligence" },
+  { id: "ussd-callbacks", label: "USSD Callbacks", description: "Callback requests from USSD callers" }
 ];
 
 function formatNumber(value) {
@@ -147,6 +150,8 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
   const [reassignmentFilter, setReassignmentFilter] = useState("PENDING");
   const [reviewingRequestId, setReviewingRequestId] = useState("");
   const [selectedModerationRow, setSelectedModerationRow] = useState(null);
+  const [ussdCallbacks, setUssdCallbacks] = useState([]);
+  const [updatingCallbackId, setUpdatingCallbackId] = useState("");
 
   function resetReportFilters() {
     setReportFilters({
@@ -178,6 +183,21 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     }, 0);
     return () => window.clearTimeout(timerId);
   }, []);
+
+  useEffect(() => {
+    if (activeSection !== "ussd-callbacks") return;
+
+    async function loadUssdCallbacks() {
+      try {
+        const data = await getUssdCallbackRequests();
+        setUssdCallbacks(data.requests || []);
+      } catch {
+        // Non-fatal — table shows empty state if fetch fails.
+      }
+    }
+
+    loadUssdCallbacks();
+  }, [activeSection]);
 
   useEffect(() => {
     if (activeSection !== "team-capacity") return;
@@ -447,6 +467,30 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
       setErrorMessage(error.response?.data?.error || "Failed to review reassignment request.");
     } finally {
       setReviewingRequestId("");
+    }
+  }
+
+  /**
+   * Mark a USSD callback request as COMPLETED or CANCELLED.
+   * Refreshes the local list after a successful update.
+   *
+   * @param {string} requestId
+   * @param {'COMPLETED'|'CANCELLED'} status
+   */
+  async function handleUpdateCallback(requestId, status) {
+    setUpdatingCallbackId(requestId);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      await updateUssdCallbackRequest(requestId, status);
+      setSuccessMessage(`Callback request marked as ${status.toLowerCase()}.`);
+      const data = await getUssdCallbackRequests();
+      setUssdCallbacks(data.requests || []);
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Could not update callback request.");
+    } finally {
+      setUpdatingCallbackId("");
     }
   }
 
@@ -1523,6 +1567,79 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
                 </ul>
               </div>
             </div>
+          </article>
+        </section>
+      )}
+
+      {activeSection === "ussd-callbacks" && (
+        <section className="admin-module-grid" aria-label="USSD callback requests">
+          <article className="admin-panel full-span">
+            <h2>USSD Callback Requests</h2>
+            <p className="admin-note">
+              These are callback requests submitted by callers via the USSD interface (*384#).
+              Mark each request completed once your team has followed up, or cancelled if the
+              number is unreachable.
+            </p>
+            <div className="admin-table-wrap">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Requested</th>
+                    <th>Phone number</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ussdCallbacks.map((cb) => (
+                    <tr key={cb.callbackRequestId}>
+                      <td>{formatDate(cb.callbackRequestTimestamp)}</td>
+                      <td>{cb.requesterPhoneNumber}</td>
+                      <td>
+                        <span className={
+                          cb.callbackFulfillmentStatus === "COMPLETED"
+                            ? "pill priority-low"
+                            : cb.callbackFulfillmentStatus === "CANCELLED"
+                              ? "pill priority-medium"
+                              : "pill priority-high"
+                        }>
+                          {prettifyLabel(cb.callbackFulfillmentStatus)}
+                        </span>
+                      </td>
+                      <td>
+                        {cb.callbackFulfillmentStatus === "PENDING" ? (
+                          <div className="inline-action-row">
+                            <button
+                              type="button"
+                              className="admin-action-btn"
+                              onClick={() => handleUpdateCallback(cb.callbackRequestId, "COMPLETED")}
+                              disabled={updatingCallbackId === cb.callbackRequestId}
+                            >
+                              {updatingCallbackId === cb.callbackRequestId ? "Saving..." : "Mark Completed"}
+                            </button>
+                            <button
+                              type="button"
+                              className="admin-action-btn secondary"
+                              onClick={() => handleUpdateCallback(cb.callbackRequestId, "CANCELLED")}
+                              disabled={updatingCallbackId === cb.callbackRequestId}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <span>—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {ussdCallbacks.length === 0 && (
+              <p className="admin-empty" style={{ marginTop: "0.8rem" }}>
+                No USSD callback requests yet.
+              </p>
+            )}
           </article>
         </section>
       )}
