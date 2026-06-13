@@ -5,11 +5,13 @@ const {
   CommunityMessage,
   HarmfulContentReport,
   ModerationActionLog,
-  InAppNotification,
   UserAccount,
+  AuditLog,
   SurvivorProfile,
   sequelize
 } = require("../models");
+const { normalizeRole, BANNABLE_ROLES } = require("../utils/roles");
+const { createNotification } = require("../services/notificationService");
 
 /**
  * Community controller
@@ -22,14 +24,6 @@ const {
 
 function getUserIdFromRequest(req) {
   return req.user?.userId || req.user?.id || null;
-}
-
-function normalizeRole(value) {
-  const role = String(value || "").trim().toUpperCase();
-  if (role === "LEGALCOUNSEL") return "LEGAL_COUNSEL";
-  if (role === "NGOADMIN") return "NGO_ADMIN";
-  if (role === "SYSTEMADMIN") return "SYSTEM_ADMIN";
-  return role;
 }
 
 async function getActor(req) {
@@ -537,10 +531,16 @@ async function getModerationReports(req, res) {
  *
  * Within a single DB transaction it can:
  * - approve/reject report
- * - remove message
- * - suspend user
- * - issue warning notification
+ * - remove message (action: "remove_message")
+ * - ban user     (action: "ban_user") — sets BANNED + ban metadata, writes BAN + ACCOUNT_BANNED
+ *   audit entries, and resolves the report. body may supply `reason` (overrides report text)
+ *   and optional `expiresAt` (ISO date string; must be a future date).
+ * - issue warning notification (action: "issue_warning")
  * - persist moderation action logs
+ *
+ * Note: The legacy "suspend_user" and "block_user" actions have been removed.
+ * Community moderation enforcement now goes through "ban_user" so all account
+ * blocks carry reason/expiry metadata and a dual audit trail.
  */
 async function reviewReport(req, res) {
   const transaction = await sequelize.transaction();
@@ -592,19 +592,69 @@ async function reviewReport(req, res) {
       }, { transaction });
     }
 
-    if (action === "suspend_user" || action === "block_user") {
-      await UserAccount.update(
-        { accountStatus: "SUSPENDED" },
-        { where: { userId: message.senderUserId }, transaction }
-      );
+    if (action === "ban_user") {
+      // Resolve ban metadata from the request body, falling back to the report text.
+      const banReason = String(req.body.reason || report.reportReasonText || "").trim();
+      const rawExpiresAt = req.body.expiresAt || null;
 
+      // Validate expiresAt when supplied — must be a future date to be meaningful.
+      let banExpiresAt = null;
+      if (rawExpiresAt) {
+        const parsed = new Date(rawExpiresAt);
+        if (isNaN(parsed.getTime()) || parsed <= new Date()) {
+          await transaction.rollback();
+          return res.status(400).json({ error: "expiresAt must be a future date when provided." });
+        }
+        banExpiresAt = parsed;
+      }
+
+      // Fetch the full UserAccount row so we can check role and set ban metadata.
+      const targetAccount = await UserAccount.findByPk(message.senderUserId, { transaction });
+
+      // Enforce the same bannable-role policy as the admin ban endpoint — admin accounts
+      // cannot be banned through the community moderation path either.
+      if (targetAccount && !BANNABLE_ROLES.includes(targetAccount.userRole)) {
+        await transaction.rollback();
+        return res.status(400).json({ error: "Only survivor and frontline staff accounts can be banned." });
+      }
+
+      // Prevent self-ban through the moderation path.
+      if (targetAccount && targetAccount.userId === actor.userId) {
+        await transaction.rollback();
+        return res.status(400).json({ error: "You cannot ban your own account." });
+      }
+
+      if (targetAccount) {
+        // Apply BANNED lifecycle state with full metadata — parity with the
+        // admin ban endpoint so mid-session enforcement and auto-lift behave identically.
+        targetAccount.accountStatus = "BANNED";
+        targetAccount.banReason = banReason;
+        targetAccount.bannedAt = new Date();
+        targetAccount.banExpiresAt = banExpiresAt;
+        targetAccount.bannedByUserId = actor.userId;
+        await targetAccount.save({ transaction });
+      }
+
+      // Dual audit trail: moderation log (visible in NGO desk history) + audit log
+      // (visible in System Admin logs feed) — same convention as the admin ban endpoint.
       await ModerationActionLog.create({
         moderationActionId: randomUUID(),
         moderatorUserId: actor.userId,
         targetUserId: message.senderUserId,
-        moderationActionType: "SUSPENSION",
-        moderationActionReason: report.reportReasonText
+        moderationActionType: "BAN",
+        moderationActionReason: banReason
       }, { transaction });
+
+      await AuditLog.create({
+        auditId: randomUUID(),
+        actorUserId: actor.userId,
+        actionType: "ACCOUNT_BANNED",
+        targetEntity: `${targetAccount?.userRole || "USER"}:${message.senderUserId}`
+      }, { transaction });
+
+      // Force-revoke live sockets immediately after committing the ban.
+      // Stored on a local variable so we can call it after transaction.commit().
+      req._banTargetUserId = message.senderUserId;
     }
 
     if (action === "issue_warning") {
@@ -618,17 +668,25 @@ async function reviewReport(req, res) {
 
       // Warnings are stored as discreet in-app notifications so the target user
       // can be informed without exposing sensitive moderation context in plain UI text.
-      await InAppNotification.create({
-        notificationId: randomUUID(),
-        recipientUserId: message.senderUserId,
-        notificationCategoryType: "MODERATION_ALERT",
-        discreetNotificationMessage: "A recent community post from your account was reviewed. Please follow community guidelines.",
-        notificationReadStatus: "UNREAD"
-      }, { transaction });
+      // createNotification is called after commit to avoid transaction entanglement.
+      req._warnTargetUserId = message.senderUserId;
     }
   }
 
   await transaction.commit();
+
+  // Post-commit side-effects (socket push + cascade) run outside the transaction.
+  if (req._banTargetUserId) {
+    req.app.locals.io?.in(`user:${req._banTargetUserId}`).disconnectSockets(true);
+  }
+
+  if (req._warnTargetUserId) {
+    createNotification({
+      recipientUserId: req._warnTargetUserId,
+      message: "A recent community post from your account was reviewed. Please follow community guidelines.",
+      category: "MODERATION_ALERT"
+    }).catch((err) => console.error("[communityController] warning notification error:", err));
+  }
 
   if (message) {
     req.app.locals.io?.to(`community-room:${message.roomId}`).emit("community:message-updated", {
