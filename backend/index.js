@@ -5,7 +5,8 @@ const http = require("http");
 const { Server } = require("socket.io");
 require("dotenv").config();
 const authMiddleware = require("./src/middleware/authMiddleware");
-const { maintenanceGuard, getMaintenanceModeState } = require("./src/controllers/adminController");
+const { maintenanceGuard, getMaintenanceModeState, loadMaintenanceStateFromDb } = require("./src/controllers/adminController");
+const { setNotificationIo } = require("./src/services/notificationService");
 
 /**
  * Backend bootstrap file.
@@ -58,6 +59,8 @@ const io = new Server(server, {
 require("./src/sockets/chatSocket")(io);
 require("./src/sockets/communitySocket")(io);
 app.locals.io = io;
+// Wire io into the notification service so real-time push works in controllers.
+setNotificationIo(io);
 // CORS is configured before routes so every endpoint receives the same policy.
 app.use(cors({
   origin: frontendOrigin,
@@ -80,6 +83,8 @@ const adminRoutes = require("./src/routes/adminRoutes");
 const profileRoutes = require("./src/routes/profileRoutes");
 const reassignmentRequestRoutes = require("./src/routes/reassignmentRequestRoutes");
 const ussdRoutes = require("./src/routes/ussdRoutes");
+const notificationRoutes = require("./src/routes/notificationRoutes");
+const legalCaseRoutes = require("./src/routes/legalCaseRoutes");
 
 // Lightweight API smoke-test endpoint.
 app.get("/api/hello", (req, res) => {
@@ -117,6 +122,8 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/reassignment-requests", reassignmentRequestRoutes);
 app.use("/api/ussd", ussdRoutes);
+app.use("/api/notifications", notificationRoutes);
+app.use("/api/legal-cases", legalCaseRoutes);
 
 /**
  * Session inspection endpoint.
@@ -224,6 +231,9 @@ async function startServer() {
     const enableAlterSync = process.env.DB_SYNC_ALTER === "true";
     await db.sequelize.sync(enableAlterSync ? { alter: true } : undefined);
     console.log("Database tables synced successfully!");
+
+    // Restore durable settings (maintenance mode) from DB after tables exist.
+    await loadMaintenanceStateFromDb();
 
     const PORT = Number(process.env.PORT || 5000);
     //We use server.listen, not app.listen, because Socket.io is attached to the server instance.

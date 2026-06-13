@@ -126,6 +126,67 @@ async function deleteSupportResourceAsset({ publicId, resourceType }) {
 }
 
 /**
+ * Uploads a generated legal case PDF as a private Cloudinary asset.
+ *
+ * Legal documents are stored with the same access model as incident evidence —
+ * `type: authenticated` ensures direct public access is blocked. A short-lived
+ * signed URL must be generated via `generateLegalDocumentSignedUrl` to open them.
+ *
+ * Folder structure: legal-cases/<legalCaseId>/<uuid>
+ *
+ * @param {{ buffer: Buffer, legalCaseId: string }} options
+ * @returns {Promise<object>} Cloudinary upload result (includes public_id, secure_url)
+ */
+function uploadLegalDocumentBuffer({ buffer, legalCaseId }) {
+  assertCloudinaryConfigured();
+
+  const publicId = `legal-cases/${legalCaseId}/${randomUUID()}`;
+
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        public_id: publicId,
+        overwrite: false,
+        resource_type: "raw",   // PDFs are raw binary assets
+        type: "authenticated"   // private — no direct public access
+      },
+      (error, result) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(result);
+      }
+    );
+
+    stream.end(buffer);
+  });
+}
+
+/**
+ * Generates a short-lived, signed URL for accessing a private legal case document.
+ *
+ * Mirrors the evidence signed-URL pattern. Defaults to a 5-minute window so
+ * counsel can open the PDF in a browser tab without the link expiring immediately.
+ *
+ * @param {{ publicId: string, expiresInSeconds?: number }} options
+ * @returns {string} A short-lived signed Cloudinary URL for the raw PDF asset.
+ */
+function generateLegalDocumentSignedUrl({ publicId, expiresInSeconds = 300 }) {
+  assertCloudinaryConfigured();
+
+  const expiresAt = Math.floor(Date.now() / 1000) + expiresInSeconds;
+
+  return cloudinary.url(publicId, {
+    resource_type: "raw",
+    type: "authenticated",
+    sign_url: true,
+    secure: true,
+    expires_at: expiresAt
+  });
+}
+
+/**
  * Maps stored evidence type to the correct Cloudinary delivery resource type.
  */
 function getResourceTypeForEvidence(evidenceType) {
@@ -155,6 +216,8 @@ module.exports = {
   isCloudinaryConfigured,
   uploadEvidenceBuffer,
   generateEvidenceSignedUrl,
+  uploadLegalDocumentBuffer,
+  generateLegalDocumentSignedUrl,
   uploadSupportResourceBuffer,
   deleteSupportResourceAsset
 };
