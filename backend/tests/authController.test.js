@@ -213,13 +213,16 @@ describe('Auth Controller', () => {
     // Wrong OTP should not authenticate and must increment per-account OTP failure state.
     test('rejects invalid OTP during sign-in and records failure', async () => {
         const user = buildUser({
-            otpHash: '1234',
+            otpHash: 'bcrypt-hash-of-1234', // stored as bcrypt hash
             otpPurpose: 'SIGNIN_OTP',
             otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
             otpAttemptCount: 0
         });
 
         UserAccount.findOne.mockResolvedValue(user);
+        // OTP comparison now uses bcrypt.compare — override the beforeEach default (true)
+        // to simulate a wrong OTP being submitted.
+        bcrypt.compare.mockResolvedValueOnce(false);
 
         const response = await request(app)
             .post('/api/auth/verify-otp')
