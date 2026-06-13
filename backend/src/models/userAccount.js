@@ -125,9 +125,9 @@ const UserAccount = sequelize.define('userAccount', {
   },
 
   otpHash: {
-    type: DataTypes.STRING(10),
+    type: DataTypes.STRING(255), // Must hold a 60-char bcrypt hash — STRING(10) truncated and broke all OTP paths
     allowNull: true,
-    comment: 'Temporary OTP code for phone login'
+    comment: 'Bcrypt hash of the active OTP (signup/signin/reset); never the plaintext code'
   },
 
   /**

@@ -76,7 +76,7 @@ function ModerationDashboardPage() {
     setSuccessMessage("");
 
     try {
-      // `action` controls downstream moderation behavior (remove/suspend/none).
+      // `action` controls downstream moderation behavior (remove_message/ban_user/none).
       await axios.patch(
         `${API_BASE_URL}/api/community/moderation/reports/${reportId}`,
         { reviewStatus, action },
