@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import AdminWorkspace from "../components/AdminWorkspace";
+import AdminWorkspace from "@/components/AdminWorkspace";
 import {
   getNgoAdminDashboard,
   reviewModerationReport,
@@ -16,21 +16,26 @@ import {
   banUser,
   unbanUser,
   listBannedUsers
-} from "../services/admin";
-import { getEvidenceAccessUrl, getReportById } from "../services/reports";
+} from "@/services/admin";
+import { getEvidenceAccessUrl, getReportById } from "@/services/reports";
+import { prettifyLabel, formatDate, formatNumber, priorityClass } from "./ngo-admin/helpers";
+import CommandCenterSection from "./ngo-admin/CommandCenterSection";
+import TeamCapacitySection from "./ngo-admin/TeamCapacitySection";
+import ModerationDeskSection from "./ngo-admin/ModerationDeskSection";
+import UssdCallbacksSection from "./ngo-admin/UssdCallbacksSection";
+import BannedUsersSection from "./ngo-admin/BannedUsersSection";
+import BanUserModal from "./ngo-admin/BanUserModal";
 
 /**
  * NGO Admin Dashboard
  * -------------------
  * Consolidates all NGO-operations views into one route-driven workspace.
+ * Each major section is extracted to its own component under ./ngo-admin/.
  *
- * This page intentionally groups functionality by operational concern:
- * - Command Center: KPIs + trend analytics
- * - Case Triage: urgent queue + search
- * - Reports: status/category/severity filtering
- * - Team Capacity: staffing workload + reassignment
- * - Moderation Desk: harmful-content actions
- * - Resources: create/edit + access analytics
+ * Sections rendered inline (not extracted):
+ * - case-triage, reports, community-chat, resources
+ *
+ * State and async handlers all live here and are passed down as props.
  */
 
 const ngoMenu = [
@@ -44,71 +49,6 @@ const ngoMenu = [
   { id: "ussd-callbacks", label: "USSD Callbacks", description: "Callback requests from USSD callers" },
   { id: "banned-users", label: "Banned Users", description: "Review and lift bans on survivor and staff accounts" }
 ];
-
-function formatNumber(value) {
-  return Number(value || 0).toLocaleString();
-}
-
-function formatDate(value) {
-  if (!value) return "-";
-  return new Date(value).toLocaleString();
-}
-
-function priorityClass(value) {
-  const severity = String(value || "").toUpperCase();
-  if (severity === "CRITICAL" || severity === "HIGH") return "pill priority-high";
-  if (severity === "MEDIUM") return "pill priority-medium";
-  return "pill priority-low";
-}
-
-function prettifyLabel(value) {
-  return String(value || "-")
-    .toLowerCase()
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function availabilityClass(value) {
-  const normalized = String(value || "").toUpperCase();
-  if (normalized === "AVAILABLE") return "availability-pill available";
-  if (normalized === "BUSY") return "availability-pill busy";
-  return "availability-pill offline";
-}
-
-function buildLineChartPoints(series) {
-  if (!series.length) return [];
-
-  const width = 620;
-  const height = 220;
-  const padTop = 16;
-  const padRight = 16;
-  const padBottom = 34;
-  const padLeft = 44;
-  const max = Math.max(...series.map((item) => Number(item.count || 0)), 1);
-
-  return series
-    .map((item, index) => {
-      const x = padLeft + (index * (width - padLeft - padRight)) / Math.max(series.length - 1, 1);
-      const y = height - padBottom - ((Number(item.count || 0) / max) * (height - padTop - padBottom));
-      return {
-        x,
-        y,
-        count: Number(item.count || 0),
-        date: item.date
-      };
-    });
-}
-
-function buildMovingAverage(series, windowSize = 7) {
-  if (!series.length) return [];
-  return series.map((point, index) => {
-    const start = Math.max(0, index - windowSize + 1);
-    const slice = series.slice(start, index + 1);
-    const avg = slice.reduce((sum, item) => sum + Number(item.count || 0), 0) / slice.length;
-    return { ...point, avg };
-  });
-}
 
 function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "command-center" }) {
   const [dashboard, setDashboard] = useState(null);
@@ -678,50 +618,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     }
   }
 
-  const chartPoints = useMemo(
-    // Chart is built from backend-provided 30-day dense series.
-    () => buildLineChartPoints(dashboard?.reportsOverTime || []),
-    [dashboard]
-  );
-  const movingAveragePoints = useMemo(() => buildMovingAverage(chartPoints), [chartPoints]);
-  const polylinePoints = useMemo(
-    () => chartPoints.map((point) => `${point.x},${point.y}`).join(" "),
-    [chartPoints]
-  );
-  const avgPolylinePoints = useMemo(() => {
-    const max = Math.max(...movingAveragePoints.map((point) => Number(point.avg || 0)), 1);
-    const chartMaxBase = Math.max(...chartPoints.map((point) => Number(point.count || 0)), 1);
-    const effectiveMax = Math.max(max, chartMaxBase, 1);
-    const height = 220;
-    const padTop = 16;
-    const padBottom = 34;
-    return movingAveragePoints
-      .map((point) => {
-        const y = height - padBottom - ((Number(point.avg || 0) / effectiveMax) * (height - padTop - padBottom));
-        return `${point.x},${y}`;
-      })
-      .join(" ");
-  }, [movingAveragePoints, chartPoints]);
-  const hasTrendData = chartPoints.some((point) => point.count > 0);
-  const trendTotal = chartPoints.reduce((sum, point) => sum + Number(point.count || 0), 0);
-  const peakPoint = chartPoints.reduce((currentMax, point) => {
-    if (!currentMax || point.count > currentMax.count) return point;
-    return currentMax;
-  }, null);
-  const chartMax = useMemo(() => {
-    const rawMax = Math.max(...chartPoints.map((point) => Number(point.count || 0)), 1);
-    const step = rawMax <= 5 ? 1 : 2;
-    return Math.ceil(rawMax / step) * step;
-  }, [chartPoints]);
-  const yTicks = useMemo(() => {
-    const intervals = 4;
-    return Array.from({ length: intervals + 1 }, (_, index) => Math.round((chartMax * index) / intervals));
-  }, [chartMax]);
-  const xTicks = useMemo(() => {
-    if (!chartPoints.length) return [];
-    return chartPoints.filter((_, index) => index % 7 === 0 || index === chartPoints.length - 1);
-  }, [chartPoints]);
-
+  // ── Derived values (used by inline sections: reports, case-triage) ────────
   const filteredReports = useMemo(() => {
     const all = dashboard?.recentReports || [];
     return all.filter((report) => {
@@ -740,7 +637,6 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     if (!selectedCaseReportId) return null;
     return (dashboard?.recentReports || []).find((report) => String(report.reportId) === selectedCaseReportId) || null;
   }, [dashboard, selectedCaseReportId]);
-
   const reportStatusTabs = useMemo(() => {
     const counts = new Map();
     (dashboard?.recentReports || []).forEach((report) => {
@@ -751,10 +647,11 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
       ...Array.from(counts.entries()).map(([status, count]) => ({ value: status, label: prettifyLabel(status), count }))
     ];
   }, [dashboard]);
-
   const reportCategoryOptions = useMemo(() => {
     return ["ALL", ...new Set((dashboard?.recentReports || []).map((report) => report.incidentCategory))];
   }, [dashboard]);
+
+  // ── Derived values passed to TeamCapacitySection ──────────────────────────
   const staffLabelById = useMemo(() => {
     const map = new Map();
     [...(dashboard?.staffWorkload?.counsellors || []), ...(dashboard?.staffWorkload?.legalCounsel || [])].forEach((staff) => {
@@ -786,14 +683,6 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     };
   }, [dashboard]);
 
-  function yForValue(value) {
-    const height = 220;
-    const padTop = 16;
-    const padBottom = 34;
-    const normalized = chartMax > 0 ? Number(value || 0) / chartMax : 0;
-    return height - padBottom - normalized * (height - padTop - padBottom);
-  }
-
   if (loading) {
     return (
       <main className="admin-workspace ngo">
@@ -814,7 +703,6 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     );
   }
 
-  const overview = dashboard.overview || {};
   const profileRows = [
     { label: "User", value: dashboard.profile?.userId || "NGO Admin" },
     { label: "Department", value: dashboard.profile?.department || "Operations" },
@@ -839,148 +727,71 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
       {errorMessage && <p className="status-message warning" role="alert">{errorMessage}</p>}
       {successMessage && <p className="status-message" role="status">{successMessage}</p>}
 
+      {/* ── Extracted sections ────────────────────────────────────────── */}
       {activeSection === "command-center" && (
-        <section className="admin-module-grid" aria-label="Command center metrics">
-          <article className="admin-stat-card">
-            <h3>Total Reports</h3>
-            <p className="admin-metric">{formatNumber(overview.totalReports)}</p>
-            <span className={`trend ${Number(overview.reportTrendPercent || 0) >= 0 ? "up" : "down"}`}>
-              {Number(overview.reportTrendPercent || 0) >= 0 ? "▲" : "▼"} {Math.abs(Number(overview.reportTrendPercent || 0))}% vs last month
-            </span>
-          </article>
-          <article className="admin-stat-card">
-            <h3>Active Survivors</h3>
-            <p className="admin-metric">{formatNumber(overview.activeSurvivors)}</p>
-            <span>Currently assigned and receiving support</span>
-          </article>
-          <article className="admin-stat-card">
-            <h3>Average Response Time</h3>
-            <p className="admin-metric">{formatNumber(overview.averageResponseMinutes)} mins</p>
-            <span>
-              Computed from first survivor-to-staff replies in direct chat
-              {Number(overview.averageResponseSampleCount || 0) > 0
-                ? ` (${formatNumber(overview.averageResponseSampleCount)} samples)`
-                : ''}
-            </span>
-          </article>
-          <article className="admin-stat-card">
-            <h3>Active Legal Cases</h3>
-            <p className="admin-metric">{formatNumber(overview.activeLegalCases)}</p>
-            <span>Open and in-progress legal escalations</span>
-          </article>
-
-          <article className="admin-panel full-span">
-            <h2>30 Day Case Trend</h2>
-            <div className="chart-summary-row">
-              <div className="chart-summary-card">
-                <span>Reports in 30 days</span>
-                <strong>{formatNumber(trendTotal)}</strong>
-              </div>
-              <div className="chart-summary-card">
-                <span>Peak day</span>
-                <strong>{peakPoint ? `${peakPoint.date} (${peakPoint.count})` : "-"}</strong>
-              </div>
-            </div>
-            <svg viewBox="0 0 620 220" role="img" aria-label="Line chart showing reports over time">
-              <rect x="0" y="0" width="620" height="220" rx="14" className="chart-backdrop" />
-              {yTicks.map((tick) => (
-                <g key={`y-${tick}`}>
-                  <line x1="44" y1={yForValue(tick)} x2="604" y2={yForValue(tick)} className="chart-grid-line" />
-                  <text x="36" y={yForValue(tick) + 4} className="chart-axis-label" textAnchor="end">
-                    {tick}
-                  </text>
-                </g>
-              ))}
-              {polylinePoints ? <polyline points={polylinePoints} className="line-series" /> : null}
-              {avgPolylinePoints ? <polyline points={avgPolylinePoints} className="line-series-average" /> : null}
-              {chartPoints.map((point) => (
-                <circle key={point.date} cx={point.x} cy={point.y} r="3.4" className="line-point">
-                  <title>{`${point.date}: ${point.count} reports`}</title>
-                </circle>
-              ))}
-              {xTicks.map((point) => (
-                <text key={`x-${point.date}`} x={point.x} y="205" className="chart-axis-label" textAnchor="middle">
-                  {point.date.slice(5)}
-                </text>
-              ))}
-            </svg>
-            <div className="chart-legend">
-              <span><i className="legend-dot daily" /> Daily reports</span>
-              <span><i className="legend-dot avg" /> 7-day average</span>
-            </div>
-            {!hasTrendData && <p className="admin-empty">No report activity in the last 30 days yet.</p>}
-          </article>
-
-          <article className="admin-panel full-span">
-            <h2>Community Watch Metrics</h2>
-            <div className="admin-panels two-col">
-              <div className="admin-stat-card">
-                <h3>Active Rooms</h3>
-                <p className="admin-metric">{formatNumber(dashboard.communityMetrics?.activeRooms)}</p>
-              </div>
-              <div className="admin-stat-card">
-                <h3>Total Community Messages</h3>
-                <p className="admin-metric">{formatNumber(dashboard.communityMetrics?.totalMessages)}</p>
-              </div>
-              <div className="admin-stat-card">
-                <h3>Harmful Content Reports</h3>
-                <p className="admin-metric">{formatNumber(dashboard.communityMetrics?.harmfulContentReports)}</p>
-              </div>
-            </div>
-          </article>
-
-          <article className="admin-panel full-span">
-            <h2>Report Breakdown</h2>
-            <div className="breakdown-grid">
-              {[{
-                key: "category",
-                title: "By Category",
-                rows: dashboard.reportsBreakdown?.byCategory || [],
-                labelKey: "category"
-              }, {
-                key: "status",
-                title: "By Status",
-                rows: dashboard.reportsBreakdown?.byStatus || [],
-                labelKey: "status"
-              }, {
-                key: "county",
-                title: "By County",
-                rows: dashboard.reportsBreakdown?.byCounty || [],
-                labelKey: "county"
-              }].map((group) => {
-                const max = Math.max(...group.rows.map((row) => Number(row.count || 0)), 1);
-
-                return (
-                  <article key={group.key} className="breakdown-card">
-                    <h3>{group.title}</h3>
-                    <ul className="breakdown-list">
-                      {group.rows.map((row) => {
-                        const rawLabel = row[group.labelKey];
-                        const label = group.key === "county" ? String(rawLabel || "Unknown") : prettifyLabel(rawLabel);
-                        const count = Number(row.count || 0);
-                        const width = `${Math.max(8, Math.round((count / max) * 100))}%`;
-
-                        return (
-                          <li key={`${group.key}-${rawLabel}`} className="breakdown-row">
-                            <div className="breakdown-row-top">
-                              <span>{label}</span>
-                              <strong>{formatNumber(count)}</strong>
-                            </div>
-                            <div className="breakdown-track">
-                              <div className="breakdown-fill" style={{ width }} />
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </article>
-                );
-              })}
-            </div>
-          </article>
-        </section>
+        <CommandCenterSection
+          overview={dashboard.overview || {}}
+          reportsOverTime={dashboard.reportsOverTime || []}
+          communityMetrics={dashboard.communityMetrics}
+          reportsBreakdown={dashboard.reportsBreakdown}
+        />
       )}
 
+      {activeSection === "team-capacity" && (
+        <TeamCapacitySection
+          dashboard={dashboard}
+          teamStats={teamStats}
+          staffLabelById={staffLabelById}
+          assignmentForm={assignmentForm}
+          setAssignmentForm={setAssignmentForm}
+          selectedSurvivor={selectedSurvivor}
+          staffForm={staffForm}
+          setStaffForm={setStaffForm}
+          togglingStaffId={togglingStaffId}
+          reassignmentRequests={reassignmentRequests}
+          reassignmentFilter={reassignmentFilter}
+          setReassignmentFilter={setReassignmentFilter}
+          reviewingRequestId={reviewingRequestId}
+          onToggleActive={handleToggleStaffActive}
+          onReassign={handleReassign}
+          onStaffCreate={handleStaffCreate}
+          onOpenBanModal={handleOpenBanModal}
+          onUnban={handleUnban}
+          onReviewRequest={handleReviewReassignmentRequest}
+        />
+      )}
+
+      {activeSection === "moderation-desk" && (
+        <ModerationDeskSection
+          moderationQueue={dashboard.moderationQueue}
+          selectedModerationRow={selectedModerationRow}
+          setSelectedModerationRow={setSelectedModerationRow}
+          onModerationAction={handleModerationAction}
+          onOpenBanModal={handleOpenBanModal}
+          onUnban={handleUnban}
+        />
+      )}
+
+      {activeSection === "ussd-callbacks" && (
+        <UssdCallbacksSection
+          ussdCallbacks={ussdCallbacks}
+          updatingCallbackId={updatingCallbackId}
+          onUpdateCallback={handleUpdateCallback}
+        />
+      )}
+
+      {activeSection === "banned-users" && (
+        <BannedUsersSection
+          bannedUsers={bannedUsers}
+          bannedUsersLoading={bannedUsersLoading}
+          bannedUsersFilter={bannedUsersFilter}
+          setBannedUsersFilter={setBannedUsersFilter}
+          liftingBanId={liftingBanId}
+          onLiftBan={handleUnbanFromRegistry}
+        />
+      )}
+
+      {/* ── Inline sections (case-triage, reports, community-chat, resources) */}
       {activeSection === "case-triage" && (
         <section className="admin-module-grid" aria-label="Case triage">
           <article className="admin-panel full-span">
@@ -1296,432 +1107,6 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
         </div>
       )}
 
-      {activeSection === "team-capacity" && (
-        <section className="admin-module-grid" aria-label="Team capacity">
-          <article className="admin-panel full-span">
-            <h2>Team Capacity Snapshot</h2>
-            <p className="admin-note">Monitor staffing pressure before onboarding or reassignment actions.</p>
-            <div className="pulse-grid">
-              <div className="pulse-card">
-                <span>Total support staff</span>
-                <strong>{formatNumber(teamStats.totalStaff)}</strong>
-              </div>
-              <div className="pulse-card">
-                <span>Available now</span>
-                <strong>{formatNumber(teamStats.availableStaff)}</strong>
-              </div>
-              <div className="pulse-card">
-                <span>High workload (6+ cases)</span>
-                <strong>{formatNumber(teamStats.highLoadStaff)}</strong>
-              </div>
-              <div className="pulse-card">
-                <span>Partially unassigned survivors</span>
-                <strong>{formatNumber(teamStats.partiallyUnassignedSurvivors)}</strong>
-              </div>
-            </div>
-          </article>
-
-          <article className="admin-panel full-span">
-            <h2>Workload Distribution</h2>
-            <div className="stacked-bars">
-              {[...(dashboard.staffWorkload?.counsellors || []), ...(dashboard.staffWorkload?.legalCounsel || [])]
-                .slice(0, 12)
-                .map((staff) => (
-                  <div key={staff.id} className="workload-row">
-                    <span>{staff.label}</span>
-                    <div className="bar-track">
-                      <div className="bar-fill" style={{ width: `${Math.min(100, Number(staff.activeCases || 0) * 12)}%` }} />
-                    </div>
-                    <strong>{staff.activeCases}</strong>
-                  </div>
-                ))}
-            </div>
-            {(!dashboard.staffWorkload?.counsellors?.length && !dashboard.staffWorkload?.legalCounsel?.length)
-              ? <p className="admin-empty">No staff workload data available yet.</p>
-              : <p className="admin-empty">Bars represent active assigned survivors per staff member.</p>}
-          </article>
-
-          <article className="admin-panel full-span">
-            <h2>Staff Directory</h2>
-            <div className="admin-table-wrap">
-              <table className="admin-table">
-                <thead>
-                  <tr>
-                    <th>Staff ID</th>
-                    <th>Role</th>
-                    <th>Specialization</th>
-                    <th>Active Cases</th>
-                    <th>Availability</th>
-                    <th>Account Status</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(dashboard.staffDirectory || []).map((staff) => {
-                    const status = staff.accountStatus || "ACTIVE";
-                    const isBanned = status === "BANNED";
-                    const isSuspended = status === "SUSPENDED";
-                    const isActive = status === "ACTIVE";
-                    const isToggling = togglingStaffId === staff.userId;
-
-                    // Display SUSPENDED as "Inactive" so the staffing context reads
-                    // naturally — this is an operational pause, not a punitive ban.
-                    const statusLabel = isSuspended ? "Inactive" : status.charAt(0) + status.slice(1).toLowerCase();
-
-                    return (
-                      <tr key={`${staff.type}-${staff.id}`}>
-                        <td>{staff.label}</td>
-                        <td>{staff.type === "COUNSELLOR" ? "Counsellor" : "Legal Counsel"}</td>
-                        <td>{staff.specialization}</td>
-                        <td>{formatNumber(staff.activeCases)}</td>
-                        <td>
-                          <span className={availabilityClass(staff.availability)}>
-                            {prettifyLabel(staff.availability)}
-                          </span>
-                        </td>
-                        <td>
-                          {/* Badge uses CSS class for colour; label maps SUSPENDED → "Inactive" */}
-                          <span className={`account-status-badge account-status-badge--${status.toLowerCase()}`}>
-                            {statusLabel}
-                          </span>
-                          {/* Ban reason + expiry shown for transparency */}
-                          {isBanned && (
-                            <div className="ban-info">
-                              {staff.banReason && <p><strong>Reason:</strong> {staff.banReason}</p>}
-                              {staff.banExpiresAt
-                                ? <p><strong>Expires:</strong> {formatDate(staff.banExpiresAt)}</p>
-                                : <p>Permanent ban</p>}
-                            </div>
-                          )}
-                        </td>
-                        <td className="action-cell">
-                          {isBanned ? (
-                            // Banned accounts: only Lift Ban — cannot use Active/Inactive flip
-                            // while banned (backend guards this too).
-                            <button
-                              type="button"
-                              className="admin-action-btn"
-                              onClick={() => handleUnban(staff.userId, staff.label)}
-                            >
-                              Lift Ban
-                            </button>
-                          ) : staff.userId && status !== "DEACTIVATED" && (
-                            <>
-                              {/* Active/Inactive operational toggle */}
-                              {isActive && (
-                                <button
-                                  type="button"
-                                  className="admin-action-btn"
-                                  disabled={isToggling}
-                                  onClick={() => handleToggleStaffActive(staff.userId, "SUSPENDED", staff.label)}
-                                >
-                                  {isToggling ? "Updating…" : "Set Inactive"}
-                                </button>
-                              )}
-                              {isSuspended && (
-                                <button
-                                  type="button"
-                                  className="admin-action-btn"
-                                  disabled={isToggling}
-                                  onClick={() => handleToggleStaffActive(staff.userId, "ACTIVE", staff.label)}
-                                >
-                                  {isToggling ? "Updating…" : "Set Active"}
-                                </button>
-                              )}
-                              {/* Ban Account — available for both Active and Inactive staff */}
-                              <button
-                                type="button"
-                                className="admin-action-btn danger"
-                                onClick={() => handleOpenBanModal(staff.userId, staff.label)}
-                              >
-                                Ban Account
-                              </button>
-                            </>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            {(dashboard.staffDirectory || []).length === 0 && (
-              <p className="admin-empty" style={{ marginTop: "0.8rem" }}>No staff profiles available yet.</p>
-            )}
-          </article>
-
-          <article className="admin-panel full-span">
-            <h2>Create Staff Account</h2>
-            <p className="admin-empty">
-              This panel reflects the branch governance change: NGO admins now own
-              counsellor/legal-counsel onboarding, while system admins focus on infrastructure.
-            </p>
-            <p className="admin-empty">NGO admins can onboard counsellors and legal counsel. New staff must change the temporary password on first login.</p>
-            <form className="reassignment-form" onSubmit={handleStaffCreate}>
-              <label>
-                Phone Number
-                <input
-                  type="text"
-                  value={staffForm.phoneNumber}
-                  onChange={(event) => setStaffForm((prev) => ({ ...prev, phoneNumber: event.target.value }))}
-                  placeholder="+2547XXXXXXXX"
-                />
-              </label>
-              <label>
-                Temporary Password
-                <input
-                  type="password"
-                  value={staffForm.password}
-                  onChange={(event) => setStaffForm((prev) => ({ ...prev, password: event.target.value }))}
-                  placeholder="At least 6 characters"
-                />
-              </label>
-              <label>
-                Staff Role
-                <select
-                  value={staffForm.role}
-                  onChange={(event) => setStaffForm((prev) => ({ ...prev, role: event.target.value }))}
-                >
-                  <option value="COUNSELLOR">Counsellor</option>
-                  <option value="LEGAL_COUNSEL">Legal Counsel</option>
-                </select>
-              </label>
-              <label>
-                Specialization
-                <input
-                  type="text"
-                  value={staffForm.specialization}
-                  onChange={(event) => setStaffForm((prev) => ({ ...prev, specialization: event.target.value }))}
-                  placeholder={staffForm.role === "COUNSELLOR" ? "Trauma support" : "Family law"}
-                />
-              </label>
-              <label>
-                Availability
-                <select
-                  value={staffForm.availabilityStatus}
-                  onChange={(event) => setStaffForm((prev) => ({ ...prev, availabilityStatus: event.target.value }))}
-                >
-                  <option value="AVAILABLE">Available</option>
-                  <option value="BUSY">Busy</option>
-                  <option value="OFFLINE">Offline</option>
-                </select>
-              </label>
-
-              <button type="submit" className="admin-action-btn">Create Staff</button>
-            </form>
-          </article>
-
-          <article className="admin-panel full-span">
-            <h2>Manual Survivor Reassignment</h2>
-            <p className="admin-empty">Use this form when a survivor requests a change or staff workload becomes high.</p>
-            <div className="selection-summary-card">
-              <h3>Current Selection</h3>
-              <p><strong>Survivor:</strong> {selectedSurvivor ? `${selectedSurvivor.nickname} (${selectedSurvivor.county || "Unknown"})` : "Not selected"}</p>
-              <p><strong>Counsellor:</strong> {assignmentForm.counsellorId ? (staffLabelById.get(assignmentForm.counsellorId) || assignmentForm.counsellorId) : "No change"}</p>
-              <p><strong>Legal Counsel:</strong> {assignmentForm.legalCounselId ? (staffLabelById.get(assignmentForm.legalCounselId) || assignmentForm.legalCounselId) : "No change"}</p>
-            </div>
-            <form className="reassignment-form" onSubmit={handleReassign}>
-              <label>
-                Survivor
-                <select
-                  className={assignmentForm.survivorId ? "selected-value" : ""}
-                  value={assignmentForm.survivorId}
-                  onChange={(event) => setAssignmentForm((prev) => ({ ...prev, survivorId: event.target.value }))}
-                >
-                  <option value="">Select survivor</option>
-                  {(dashboard.survivorAssignments || []).map((survivor) => (
-                    <option key={survivor.survivorId} value={survivor.survivorId}>
-                      {survivor.nickname} ({survivor.county || "Unknown county"})
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                New Counsellor
-                <select
-                  className={assignmentForm.counsellorId ? "selected-value" : ""}
-                  value={assignmentForm.counsellorId}
-                  onChange={(event) => setAssignmentForm((prev) => ({ ...prev, counsellorId: event.target.value }))}
-                >
-                  <option value="">No change</option>
-                  {(dashboard.staffWorkload?.counsellors || []).map((staff) => (
-                    <option key={staff.id} value={staff.id}>{staff.label}</option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                New Legal Counsel
-                <select
-                  className={assignmentForm.legalCounselId ? "selected-value" : ""}
-                  value={assignmentForm.legalCounselId}
-                  onChange={(event) => setAssignmentForm((prev) => ({ ...prev, legalCounselId: event.target.value }))}
-                >
-                  <option value="">No change</option>
-                  {(dashboard.staffWorkload?.legalCounsel || []).map((staff) => (
-                    <option key={staff.id} value={staff.id}>{staff.label}</option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="full-span">
-                Reassignment Reason
-                <input
-                  type="text"
-                  placeholder="Example: survivor requested counsellor change due to schedule mismatch"
-                  value={assignmentForm.reason}
-                  onChange={(event) => setAssignmentForm((prev) => ({ ...prev, reason: event.target.value }))}
-                />
-              </label>
-
-              <button type="submit" className="admin-action-btn">Apply Reassignment</button>
-            </form>
-          </article>
-
-          <article className="admin-panel full-span">
-            <h2>Survivor Reassignment Requests</h2>
-            <div className="report-filter-row" style={{ marginBottom: "0.9rem" }}>
-              <select
-                value={reassignmentFilter}
-                onChange={(event) => setReassignmentFilter(event.target.value)}
-              >
-                <option value="PENDING">Pending</option>
-                <option value="APPROVED">Approved</option>
-                <option value="REJECTED">Rejected</option>
-                <option value="CANCELLED">Cancelled</option>
-                <option value="ALL">All statuses</option>
-              </select>
-            </div>
-            <div className="admin-table-wrap">
-              <table className="admin-table">
-                <thead>
-                  <tr>
-                    <th>Requested</th>
-                    <th>Survivor</th>
-                    <th>Scope</th>
-                    <th>Reason</th>
-                    <th>Status</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {reassignmentRequests.map((request) => (
-                    <tr key={request.requestId}>
-                      <td>{formatDate(request.requestTimestamp)}</td>
-                      <td>{request.survivor?.displayNickname || request.survivorId}</td>
-                      <td>{prettifyLabel(request.requestedScope)}</td>
-                      <td>{request.requestReasonText}</td>
-                      <td>{prettifyLabel(request.requestStatus)}</td>
-                      <td>
-                        {request.requestStatus === "PENDING" ? (
-                          <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
-                            <button
-                              type="button"
-                              className="admin-action-btn"
-                              disabled={reviewingRequestId === request.requestId}
-                              onClick={() => handleReviewReassignmentRequest(request.requestId, "APPROVED")}
-                            >
-                              {reviewingRequestId === request.requestId ? "Working..." : "Approve"}
-                            </button>
-                            <button
-                              type="button"
-                              className="secondary-btn"
-                              disabled={reviewingRequestId === request.requestId}
-                              onClick={() => handleReviewReassignmentRequest(request.requestId, "REJECTED")}
-                            >
-                              Reject
-                            </button>
-                          </div>
-                        ) : (
-                          "-"
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {reassignmentRequests.length === 0 && (
-              <p className="admin-empty" style={{ marginTop: "0.8rem" }}>
-                No reassignment requests found for this filter.
-              </p>
-            )}
-          </article>
-        </section>
-      )}
-
-      {activeSection === "moderation-desk" && (
-        <section className="admin-module-grid" aria-label="Moderation desk">
-          <article className="admin-panel full-span">
-            <h2>Community Moderation Queue</h2>
-            <div className="admin-table-wrap">
-              <table className="admin-table">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Room</th>
-                    <th>Message Snippet</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(dashboard.moderationQueue || []).map((row) => (
-                    <tr key={row.reportId}>
-                      <td>{formatDate(row.submittedAt)}</td>
-                      <td>{row.roomName}</td>
-                      <td>
-                        <button
-                          type="button"
-                          className="secondary-btn"
-                          onClick={() => setSelectedModerationRow(row)}
-                        >
-                          View Message + Reason
-                        </button>
-                      </td>
-                      <td className="action-cell">
-                        <button type="button" className="admin-action-btn" onClick={() => handleModerationAction(row.reportId, "remove_message")}>
-                          Delete Message
-                        </button>
-                        <button type="button" className="admin-action-btn" onClick={() => handleModerationAction(row.reportId, "issue_warning")}>
-                          Issue Warning
-                        </button>
-                        {/* Ban / Lift Ban — branches on whether the author is already banned.
-                            Banning from here resolves the report atomically (reportId is passed
-                            to the modal so handleSubmitBan uses reviewModerationReport). */}
-                        {row.senderUserId && (
-                          row.senderAccountStatus === "BANNED" ? (
-                            <button
-                              type="button"
-                              className="admin-action-btn"
-                              onClick={() => handleUnban(row.senderUserId, `Community Member ${row.senderUserId.slice(0, 8)}`)}
-                            >
-                              Lift Ban
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              className="admin-action-btn danger"
-                              onClick={() => handleOpenBanModal(
-                                row.senderUserId,
-                                `Community Member ${row.senderUserId.slice(0, 8)}`,
-                                row.reportId
-                              )}
-                            >
-                              Ban User
-                            </button>
-                          )
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </article>
-        </section>
-      )}
-
       {activeSection === "resources" && (
         <section className="admin-module-grid" aria-label="Resources and operations">
           <article className="admin-panel full-span">
@@ -1852,255 +1237,15 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
         </section>
       )}
 
-      {activeSection === "ussd-callbacks" && (
-        <section className="admin-module-grid" aria-label="USSD callback requests">
-          <article className="admin-panel full-span">
-            <h2>USSD Callback Requests</h2>
-            <p className="admin-note">
-              These are callback requests submitted by callers via the USSD interface (*384#).
-              Mark each request completed once your team has followed up, or cancelled if the
-              number is unreachable.
-            </p>
-            <div className="admin-table-wrap">
-              <table className="admin-table">
-                <thead>
-                  <tr>
-                    <th>Requested</th>
-                    <th>Phone number</th>
-                    <th>Status</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ussdCallbacks.map((cb) => (
-                    <tr key={cb.callbackRequestId}>
-                      <td>{formatDate(cb.callbackRequestTimestamp)}</td>
-                      <td>{cb.requesterPhoneNumber}</td>
-                      <td>
-                        <span className={
-                          cb.callbackFulfillmentStatus === "COMPLETED"
-                            ? "pill priority-low"
-                            : cb.callbackFulfillmentStatus === "CANCELLED"
-                              ? "pill priority-medium"
-                              : "pill priority-high"
-                        }>
-                          {prettifyLabel(cb.callbackFulfillmentStatus)}
-                        </span>
-                      </td>
-                      <td>
-                        {cb.callbackFulfillmentStatus === "PENDING" ? (
-                          <div className="inline-action-row">
-                            <button
-                              type="button"
-                              className="admin-action-btn"
-                              onClick={() => handleUpdateCallback(cb.callbackRequestId, "COMPLETED")}
-                              disabled={updatingCallbackId === cb.callbackRequestId}
-                            >
-                              {updatingCallbackId === cb.callbackRequestId ? "Saving..." : "Mark Completed"}
-                            </button>
-                            <button
-                              type="button"
-                              className="admin-action-btn secondary"
-                              onClick={() => handleUpdateCallback(cb.callbackRequestId, "CANCELLED")}
-                              disabled={updatingCallbackId === cb.callbackRequestId}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          <span>—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {ussdCallbacks.length === 0 && (
-              <p className="admin-empty" style={{ marginTop: "0.8rem" }}>
-                No USSD callback requests yet.
-              </p>
-            )}
-          </article>
-        </section>
-      )}
-
-      {/* ── Banned Users Registry ───────────────────────────────────────────── */}
-      {activeSection === "banned-users" && (
-        <section className="dashboard-section" aria-label="Banned Users">
-          <article className="admin-card">
-            <h3 className="admin-card-title">Banned Users Registry</h3>
-            <p className="admin-card-subtitle">
-              All accounts currently banned — survivors, counsellors, and legal counsel.
-              Use Lift Ban to restore ACTIVE status.
-            </p>
-
-            {/* Role filter */}
-            <div className="filter-row" style={{ marginBottom: "1rem" }}>
-              <label htmlFor="banned-role-filter" className="filter-label">Filter by role:</label>
-              <select
-                id="banned-role-filter"
-                className="filter-select"
-                value={bannedUsersFilter}
-                onChange={(e) => setBannedUsersFilter(e.target.value)}
-              >
-                <option value="">All roles</option>
-                <option value="SURVIVOR">Survivor</option>
-                <option value="COUNSELLOR">Counsellor</option>
-                <option value="LEGAL_COUNSEL">Legal Counsel</option>
-              </select>
-            </div>
-
-            {bannedUsersLoading && <p className="admin-empty">Loading banned accounts…</p>}
-
-            {!bannedUsersLoading && bannedUsers.length === 0 && (
-              <p className="admin-empty">No accounts are currently banned.</p>
-            )}
-
-            {!bannedUsersLoading && bannedUsers.length > 0 && (
-              <div className="table-wrap">
-                <table className="admin-table">
-                  <thead>
-                    <tr>
-                      <th>Phone</th>
-                      <th>Role</th>
-                      <th>Reason</th>
-                      <th>Banned At</th>
-                      <th>Expires</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {bannedUsers.map((u) => (
-                      <tr key={u.userId}>
-                        <td className="mono">{u.phoneNumber || u.userId}</td>
-                        <td>
-                          <span className="pill pill-neutral">{prettifyLabel(u.role)}</span>
-                        </td>
-                        <td style={{ maxWidth: "260px", wordBreak: "break-word" }}>
-                          {u.banReason || "-"}
-                        </td>
-                        <td>{formatDate(u.bannedAt)}</td>
-                        <td>
-                          {u.isPermanent
-                            ? <span className="pill priority-high">Permanent</span>
-                            : formatDate(u.banExpiresAt)}
-                        </td>
-                        <td>
-                          <button
-                            type="button"
-                            className="btn-sm btn-secondary"
-                            disabled={liftingBanId === u.userId}
-                            onClick={() => handleUnbanFromRegistry(u.userId, u.phoneNumber || u.role)}
-                          >
-                            {liftingBanId === u.userId ? "Lifting…" : "Lift Ban"}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </article>
-        </section>
-      )}
-
-      {/* ── Ban User Modal ──────────────────────────────────────────────────── */}
-      {banModal && (
-        <div
-          className="admin-confirm-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="ban-modal-title"
-          onClick={() => setBanModal(null)}
-          onKeyDown={(e) => e.key === "Escape" && setBanModal(null)}
-        >
-          <article className="admin-confirm-modal" onClick={(e) => e.stopPropagation()}>
-            <h3 id="ban-modal-title">Ban Account</h3>
-            <p className="admin-empty" style={{ marginBottom: "1rem" }}>
-              Banning <strong>{banModal.label}</strong> will immediately block all platform access,
-              including active sessions. The account can be unbanned at any time from the Staff Directory.
-            </p>
-
-            <form onSubmit={handleSubmitBan}>
-              <div className="ban-modal-field">
-                <label>
-                  Ban reason <span>*</span>
-                  <textarea
-                    value={banForm.reason}
-                    onChange={(e) => setBanForm((prev) => ({ ...prev, reason: e.target.value }))}
-                    placeholder="Describe the policy violation or reason for the ban…"
-                    rows={3}
-                    required
-                  />
-                </label>
-              </div>
-
-              <div className="ban-modal-field">
-                <label>
-                  Ban expires (optional — leave blank for permanent)
-                  <input
-                    type="date"
-                    value={banForm.expiresAt}
-                    onChange={(e) => setBanForm((prev) => ({ ...prev, expiresAt: e.target.value }))}
-                    min={new Date().toISOString().split("T")[0]}
-                  />
-                </label>
-              </div>
-
-              <div className="admin-confirm-actions">
-                <button
-                  type="submit"
-                  className="admin-action-btn danger"
-                  disabled={banLoading || !banForm.reason.trim()}
-                >
-                  {banLoading ? "Applying ban…" : "Confirm Ban"}
-                </button>
-                <button type="button" className="secondary-btn" onClick={() => setBanModal(null)}>
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </article>
-        </div>
-      )}
-
-      {selectedModerationRow && (
-        <div
-          className="admin-confirm-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="moderation-reason-title"
-          onClick={() => setSelectedModerationRow(null)}
-        >
-          <article className="admin-confirm-modal report-details-modal" onClick={(event) => event.stopPropagation()}>
-            <h3 id="moderation-reason-title">Moderation Report Details</h3>
-            <div className="moderation-detail-grid">
-              <p><strong>Room:</strong> {selectedModerationRow.roomName}</p>
-              <p><strong>Reported by:</strong> {selectedModerationRow.reporterLabel || "Community Member"}</p>
-              <p><strong>Submitted:</strong> {formatDate(selectedModerationRow.submittedAt)}</p>
-              <p><strong>Status:</strong> {prettifyLabel(selectedModerationRow.status)}</p>
-            </div>
-
-            <section className="moderation-detail-card">
-              <h4>Message</h4>
-              <p>{selectedModerationRow.snippet || "No message content available."}</p>
-            </section>
-
-            <section className="moderation-detail-card">
-              <h4>Reported Reason</h4>
-              <p>{selectedModerationRow.reportReasonText || "No reason provided."}</p>
-            </section>
-
-            <div className="admin-confirm-actions">
-              <button type="button" className="secondary-btn" onClick={() => setSelectedModerationRow(null)}>
-                Close
-              </button>
-            </div>
-          </article>
-        </div>
-      )}
+      {/* ── Shared ban modal — rendered at root, opened from any section ── */}
+      <BanUserModal
+        banModal={banModal}
+        setBanModal={setBanModal}
+        banForm={banForm}
+        setBanForm={setBanForm}
+        banLoading={banLoading}
+        onSubmit={handleSubmitBan}
+      />
     </AdminWorkspace>
   );
 }
