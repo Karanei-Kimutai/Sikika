@@ -59,13 +59,29 @@ const InAppNotification = sequelize.define('inAppNotification', {
     defaultValue: 'UNREAD',
     comment:      'Read status — supports mark-as-read and mark-all-as-read'
   },
- 
+
+  /**
+   * Dismiss state — distinct from read state (SSD §22.2 requirement).
+   * DISMISSED notifications are hidden from the default list view but retained
+   * in the database for audit continuity. A user can dismiss a notification
+   * without necessarily having read it (e.g. quick mass-dismiss).
+   *
+   * The read/dismiss separation allows the notification center to show
+   * "mark all as read" and separately offer "clear / dismiss all" without
+   * conflating the two user intents.
+   */
+  notificationDismissedStatus: {
+    type:         DataTypes.ENUM('VISIBLE', 'DISMISSED'),
+    defaultValue: 'VISIBLE',
+    comment:      'Dismiss state — DISMISSED hides the notification from the panel without deleting it'
+  },
+
   notificationCreationTimestamp: {
     type:         DataTypes.DATE,
     defaultValue: DataTypes.NOW,
     comment:      'UTC timestamp of when this notification was created'
   }
- 
+
 }, {
   tableName: 'inAppNotification',
   comment:   'In-app notification — discreet wording enforced to protect survivor safety'
