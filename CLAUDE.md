@@ -69,7 +69,7 @@ Server startup sequence: load env → validate required vars → `CREATE DATABAS
 Route → authMiddleware (JWT verify) → controller → model (via models/index.js) → response
 ```
 
-Maintenance mode middleware sits at the global level and blocks all non-admin traffic with HTTP 503 when enabled. **Known limitation:** maintenance state is held in-memory in `adminController.js` and resets on process restart.
+Maintenance mode middleware sits at the global level and blocks all non-admin traffic with HTTP 503 when enabled. Maintenance state is persisted to the `SystemSetting` table (key `'maintenance'`, JSON value) and loaded at boot via `loadMaintenanceStateFromDb()`, so it survives process restarts. An in-process cache (`_maintenanceCache`) keeps the guard fast (no DB round-trip per request).
 
 ### Auth System (`backend/src/controllers/authController.js`)
 
@@ -77,8 +77,8 @@ Maintenance mode middleware sits at the global level and blocks all non-admin tr
 - JWT payload carries both `id` and `userId` for compatibility
 - On first survivor signup: creates `SurvivorProfile`, assigns least-loaded counsellor and legal counsel by `currentWorkloadScore`, and provisions direct-chat channels — all in a single Sequelize transaction
 - `status=password_reset_required` triggers first-login forced reset; backend returns `authStage=PASSWORD_RESET_REQUIRED` and frontend must call `POST /api/auth/set-password` before normal navigation
-- **Known security gap:** OTPs are stored plaintext in the `otpHash` column (not yet hashed)
-- Controllers use a `normalizeRole` helper for role-checking — currently duplicated across controller files (known code smell)
+- OTPs are bcrypt-hashed (10 rounds) before storage in `otpHash`; both verify paths use `bcrypt.compare`. Dev mode returns the plaintext OTP in the response body via `developmentOtp` for local testing only.
+- `normalizeRole` and `BANNABLE_ROLES` are defined once in `backend/src/utils/roles.js` and imported by all controllers and services that need them.
 
 ### Report Status State Machine
 
@@ -94,8 +94,9 @@ Legal case auto-creation fires on `LEGAL_REVIEW` and `ESCALATED_TO_LEGAL_CASE` t
 
 ### Sockets (`backend/src/sockets/`)
 
-- `chatSocket.js` — JWT-authenticated; persists opaque encrypted payloads without server-side decryption. Events: `joinChannel`, `sendEncryptedMessage` (client); `receiveMessage`, `messageError` (server)
+- `chatSocket.js` — JWT-authenticated; persists opaque encrypted payloads without server-side decryption. Events: `joinChannel`, `sendEncryptedMessage` (client); `receiveMessage`, `messageError` (server). **Presence integration:** on connect, joins `user:<userId>` personal room and calls `presenceRegistry.markOnline`; broadcasts `presence:update` to affected survivors; runs delivery catch-up (`deliveredAt` bulk-set for messages received offline, `message:delivered` emitted). On `sendEncryptedMessage`, sets `deliveredAt` immediately when recipient is online. On disconnect, `presenceRegistry.markOffline` then re-broadcasts OFFLINE if last socket.
 - `communitySocket.js` — room join/leave, real-time message broadcast, moderation events (`community:new-message`, `community:message-updated`, `community:message-deleted`)
+- **`presenceRegistry.js`** (`backend/src/services/`) — shared in-memory singleton tracking live socket connections. `getEffectivePresence(userId, manualStatus)` unifies real connectivity with the manual BUSY override.
 
 ### Chat Channel Provisioning (`backend/src/services/chatAccessService.js`)
 
@@ -153,8 +154,9 @@ Static resource list shown in the Library when the backend is unreachable.
 
 ## Key Cross-Cutting Behaviors
 
-- **Cloudinary**: evidence files and support resources both use Cloudinary. Without env vars, upload endpoints return 503 but read endpoints still work.
-- **Community moderation "block user"**: maps to `accountStatus = SUSPENDED` on `UserAccount` — not a separate block record. Suspended users lose all authenticated access until reactivated.
+- **Cloudinary**: evidence files, support resources, and legal case PDFs all use Cloudinary. Evidence and legal docs use `type: authenticated` (private); resources use `type: upload` (public). Without env vars, upload endpoints return 503 but read endpoints still work.
+- **Community moderation enforcement**: the "block_user"/"suspend_user" path has been removed. Moderation now uses `action: "ban_user"` in `reviewReport` (`communityController.js`), which sets `accountStatus = BANNED` with full metadata (reason, expiry, bannedByUserId) and resolves the report atomically. `SUSPENDED` is reserved for the operational Active/Inactive staff toggle in the Team Capacity section of the NGO dashboard.
+- **`SUSPENDED` vs `BANNED`**: `SUSPENDED` = reversible staff operational pause (no metadata); `BANNED` = moderation/safety enforcement (reason + optional expiry + dual audit trail). Both block all authenticated access immediately via `authMiddleware` DB lookup.
 - **Survivor identity in community**: survivors appear by nickname only in room timelines.
 - **Resource access tracking**: `POST /api/resources/:id/track-access` is best-effort; frontend fires and ignores failures so it never blocks resource opens.
 
@@ -164,11 +166,11 @@ Tracked in `docs/pending-roadmap-items.md`.
 
 | Feature | Status | Notes |
 |---|---|---|
-| In-app notification center | Partial | Model + fan-out writes exist; no list/read/dismiss API or UI |
+| In-app notification center | Done | `GET/PATCH /api/notifications/*` endpoints; `NotificationBell` in `SiteHeader` with real-time socket push (`notification:new` via `user:<userId>` room) + 30s-poll fallback; `notificationDismissedStatus` column keeps dismiss state separate from read state. `notificationService.js` is the single write path (used by reportController, chatSocket, communityController). |
 | Survivor chat archive/delete controls | Done | `PATCH /api/chat/:chatId/status` + Archive/Restore/Delete action menu in `DirectChatPage.jsx` |
-| Staff presence indicators | Partial | `availabilityStatus` field exists; no Socket.io presence events or frontend indicator |
-| User banning workflow | Partial | No `BANNED` status or ban/unban endpoints |
-| Legal case document drafting UI | Partial | Model exists; no authoring form or export |
+| Staff presence indicators | Done | `presenceRegistry.js` in-memory singleton (Map of userId→Set of socketIds); `chatSocket.js` joins per-user rooms and broadcasts `presence:update` on connect/disconnect; delivery catch-up marks pending `deliveredAt` on reconnect; `markChannelRead` sets `seenAt` and emits `message:seen`; `DirectChatPage.jsx` shows coloured presence dot + Sent/Delivered/Seen ticks; effective presence = real connectivity layered over manual BUSY status |
+| User banning workflow | Done | `BANNED` added to `accountStatus` ENUM + ban metadata columns; `PATCH /api/admin/ngo/users/:id/ban` and `.../unban`; `authMiddleware` does DB lookup on every authenticated request for immediate mid-session enforcement; `liftExpiredBan` auto-restores temporary bans at next auth check; `chatSocket.js` checks accountStatus on connect + per-send; NGO dashboard ban modal + Staff Directory status badges + Lift Ban in Moderation Desk + Banned Users registry section; banning from Moderation Desk resolves the underlying report atomically; dual audit trail (ModerationActionLog + AuditLog); ban immediately evicts active sockets via `disconnectSockets(true)`; banning a COUNSELLOR/LEGAL_COUNSEL triggers `cascadeReassignOnStaffBan` (auto-reassigns their survivors). Community `reviewReport ban_user` enforces the same `BANNABLE_ROLES` allow-list + self-ban rejection as the admin endpoint. `SUSPENDED` reframed as Active/Inactive staff toggle. |
+| Legal case document drafting UI | Done | Structured authoring fields added to `legalCaseFile` model; `legalDocumentService.js` renders pdfkit PDF in memory; PDF uploaded privately to Cloudinary; `PATCH/POST/GET /api/legal-cases/:id/*` endpoints; `ReportingPage.jsx` full drafting panel (4 fields, Save Draft, Generate Document, Open Document, status advance) for LEGAL_COUNSEL role; `frontend/src/services/legalCases.js` service layer |
 | Average response-time dashboard render | Done | Computed in `adminController.js`, rendered in `NgoAdminDashboardPage.jsx` |
 
 ## Demo Credentials (seeded data)
