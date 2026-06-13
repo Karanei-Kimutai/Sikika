@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { Bell, X } from "lucide-react";
 import { getToken } from "../utils/auth";
 import {
   getNotifications,
@@ -320,8 +321,7 @@ function NotificationBell({ isAuthenticated }) {
         aria-label={hasUnread ? `${unreadCount} unread updates` : "Notification center"}
         title={hasUnread ? `${unreadCount} unread updates` : "No new updates"}
       >
-        {/* Bell icon using unicode — no dependency on icon libraries */}
-        <span className="notification-bell-icon" aria-hidden="true">🔔</span>
+        <Bell className="notification-bell-icon" size={20} aria-hidden="true" focusable="false" />
         {hasUnread && (
           <span className="notification-badge" aria-live="polite">
             {unreadCount > 99 ? "99+" : unreadCount}
@@ -394,7 +394,7 @@ function NotificationBell({ isAuthenticated }) {
                   aria-label="Dismiss this update"
                   title="Dismiss"
                 >
-                  ×
+                  <X size={14} aria-hidden="true" focusable="false" />
                 </button>
               </div>
             ))}

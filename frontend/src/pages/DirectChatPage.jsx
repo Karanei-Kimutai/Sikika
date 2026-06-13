@@ -8,6 +8,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { MoreHorizontal } from 'lucide-react';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import { getToken } from '../utils/auth';
@@ -604,7 +605,7 @@ const DirectChatPage = () => {
                         setMenuChannelId((value) => (value === channel.chatId ? null : channel.chatId));
                       }}
                     >
-                      ⋯
+                      <MoreHorizontal size={16} aria-hidden="true" focusable="false" />
                     </button>
                   </div>
                 )}
