@@ -25,6 +25,7 @@
 
 require('dotenv').config();
 const { v4: uuidv4 } = require('uuid');
+const bcrypt = require('bcrypt');
 const {
   sequelize,
   UserAccount,

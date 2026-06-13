@@ -1,0 +1,212 @@
+const { v4: uuidv4 } = require('uuid');
+const db = require('../models');
+const { UssdCallbackRequest } = db;
+
+/**
+ * ussdController.js
+ * -----------------
+ * Handles Africa's Talking USSD session callbacks and the NGO admin
+ * callback-request management workflow.
+ *
+ * USSD session lifecycle (Africa's Talking contract):
+ *   - AT posts to POST /api/ussd/callback for every user interaction.
+ *   - The `text` field accumulates all inputs for the session, joined by `*`.
+ *   - Responses must be plain text prefixed with "CON " (continue) or
+ *     "END " (terminate session). No JSON, no HTTP error codes.
+ *
+ * Menu tree:
+ *   text = ""      → welcome screen (CON)
+ *   text = "1"     → callback confirmation prompt (CON)
+ *   text = "1*1"   → confirm callback → save record → END
+ *   text = "1*0"   → cancel → END
+ *   text = "2"     → emergency contacts listing → END
+ *   any other      → invalid selection → END
+ *
+ * Security note: AT does not sign USSD requests, so this endpoint has no
+ * authentication. It relies on the POST body fields being meaningless without
+ * a valid AT session. A reverse-proxy IP allowlist is recommended in production.
+ */
+
+/**
+ * Normalise the `text` field sent by Africa's Talking.
+ * AT sends "" on the first interaction, then appends subsequent inputs
+ * with "*" (e.g. "1*2*3"). We split and trim to get an array of steps.
+ *
+ * @param {string} rawText - The raw `text` field from the AT request body.
+ * @returns {string[]} Ordered array of user input steps.
+ */
+function parseMenuPath(rawText) {
+  if (!rawText || String(rawText).trim() === '') return [];
+  return String(rawText)
+    .split('*')
+    .map((s) => s.trim());
+}
+
+/**
+ * POST /api/ussd/callback
+ *
+ * Entry point for every Africa's Talking USSD interaction. Parses the
+ * accumulated menu path and returns the appropriate CON/END response.
+ * On confirmed callback selection it persists a UssdCallbackRequest row.
+ *
+ * @param {import('express').Request}  req
+ * @param {import('express').Response} res
+ */
+async function handleCallback(req, res) {
+  const { sessionId, phoneNumber, text } = req.body || {};
+
+  // Guard: AT always provides these three fields. Drop malformed pings.
+  if (!sessionId || !phoneNumber) {
+    return res.type('text/plain').send('END An error occurred. Please try again.');
+  }
+
+  const steps = parseMenuPath(text);
+
+  // ── Level 0: welcome screen ──────────────────────────────────────────────
+  if (steps.length === 0) {
+    return res.type('text/plain').send(
+      'CON Welcome to GBV Support\n' +
+      '1. Request a callback\n' +
+      '2. Emergency contacts'
+    );
+  }
+
+  const root = steps[0];
+
+  // ── Branch 1: callback request flow ─────────────────────────────────────
+  if (root === '1') {
+    // Level 1: ask for confirmation before saving
+    if (steps.length === 1) {
+      return res.type('text/plain').send(
+        `CON Confirm callback request\n` +
+        `We will contact you on ${phoneNumber}\n` +
+        '1. Confirm\n' +
+        '0. Cancel'
+      );
+    }
+
+    const confirmation = steps[1];
+
+    if (confirmation === '1') {
+      // Persist the callback request — phone number only, no account required.
+      try {
+        await UssdCallbackRequest.create({
+          callbackRequestId: uuidv4(),
+          requesterPhoneNumber: phoneNumber,
+          callbackFulfillmentStatus: 'PENDING'
+        });
+      } catch (err) {
+        console.error('[USSD] Failed to save callback request:', err.message);
+        return res.type('text/plain').send(
+          'END We could not save your request. Please call 1195 directly.'
+        );
+      }
+
+      return res.type('text/plain').send(
+        'END Your callback request has been received.\n' +
+        'Our support team will contact you shortly.'
+      );
+    }
+
+    if (confirmation === '0') {
+      return res.type('text/plain').send(
+        'END Request cancelled. You can dial again any time.'
+      );
+    }
+
+    // Unrecognised sub-selection
+    return res.type('text/plain').send(
+      'END Invalid selection. Please dial again.'
+    );
+  }
+
+  // ── Branch 2: emergency contacts ─────────────────────────────────────────
+  if (root === '2') {
+    return res.type('text/plain').send(
+      'END Emergency contacts:\n' +
+      'Police: 999 or 112\n' +
+      'Childline Kenya: 116\n' +
+      'National GBV Hotline: 1195'
+    );
+  }
+
+  // ── Fallback: unrecognised root selection ─────────────────────────────────
+  return res.type('text/plain').send(
+    'END Invalid selection. Please dial again.'
+  );
+}
+
+/**
+ * GET /api/ussd/callback-requests
+ *
+ * Returns all USSD callback requests, newest first.
+ * Restricted to NGO_ADMIN role.
+ *
+ * @param {import('express').Request}  req  - Must have req.user from authMiddleware.
+ * @param {import('express').Response} res
+ */
+async function listCallbackRequests(req, res) {
+  if (req.user?.role !== 'NGO_ADMIN') {
+    return res.status(403).json({ error: 'NGO admin access required.' });
+  }
+
+  try {
+    const requests = await UssdCallbackRequest.findAll({
+      order: [['callbackRequestTimestamp', 'DESC']]
+    });
+
+    return res.json({ requests });
+  } catch (err) {
+    console.error('[USSD] listCallbackRequests error:', err.message);
+    return res.status(500).json({ error: 'Could not retrieve callback requests.' });
+  }
+}
+
+/**
+ * PATCH /api/ussd/callback-requests/:requestId
+ *
+ * Updates the fulfillment status of a USSD callback request.
+ * Only COMPLETED and CANCELLED are valid next states from PENDING.
+ * Restricted to NGO_ADMIN role.
+ *
+ * @param {import('express').Request}  req  - body: { callbackFulfillmentStatus }
+ * @param {import('express').Response} res
+ */
+async function updateCallbackRequest(req, res) {
+  if (req.user?.role !== 'NGO_ADMIN') {
+    return res.status(403).json({ error: 'NGO admin access required.' });
+  }
+
+  const { requestId } = req.params;
+  const { callbackFulfillmentStatus } = req.body || {};
+
+  const allowed = ['COMPLETED', 'CANCELLED'];
+  if (!allowed.includes(callbackFulfillmentStatus)) {
+    return res.status(400).json({
+      error: `callbackFulfillmentStatus must be one of: ${allowed.join(', ')}.`
+    });
+  }
+
+  try {
+    const record = await UssdCallbackRequest.findByPk(requestId);
+
+    if (!record) {
+      return res.status(404).json({ error: 'Callback request not found.' });
+    }
+
+    if (record.callbackFulfillmentStatus !== 'PENDING') {
+      return res.status(409).json({
+        error: `Cannot update a request that is already ${record.callbackFulfillmentStatus}.`
+      });
+    }
+
+    await record.update({ callbackFulfillmentStatus });
+
+    return res.json({ message: 'Callback request updated.', request: record });
+  } catch (err) {
+    console.error('[USSD] updateCallbackRequest error:', err.message);
+    return res.status(500).json({ error: 'Could not update callback request.' });
+  }
+}
+
+module.exports = { handleCallback, listCallbackRequests, updateCallbackRequest };

@@ -1300,6 +1300,113 @@ input:focus {
   }
 }
 
+/* ─── Emergency intercept (unauthenticated /reports) ─────────────────────── */
+
+/* Centred card shown to visitors who reach /reports without an auth token. */
+.emergency-intercept {
+  display: grid;
+  gap: 1.2rem;
+  max-width: 600px;
+  margin: 4rem auto 0;
+  text-align: center;
+}
+
+.emergency-intercept h1 {
+  margin: 0;
+  color: var(--brown-dark);
+  font-size: clamp(1.8rem, 4vw, 2.8rem);
+  line-height: 1.1;
+}
+
+/* Body copy below the headline; keeps line length comfortable for reading. */
+.emergency-intercept-lead {
+  margin: 0;
+  color: var(--body);
+  font-size: 1.05rem;
+  line-height: 1.65;
+}
+
+/* Row of primary + secondary CTAs; wraps gracefully on narrow viewports. */
+.emergency-intercept-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  justify-content: center;
+}
+
+/* ─── Emergency contacts modal ───────────────────────────────────────────── */
+
+/* Full-screen semi-transparent backdrop — clicking it closes the modal. */
+.emergency-contacts-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(12, 20, 32, 0.52);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+/* Floating card containing the crisis contact list. */
+.emergency-contacts-modal {
+  width: min(480px, 100%);
+  border-radius: 1rem;
+  border: 1px solid rgba(139, 94, 60, 0.18);
+  background: #ffffff;
+  box-shadow: 0 20px 48px rgba(44, 26, 14, 0.22);
+  padding: 1.5rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.emergency-contacts-header h2 {
+  margin: 0;
+  color: var(--brown-dark);
+  font-size: 1.55rem;
+}
+
+.emergency-contacts-header p {
+  margin: 0.4rem 0 0;
+  color: var(--body);
+  line-height: 1.55;
+}
+
+/* Unstyled list; layout is handled by the card items below. */
+.emergency-contact-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
+/* Individual contact row: service name on the left, number on the right. */
+.emergency-contact-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(139, 94, 60, 0.18);
+  border-radius: 0.75rem;
+  background: var(--cream);
+}
+
+.emergency-contact-card strong {
+  color: var(--brown-dark);
+  font-size: 0.95rem;
+}
+
+/* Number is visually prominent so it can be read at a glance under stress. */
+.emergency-contact-card span {
+  color: var(--brown);
+  font-size: 1.1rem;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+
 .wa-page {
   /* Outer page frame keeps chat shell centered within app layout. */
   height: calc(100vh - 5rem);

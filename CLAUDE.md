@@ -124,11 +124,11 @@ Each page owns its screen-level state (loading, errors, selected entities):
 | Page | Feature |
 |---|---|
 | `AuthPage.jsx` | OTP + password auth, signup, forgot password, forced reset |
-| `DirectChatPage.jsx` | E2EE chat, channel switching, privacy mask |
+| `DirectChatPage.jsx` | E2EE chat, channel switching, privacy mask; Archive/Restore/Delete action menu per channel |
 | `CommunityPage.jsx` | Rooms, join gate, moderation actions |
 | `LibraryPage.jsx` | Public resource browsing + staff write actions |
 | `ReportingPage.jsx` | Incident report submission + evidence upload; emergency intercept screen for unauthenticated reporters (`/reports` is not a protected path) |
-| `NgoAdminDashboardPage.jsx` | NGO KPIs, case triage, staff management, moderation queue |
+| `NgoAdminDashboardPage.jsx` | NGO KPIs, case triage, staff management, moderation queue, USSD callback queue |
 | `SystemAdminDashboardPage.jsx` | Infrastructure, logs, maintenance control, staff lifecycle |
 
 ### Service Layer (`frontend/src/services/`)
@@ -165,7 +165,7 @@ Tracked in `docs/pending-roadmap-items.md`.
 | Feature | Status | Notes |
 |---|---|---|
 | In-app notification center | Partial | Model + fan-out writes exist; no list/read/dismiss API or UI |
-| Survivor chat archive/delete controls | Done | `PATCH /api/chat/:chatId/status` + frontend Archive/Restore/Delete menu in `DirectChatPage.jsx` |
+| Survivor chat archive/delete controls | Done | `PATCH /api/chat/:chatId/status` + Archive/Restore/Delete action menu in `DirectChatPage.jsx` |
 | Staff presence indicators | Partial | `availabilityStatus` field exists; no Socket.io presence events or frontend indicator |
 | User banning workflow | Partial | No `BANNED` status or ban/unban endpoints |
 | Legal case document drafting UI | Partial | Model exists; no authoring form or export |
