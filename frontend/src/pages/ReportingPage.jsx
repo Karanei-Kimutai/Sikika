@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { getToken } from "../utils/auth";
+import ConfirmDialog from "../components/ConfirmDialog";
 import {
   createReport,
   deleteOwnReport,
@@ -36,7 +38,7 @@ const STATUS_OPTIONS = [
 // transitions and can reject disallowed status changes.
 
 function decodeTokenRole() {
-  const token = localStorage.getItem("authToken");
+  const token = getToken();
   if (!token) return "";
 
   try {
@@ -85,7 +87,9 @@ function ReportingPage({ onNavigate }) {
   });
   const [savingEdit, setSavingEdit] = useState(false);
   const [deletingReportId, setDeletingReportId] = useState("");
+  const [deleteConfirmId, setDeleteConfirmId] = useState("");
   const [openingEvidenceId, setOpeningEvidenceId] = useState("");
+  const [reportStatusMap, setReportStatusMap] = useState({});
   const [reassignmentRequests, setReassignmentRequests] = useState([]);
 
   // ── Legal case drafting state (legal counsel only) ─────────────────────────
@@ -119,6 +123,10 @@ function ReportingPage({ onNavigate }) {
       // Backend scopes returned rows by caller role + assignment relations.
       const data = await getReports();
       setReports(data.reports || []);
+      // Initialize status map for controlled select inputs
+      const statusMap = {};
+      (data.reports || []).forEach(r => { statusMap[r.reportId] = r.reportStatus; });
+      setReportStatusMap(statusMap);
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Could not load reports.");
     } finally {
@@ -129,7 +137,7 @@ function ReportingPage({ onNavigate }) {
   useEffect(() => {
     // Skip the API call entirely for unauthenticated visitors — they see the
     // intercept screen and there are no reports to load for them.
-    if (!localStorage.getItem("authToken")) return;
+    if (!getToken()) return;
 
     const timerId = window.setTimeout(() => {
       void loadReports();
@@ -139,7 +147,7 @@ function ReportingPage({ onNavigate }) {
 
   useEffect(() => {
     // Reassignment requests only exist for authenticated survivors.
-    if (!localStorage.getItem("authToken")) return;
+    if (!getToken()) return;
     if (!canCreate) return;
 
     async function loadReassignmentRequests() {
@@ -179,7 +187,7 @@ function ReportingPage({ onNavigate }) {
    * contacts in the 401 body from report creation, but the intercept avoids making
    * that round-trip at all.
    */
-  const isAuthenticated = Boolean(localStorage.getItem("authToken"));
+  const isAuthenticated = Boolean(getToken());
 
   if (!isAuthenticated) {
     return (
@@ -249,15 +257,15 @@ function ReportingPage({ onNavigate }) {
               <ul className="emergency-contact-list" aria-label="Crisis contact numbers">
                 <li className="emergency-contact-card">
                   <strong>Police</strong>
-                  <span>999 / 112</span>
+                  <span><a href="tel:999">999</a> / <a href="tel:112">112</a></span>
                 </li>
                 <li className="emergency-contact-card">
                   <strong>Childline Kenya</strong>
-                  <span>116</span>
+                  <span><a href="tel:116">116</a></span>
                 </li>
                 <li className="emergency-contact-card">
                   <strong>National GBV Hotline</strong>
-                  <span>1195</span>
+                  <span><a href="tel:1195">1195</a></span>
                 </li>
               </ul>
 
@@ -464,10 +472,13 @@ function ReportingPage({ onNavigate }) {
     }
   }
 
-  async function handleDelete(reportId) {
-    const confirmed = window.confirm("Delete this report permanently?");
-    if (!confirmed) return;
+  function handleDeleteClick(reportId) {
+    setDeleteConfirmId(reportId);
+  }
 
+  async function handleDeleteConfirm() {
+    const reportId = deleteConfirmId;
+    setDeleteConfirmId("");
     setDeletingReportId(reportId);
     setErrorMessage("");
     setSuccessMessage("");
@@ -484,6 +495,10 @@ function ReportingPage({ onNavigate }) {
     } finally {
       setDeletingReportId("");
     }
+  }
+
+  function handleDeleteCancel() {
+    setDeleteConfirmId("");
   }
 
   async function handleOpenEvidence(reportId, evidenceId) {
@@ -644,7 +659,7 @@ function ReportingPage({ onNavigate }) {
         </div>
       </section>
 
-      {errorMessage && <p className="status-message warning">{errorMessage}</p>}
+      {errorMessage && <p role="alert" className="status-message warning">{errorMessage}</p>}
       {successMessage && <p className="status-message">{successMessage}</p>}
 
       {canCreate && (
@@ -1080,7 +1095,7 @@ function ReportingPage({ onNavigate }) {
                   <button
                     type="button"
                     className="secondary-btn"
-                    onClick={() => handleDelete(report.reportId)}
+                    onClick={() => handleDeleteClick(report.reportId)}
                     disabled={deletingReportId === report.reportId}
                   >
                     {deletingReportId === report.reportId ? "Deleting..." : "Delete Permanently"}
@@ -1093,8 +1108,11 @@ function ReportingPage({ onNavigate }) {
                     {/* UI shows full enum; backend is the final authority on role and transition validity. */}
                     <select
                       id={`status-${report.reportId}`}
-                      defaultValue={report.reportStatus}
-                      onChange={(event) => handleStatusUpdate(report.reportId, event.target.value)}
+                      value={reportStatusMap[report.reportId] ?? report.reportStatus}
+                      onChange={(event) => {
+                        setReportStatusMap(m => ({...m, [report.reportId]: event.target.value}));
+                        handleStatusUpdate(report.reportId, event.target.value);
+                      }}
                     >
                       {STATUS_OPTIONS.map((status) => (
                         <option key={status} value={status}>
@@ -1109,6 +1127,17 @@ function ReportingPage({ onNavigate }) {
           ))}
         </section>
       )}
+
+      <ConfirmDialog
+        isOpen={!!deleteConfirmId}
+        title="Delete Report Permanently"
+        message="This report will be permanently deleted and cannot be recovered. Are you sure?"
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        onConfirm={handleDeleteConfirm}
+        onCancel={handleDeleteCancel}
+        variant="danger"
+      />
     </main>
   );
 }

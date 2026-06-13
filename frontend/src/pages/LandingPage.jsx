@@ -90,7 +90,7 @@ function LandingPage({ onNavigate }) {
       <footer className="site-footer">
         <div>
           <strong>Emergency Contacts</strong>
-          <p>Police emergency: 999 / 112. Childline Kenya: 116. National GBV Hotline: 1195.</p>
+          <p>Police emergency: <a href="tel:999">999</a> / <a href="tel:112">112</a>. Childline Kenya: <a href="tel:116">116</a>. National GBV Hotline: <a href="tel:1195">1195</a>.</p>
         </div>
         <button type="button" className="footer-link" onClick={() => onNavigate("/library")}>
           View all resources

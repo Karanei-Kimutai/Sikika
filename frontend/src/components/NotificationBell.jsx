@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { getToken } from "../utils/auth";
 import {
   getNotifications,
   getUnreadCount,
@@ -148,7 +149,7 @@ function NotificationBell({ isAuthenticated }) {
     if (!isAuthenticated) return;
 
     // Connect using the stored auth token and subscribe to push events.
-    const token = localStorage.getItem("authToken");
+    const token = getToken();
     if (token) {
       notificationSocket.connect(token);
     }

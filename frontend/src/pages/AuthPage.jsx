@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import { getToken, setToken, setUserId } from "../utils/auth";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
@@ -64,7 +65,7 @@ function AuthPage({ onNavigate }) {
 
   useEffect(() => {
     // Keep already-authenticated users out of auth form flow.
-    if (localStorage.getItem("authToken")) {
+    if (getToken()) {
       onNavigate("/home");
     }
   }, [onNavigate]);
@@ -106,8 +107,8 @@ function AuthPage({ onNavigate }) {
 
   const finalizeLogin = (token, userId = null) => {
     // Persist token and identity for app session continuity across reloads.
-    localStorage.setItem("authToken", token);
-    if (userId) localStorage.setItem("userId", userId);
+    setToken(token);
+    if (userId) setUserId(userId);
     onNavigate("/home");
   };
 
@@ -472,7 +473,38 @@ function AuthPage({ onNavigate }) {
           </div>
         </div>
 
-        <div className="form-panel">
+        <form
+          className="form-panel"
+          onSubmit={(e) => {
+            e.preventDefault();
+            // Route to the appropriate handler based on auth mode and step
+            if (authMode === "signin") {
+              if (signinMethod === "password") {
+                loginWithPassword();
+              } else if (signinMethod === "otp") {
+                if (signinOtpStep === "request") {
+                  requestSigninOtp();
+                } else {
+                  verifySigninOtp();
+                }
+              } else if (showFirstLoginResetFlow) {
+                completeFirstLoginPasswordReset();
+              } else if (showResetFlow) {
+                if (resetStep === "request") {
+                  requestResetOtp();
+                } else {
+                  completePasswordReset();
+                }
+              }
+            } else if (authMode === "signup") {
+              if (signupStep === "request") {
+                requestSignupOtp();
+              } else if (signupStep === "verify") {
+                completeSignup();
+              }
+            }
+          }}
+        >
           <p className="eyebrow">GBV Support Platform</p>
           <h2>{authMode === "signin" ? "Sign In" : "Create Account"}</h2>
           <p className="subtext">
@@ -481,6 +513,11 @@ function AuthPage({ onNavigate }) {
 
           <div className="auth-mode-tabs" role="tablist" aria-label="Authentication mode">
             <button
+              id="tab-signin"
+              role="tab"
+              aria-selected={authMode === "signin"}
+              aria-controls="tabpanel-signin"
+              tabIndex={authMode === "signin" ? 0 : -1}
               type="button"
               className={`auth-mode-btn ${authMode === "signin" ? "active" : ""}`}
               onClick={switchToSignin}
@@ -489,6 +526,11 @@ function AuthPage({ onNavigate }) {
               Sign In
             </button>
             <button
+              id="tab-signup"
+              role="tab"
+              aria-selected={authMode === "signup"}
+              aria-controls="tabpanel-signup"
+              tabIndex={authMode === "signup" ? 0 : -1}
               type="button"
               className={`auth-mode-btn ${authMode === "signup" ? "active" : ""}`}
               onClick={switchToSignup}
@@ -498,11 +540,11 @@ function AuthPage({ onNavigate }) {
             </button>
           </div>
 
-          {errorMessage && <p className="feedback feedback-error">{errorMessage}</p>}
-          {successMessage && <p className="feedback feedback-success">{successMessage}</p>}
+          {errorMessage && <p className="feedback feedback-error" role="alert">{errorMessage}</p>}
+          {successMessage && <p className="feedback feedback-success" role="status">{successMessage}</p>}
 
           {authMode === "signin" ? (
-            <div className="field-group auth-step-card">
+            <div id="tabpanel-signin" role="tabpanel" aria-labelledby="tab-signin" className="field-group auth-step-card">
               <p className="auth-step-heading">Existing Account</p>
 
               {showFirstLoginResetFlow ? (
@@ -530,9 +572,8 @@ function AuthPage({ onNavigate }) {
                   </div>
 
                   <button
-                    type="button"
+                    type="submit"
                     className="primary-btn auth-cta-btn"
-                    onClick={completeFirstLoginPasswordReset}
                     disabled={loading || !canSubmitFirstLoginResetPassword}
                   >
                     {loading ? "Updating password..." : "Update Password & Continue"}
@@ -596,9 +637,8 @@ function AuthPage({ onNavigate }) {
 
                   {resetStep === "request" ? (
                     <button
-                      type="button"
+                      type="submit"
                       className="primary-btn auth-cta-btn"
-                      onClick={requestResetOtp}
                       disabled={loading || !canSubmitResetPhone}
                     >
                       {loading ? "Sending reset code..." : "Send Reset OTP"}
@@ -640,9 +680,8 @@ function AuthPage({ onNavigate }) {
                       </div>
 
                       <button
-                        type="button"
+                        type="submit"
                         className="primary-btn auth-verify-btn"
-                        onClick={completePasswordReset}
                         disabled={loading || !canSubmitResetPhone || !canSubmitResetOtp || !canSubmitResetPassword}
                       >
                         {loading ? "Resetting password..." : "Verify OTP & Reset Password"}
@@ -687,9 +726,8 @@ function AuthPage({ onNavigate }) {
                   </div>
 
                   <button
-                    type="button"
+                    type="submit"
                     className="primary-btn auth-cta-btn"
-                    onClick={loginWithPassword}
                     disabled={loading || !canSubmitSigninPhone || !canSubmitSigninPassword}
                   >
                     {loading ? "Signing in..." : "Sign In With Password"}
@@ -702,9 +740,8 @@ function AuthPage({ onNavigate }) {
               ) : signinOtpStep === "request" ? (
                 <>
                   <button
-                    type="button"
+                    type="submit"
                     className="primary-btn auth-cta-btn"
-                    onClick={requestSigninOtp}
                     disabled={loading || !canSubmitSigninPhone}
                   >
                     {loading ? "Sending code..." : "Send Sign-In OTP"}
@@ -726,9 +763,8 @@ function AuthPage({ onNavigate }) {
                   />
 
                   <button
-                    type="button"
+                    type="submit"
                     className="primary-btn auth-verify-btn"
-                    onClick={verifySigninOtp}
                     disabled={loading || !canSubmitSigninPhone || !canSubmitSigninOtp}
                   >
                     {loading ? "Verifying..." : "Verify OTP & Sign In"}
@@ -759,7 +795,7 @@ function AuthPage({ onNavigate }) {
               )}
             </div>
           ) : (
-            <div className="field-group auth-step-card">
+            <div id="tabpanel-signup" role="tabpanel" aria-labelledby="tab-signup" className="field-group auth-step-card">
               <p className="auth-step-heading">New Account Setup</p>
 
               {signupStep === "request" ? (
@@ -777,9 +813,8 @@ function AuthPage({ onNavigate }) {
                   />
 
                   <button
-                    type="button"
+                    type="submit"
                     className="primary-btn auth-cta-btn"
-                    onClick={requestSignupOtp}
                     disabled={loading || !canSubmitSignupPhone}
                   >
                     {loading ? "Sending code..." : "Send OTP Code"}
@@ -858,9 +893,8 @@ function AuthPage({ onNavigate }) {
                   />
 
                   <button
-                    type="button"
+                    type="submit"
                     className="primary-btn auth-verify-btn"
-                    onClick={completeSignup}
                     disabled={loading || !canSubmitSignupOtp || !canSubmitSignupPassword}
                   >
                     {loading ? "Creating account..." : "Verify OTP & Create Password"}
@@ -889,7 +923,7 @@ function AuthPage({ onNavigate }) {
               )}
             </div>
           )}
-        </div>
+        </form>
       </section>
     </main>
   );

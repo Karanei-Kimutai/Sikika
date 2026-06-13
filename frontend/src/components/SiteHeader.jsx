@@ -67,16 +67,23 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
       </button>
 
       <nav className="site-nav" aria-label="Primary navigation">
-        {navItems.map((item) => (
-          <button
-            key={item.path}
-            type="button"
-            className={currentPath === item.path || (item.path === "/" && currentPath === "/home") ? "active" : ""}
-            onClick={() => onNavigate(item.path)}
-          >
-            {item.label}
-          </button>
-        ))}
+        {navItems.map((item) => {
+          const isActive = currentPath === item.path || (item.path === "/" && currentPath === "/home");
+          return (
+            <a
+              key={item.path}
+              href={item.path}
+              className={`site-nav-link ${isActive ? "active" : ""}`}
+              aria-current={isActive ? "page" : undefined}
+              onClick={(e) => {
+                e.preventDefault();
+                onNavigate(item.path);
+              }}
+            >
+              {item.label}
+            </a>
+          );
+        })}
       </nav>
 
       <div className="header-actions">

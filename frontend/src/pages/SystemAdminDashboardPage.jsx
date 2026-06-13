@@ -171,8 +171,8 @@ function SystemAdminDashboardPage({ onNavigate, onSignOut, initialSection = "inf
 
   if (loading) {
     return (
-      <main className="admin-page system-admin-theme">
-        <section className="admin-shell">
+      <main className="admin-workspace system">
+        <section className="admin-content-area">
           <p className="admin-empty">Loading system operations workspace...</p>
         </section>
       </main>
@@ -181,8 +181,8 @@ function SystemAdminDashboardPage({ onNavigate, onSignOut, initialSection = "inf
 
   if (!dashboard) {
     return (
-      <main className="admin-page system-admin-theme">
-        <section className="admin-shell">
+      <main className="admin-workspace system">
+        <section className="admin-content-area">
           <p className="admin-empty">System workspace is unavailable right now.</p>
         </section>
       </main>
@@ -210,7 +210,7 @@ function SystemAdminDashboardPage({ onNavigate, onSignOut, initialSection = "inf
       onSignOut={onSignOut}
       showSidebar={false}
     >
-      {errorMessage && <p className="status-message warning">{errorMessage}</p>}
+      {errorMessage && <p role="alert" className="status-message warning">{errorMessage}</p>}
       {actionMessage && <p className="status-message">{actionMessage}</p>}
 
       {activeSection === "infrastructure" && (
