@@ -8,18 +8,16 @@ Status legend:
 - Not Done: not implemented yet as a usable feature.
 
 ## 1) USSD Interface and Africa's Talking Integration
-Status: Partial
+Status: Done
 
 What exists now:
 - Data model exists for callback requests in backend models.
 - Seeder includes sample USSD callback request data.
 - Africa's Talking wiring exists for OTP SMS in authentication flow.
-
-What is still missing:
-- Live USSD endpoint/controller workflow.
-- Menu flow for callback request vs hotline option.
-- USSD session response handling and persistence path that creates callback records from actual USSD traffic.
-- Explicit hotline return flow in USSD session.
+- `POST /api/ussd/callback` handles AT session text and returns CON/END responses.
+- Two-branch menu: option 1 (request callback → confirm → persist UssdCallbackRequest) and option 2 (emergency contacts listing).
+- `GET /api/ussd/callback-requests` and `PATCH /api/ussd/callback-requests/:id` for NGO admin fulfillment.
+- NGO admin dashboard "USSD Callbacks" section to view and mark requests completed or cancelled.
 
 ## 2) Legal Case Escalation Workflow
 Status: Partial
@@ -48,28 +46,27 @@ What is still missing:
 - Dismissible-state implementation (separate from read state).
 
 ## 4) Unregistered User Emergency Flow
-Status: Not Done
+Status: Done
 
 What exists now:
-- Unauthenticated users can access landing and resources.
-- Protected routes redirect unauthenticated users to join/auth page.
-- Emergency contacts are visible in landing content.
-
-What is still missing:
-- Soft emergency intercept when unauthenticated users attempt report submission.
-- Explicit two-choice path: Register Now or View Emergency Contacts at interception point.
+- Unauthenticated users navigating to /reports see an intercept screen instead of a silent redirect.
+- Intercept screen offers two explicit choices: Create Account or View Emergency Contacts.
+- Emergency contacts modal shows Police (999/112), Childline Kenya (116), National GBV Hotline (1195).
+- Modal closes on Escape, backdrop click, or Close button.
+- Returning users have a Sign In link below the primary actions.
+- /reports removed from App.jsx protected paths so the intercept renders rather than bouncing to /join.
 
 ## 5) Specific Chat and Moderation Actions
 Status: Partial
 
 5A) Survivor archive/delete direct chats
-Status: Not Done
+Status: Done
 
 What exists now:
 - Direct chat channel model supports status values including archived/deleted.
-
-What is still missing:
-- API endpoints and frontend actions for survivor archive/delete operations.
+- Backend route `PATCH /api/chat/:chatId/status` enforces survivor-only access with valid transitions (active → archived, archived → active, active/archived → deleted).
+- `includeArchived` query param on `GET /api/chat/channels` lets survivors fetch archived channels.
+- Frontend action menu in `DirectChatPage.jsx` exposes Archive Chat / Restore Chat toggle and Delete Chat button per channel.
 
 5B) Moderation warning action
 Status: Done
@@ -95,10 +92,11 @@ What is still missing:
 Status: Partial
 
 7A) Average response time
-Status: Not Done
+Status: Done
 
-What is still missing:
-- Average staff response-time calculation and dashboard visualization.
+What exists now:
+- Backend computes `avgResponseMinutes` and `sampleSize` in `adminController.js`.
+- NGO admin dashboard renders `averageResponseMinutes` and sample count in `NgoAdminDashboardPage.jsx`.
 
 7B) Workload visualizations by counsellor/legal counsel
 Status: Done
@@ -121,11 +119,11 @@ What is still missing:
 - UI visibility for banned status and ban history in admin/user management surfaces.
 
 ## Suggested next implementation order
-1. Item 4 emergency intercept (high safety and UX value).
-2. Item 1 USSD live flow (major requirement gap).
-3. Item 7A response-time analytics.
+1. ~~Item 4 emergency intercept~~ Done
+2. ~~Item 1 USSD live flow~~ Done
+3. ~~Item 7A response-time analytics~~ Done
 4. Item 3 notification center API + UI.
-5. Item 5A chat archive/delete controls.
+5. ~~Item 5A chat archive/delete controls~~ Done
 6. Item 6 explicit presence indicator UX.
 7. Item 8 user banning workflow.
 8. Item 2 dedicated legal document drafting/export workflow.
