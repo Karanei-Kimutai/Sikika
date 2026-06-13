@@ -1,4 +1,15 @@
 :root {
+  /* From index.css — global background gradient */
+  --bg-start: #fff5f0;
+  --bg-end: #ffffff;
+  --text-main: #334155;
+  --text-subtle: #475569;
+
+  /* Font stack — shared across all pages */
+  --font-body: 'Nunito Sans', 'Trebuchet MS', Verdana, sans-serif;
+  --font-heading: 'Fraunces', Georgia, serif;
+
+  /* Primary color palette — warm earth tones (WCAG AA contrast adjusted) */
   --warm-white: #fdfaf6;
   --surface: #ffffff;
   --cream: #f7efe4;
@@ -8,15 +19,71 @@
   --brown-dark: #2c1a0e;
   --brown-hover: #6f4a2f;
   --body: #5c4033;
-  --muted: #7a6758;
-  --sage: #5f7d69;
+  --muted: #6b5748;            /* Improved from #7a6758 for 4.5:1 contrast */
+  --sage: #4a6655;             /* Improved from #5f7d69 for 4.5:1 contrast */
   --sage-soft: #e8f0e9;
-  --clay: #b7654b;
+  --clay: #9e5036;             /* Improved from #b7654b for 4.5:1 contrast */
   --danger: #9f2d2d;
   --danger-bg: #fde8e8;
   --success: #276749;
   --success-bg: #e2f4e9;
-  --shadow: 0 18px 44px rgba(69, 45, 26, 0.12);
+
+  /* Elevation / shadow scale */
+  --shadow-sm:  0 1px 3px rgba(44, 26, 14, 0.08);
+  --shadow-md:  0 4px 12px rgba(44, 26, 14, 0.10);
+  --shadow-lg:  0 18px 44px rgba(69, 45, 26, 0.12);   /* original --shadow */
+  --shadow-xl:  0 24px 64px rgba(44, 26, 14, 0.18);
+  --shadow:     var(--shadow-lg);                      /* backward compat */
+
+  /* Focus ring for keyboard navigation */
+  --focus-ring: 0 0 0 3px rgba(139, 94, 60, 0.35);
+
+  /* Spacing scale — consistent 8px grid */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* Border radius scale */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1.25rem;
+  --radius-pill: 100px;
+
+  /* Interactive state backgrounds */
+  --hover-overlay: rgba(139, 94, 60, 0.06);
+  --active-overlay: rgba(139, 94, 60, 0.12);
+  --selected-bg: rgba(139, 94, 60, 0.08);
+
+  /* Semantic bridge tokens — map to primary palette */
+  --color-text-primary:    var(--body);
+  --color-text-subtle:     var(--muted);
+  --color-surface:         var(--surface);
+  --color-surface-warm:    var(--warm-white);
+  --color-border:          rgba(139, 94, 60, 0.2);
+  --color-accent:          var(--clay);
+  --color-action:          var(--brown);
+  --color-action-hover:    var(--brown-hover);
+
+  /* Community / moderation palette — secondary blue */
+  --community-border: rgba(91, 141, 239, 0.22);
+  --community-bg:     #f8fbff;
+  --community-title:  #163c73;
+  --community-text:   #395a83;
+  --community-muted:  #60789c;
+
+  /* Legal drafting palette — secondary purple */
+  --legal-border:  #d6b8e8;
+  --legal-bg:      #f8f2fb;
+  --legal-accent:  #6c3483;
+  --legal-text:    var(--body);
 }
 
 /* Global shell and sticky header chrome shared across all pages. */
@@ -145,6 +212,203 @@
   background: linear-gradient(135deg, #a53535, #7f2323);
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   Unified Button System (Phase 5-C)
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Base button class — all buttons extend this */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  font-family: var(--font-body);
+  font-weight: 700;
+  border-radius: var(--radius-md);
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Size modifiers */
+.btn-xs  { padding: 0.25rem 0.5rem;    font-size: 0.72rem; }
+.btn-sm  { padding: 0.38rem 0.65rem;   font-size: 0.80rem; }
+.btn-md  { padding: 0.55rem 1rem;      font-size: 0.90rem; }
+.btn-lg  { padding: 0.75rem 1.5rem;    font-size: 1rem;    }
+
+/* Variant modifiers */
+.btn-primary {
+  background: var(--brown);
+  color: #ffffff;
+  border-color: var(--brown);
+}
+
+.btn-primary:hover {
+  background: var(--brown-hover);
+  border-color: var(--brown-hover);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--brown);
+  border-color: var(--brown);
+}
+
+.btn-secondary:hover {
+  background: var(--hover-overlay);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--body);
+  border-color: transparent;
+}
+
+.btn-ghost:hover {
+  background: var(--hover-overlay);
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: #ffffff;
+  border-color: var(--danger);
+}
+
+.btn-danger:hover {
+  background: #841f1f;
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-sage {
+  background: var(--sage);
+  color: #ffffff;
+  border-color: var(--sage);
+}
+
+.btn-sage:hover {
+  background: #3d5e48;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Unified Form Field System (Phase 5-D)
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Wrapper pattern for logical field grouping */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.field-label {
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: var(--body);
+}
+
+.field-hint {
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.field-error {
+  font-size: 0.76rem;
+  color: var(--danger);
+}
+
+/* Input element styling */
+.field-input,
+input[type="text"],
+input[type="email"],
+input[type="tel"],
+input[type="password"],
+input[type="date"],
+input[type="datetime-local"],
+select,
+textarea {
+  width: 100%;
+  padding: 0.6rem 0.85rem;
+  border: 1.5px solid rgba(139, 94, 60, 0.28);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--body);
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.field-input:focus,
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--brown);
+  box-shadow: var(--focus-ring);
+}
+
+.field-input.error,
+input.error,
+select.error,
+textarea.error {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px rgba(159, 45, 45, 0.18);
+}
+
+textarea {
+  resize: vertical;
+  font-family: var(--font-body);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Card Elevation Scale (Phase 5-E)
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Level 0 — flat (no shadow, just border) */
+.card-flat {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+/* Level 1 — raised (default cards, stat cards) */
+.card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.2s ease;
+}
+
+.card:hover {
+  box-shadow: var(--shadow-md);
+}
+
+/* Level 2 — floating (modals, dropdowns, command palette) */
+.card-float {
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow-xl);
+}
+
 .site-header {
   position: sticky;
   top: 0;
@@ -212,16 +476,31 @@ button {
   justify-self: center;
 }
 
+.site-nav-link,
 .site-nav button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 0;
   border-radius: 0.55rem;
   padding: 0.58rem 0.95rem;
   color: var(--body);
   background: transparent;
   font-weight: 800;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
 }
 
+.site-nav-link:focus-visible,
+.site-nav button:focus-visible {
+  outline: 2px solid var(--brown);
+  outline-offset: 2px;
+}
+
+.site-nav-link.active,
 .site-nav button.active,
+.site-nav-link:hover,
 .site-nav button:hover {
   color: var(--brown-dark);
   background: var(--cream);
@@ -2241,9 +2520,9 @@ input:focus {
 }
 
 .admin-hero {
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 1rem;
-  background: var(--admin-bg);
+  background: var(--workspace-bg);
   padding: 1rem;
   display: grid;
   grid-template-columns: 1fr minmax(250px, 300px);
@@ -2253,7 +2532,7 @@ input:focus {
 
 .admin-eyebrow {
   margin: 0;
-  color: var(--admin-accent);
+  color: var(--workspace-accent);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   font-size: 0.73rem;
@@ -2262,30 +2541,30 @@ input:focus {
 
 .admin-hero h1 {
   margin: 0.2rem 0 0;
-  color: var(--admin-title);
+  color: var(--workspace-title);
   font-size: clamp(1.8rem, 3.2vw, 2.6rem);
 }
 
 .admin-hero p {
-  color: var(--admin-text);
+  color: var(--workspace-text);
 }
 
 .admin-profile-card {
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 0.9rem;
-  background: var(--admin-panel);
+  background: var(--workspace-surface);
   padding: 0.8rem;
 }
 
 .admin-profile-card h2 {
   margin: 0;
-  color: var(--admin-title);
+  color: var(--workspace-title);
   font-size: 1rem;
 }
 
 .admin-profile-card p {
   margin: 0.45rem 0 0;
-  color: var(--admin-text);
+  color: var(--workspace-text);
 }
 
 .admin-stats-grid {
@@ -2295,27 +2574,27 @@ input:focus {
 }
 
 .admin-stat-card {
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 0.85rem;
-  background: var(--admin-panel);
+  background: var(--workspace-surface);
   padding: 0.85rem;
 }
 
 .admin-stat-card h3 {
   margin: 0;
-  color: var(--admin-title);
+  color: var(--workspace-title);
   font-size: 0.95rem;
 }
 
 .admin-metric {
   margin: 0.45rem 0 0.3rem;
-  color: var(--admin-accent);
+  color: var(--workspace-accent);
   font-size: 1.65rem;
   font-weight: 900;
 }
 
 .admin-stat-card span {
-  color: var(--admin-text);
+  color: var(--workspace-text);
   font-size: 0.85rem;
 }
 
@@ -2334,21 +2613,21 @@ input:focus {
 }
 
 .admin-panel {
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 0.9rem;
-  background: var(--admin-panel);
+  background: var(--workspace-surface);
   padding: 0.85rem;
 }
 
 .admin-panel h2 {
   margin: 0;
-  color: var(--admin-title);
+  color: var(--workspace-title);
   font-size: 1.03rem;
 }
 
 .admin-note {
   margin: 0.45rem 0 0;
-  color: var(--admin-text);
+  color: var(--workspace-text);
   font-size: 0.82rem;
 }
 
@@ -2360,7 +2639,7 @@ input:focus {
 }
 
 .pulse-card {
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 0.75rem;
   background: rgba(255, 255, 255, 0.9);
   padding: 0.58rem 0.62rem;
@@ -2369,23 +2648,23 @@ input:focus {
 }
 
 .pulse-card span {
-  color: var(--admin-text);
+  color: var(--workspace-text);
   font-size: 0.76rem;
 }
 
 .pulse-card strong {
-  color: var(--admin-title);
+  color: var(--workspace-title);
   font-size: 1.08rem;
 }
 
 .chart-backdrop {
   fill: rgba(255, 255, 255, 0.72);
-  stroke: var(--admin-border);
+  stroke: var(--workspace-border);
 }
 
 .line-series {
   fill: none;
-  stroke: var(--admin-accent);
+  stroke: var(--workspace-accent);
   stroke-width: 3;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -2406,7 +2685,7 @@ input:focus {
 
 .line-point {
   fill: #ffffff;
-  stroke: var(--admin-accent);
+  stroke: var(--workspace-accent);
   stroke-width: 2;
 }
 
@@ -2416,7 +2695,7 @@ input:focus {
 }
 
 .chart-axis-label {
-  fill: var(--admin-text);
+  fill: var(--workspace-text);
   font-size: 0.72rem;
   font-weight: 600;
 }
@@ -2426,7 +2705,7 @@ input:focus {
   display: flex;
   flex-wrap: wrap;
   gap: 0.9rem;
-  color: var(--admin-text);
+  color: var(--workspace-text);
   font-size: 0.78rem;
 }
 
@@ -2444,7 +2723,7 @@ input:focus {
 }
 
 .legend-dot.daily {
-  background: var(--admin-accent);
+  background: var(--workspace-accent);
 }
 
 .legend-dot.avg {
@@ -2459,21 +2738,21 @@ input:focus {
 }
 
 .chart-summary-card {
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 0.7rem;
   background: rgba(255, 255, 255, 0.86);
   padding: 0.55rem 0.65rem;
 }
 
 .chart-summary-card span {
-  color: var(--admin-text);
+  color: var(--workspace-text);
   font-size: 0.76rem;
 }
 
 .chart-summary-card strong {
   display: block;
   margin-top: 0.15rem;
-  color: var(--admin-title);
+  color: var(--workspace-title);
   font-size: 0.92rem;
 }
 
@@ -2485,7 +2764,7 @@ input:focus {
 }
 
 .breakdown-card {
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 0.85rem;
   background: rgba(255, 255, 255, 0.78);
   padding: 0.7rem;
@@ -2493,7 +2772,7 @@ input:focus {
 
 .breakdown-card h3 {
   margin: 0 0 0.55rem;
-  color: var(--admin-title);
+  color: var(--workspace-title);
   font-size: 0.93rem;
 }
 
@@ -2516,12 +2795,12 @@ input:focus {
   display: flex;
   justify-content: space-between;
   gap: 0.5rem;
-  color: var(--admin-text);
+  color: var(--workspace-text);
   font-size: 0.79rem;
 }
 
 .breakdown-row-top strong {
-  color: var(--admin-title);
+  color: var(--workspace-title);
 }
 
 .breakdown-track {
@@ -2553,7 +2832,7 @@ input:focus {
 
 .workload-row span,
 .workload-row strong {
-  color: var(--admin-text);
+  color: var(--workspace-text);
   font-size: 0.84rem;
 }
 
@@ -2567,7 +2846,7 @@ input:focus {
 .bar-fill {
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--admin-accent), #f0995f);
+  background: linear-gradient(90deg, var(--workspace-accent), #f0995f);
 }
 
 .admin-table-wrap {
@@ -2583,15 +2862,15 @@ input:focus {
 
 .admin-table th,
 .admin-table td {
-  border-bottom: 1px solid var(--admin-border);
+  border-bottom: 1px solid var(--workspace-border);
   padding: 0.55rem;
   text-align: left;
   font-size: 0.83rem;
-  color: var(--admin-text);
+  color: var(--workspace-text);
 }
 
 .admin-table th {
-  color: var(--admin-title);
+  color: var(--workspace-title);
   font-weight: 800;
 }
 
@@ -2642,18 +2921,93 @@ input:focus {
 }
 
 .admin-action-btn {
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 0.55rem;
   background: #ffffff;
   padding: 0.38rem 0.55rem;
   font-size: 0.78rem;
-  color: var(--admin-title);
+  color: var(--workspace-title);
   font-weight: 700;
 }
 
 .admin-action-btn.danger {
   border-color: rgba(159, 45, 45, 0.45);
   color: #9f2d2d;
+}
+
+/* Banned Users section styles */
+.admin-card {
+  border: 1px solid var(--workspace-border);
+  border-radius: 0.85rem;
+  background: var(--workspace-surface);
+  padding: 1rem;
+}
+
+.admin-card-title {
+  margin: 0;
+  color: var(--workspace-title);
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.admin-card-subtitle {
+  margin: 0.35rem 0 0.8rem;
+  color: var(--workspace-text);
+  font-size: 0.85rem;
+}
+
+.btn-sm {
+  padding: 0.38rem 0.65rem;
+  border-radius: 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: #ffffff;
+  color: var(--workspace-title);
+}
+
+.btn-secondary {
+  border: 1px solid var(--workspace-border);
+  background: white;
+  color: var(--workspace-title);
+}
+
+.pill-neutral {
+  color: var(--muted);
+  background: var(--cream);
+  border-radius: 100px;
+  padding: 0.25rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: inline-block;
+}
+
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.filter-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--workspace-title);
+}
+
+.filter-select {
+  border: 1px solid var(--workspace-border);
+  border-radius: 0.55rem;
+  padding: 0.38rem 0.55rem;
+  font-size: 0.82rem;
+  background: var(--surface);
+  color: var(--body);
+}
+
+.table-wrap {
+  overflow-x: auto;
 }
 
 .action-cell {
@@ -2669,7 +3023,7 @@ input:focus {
 }
 
 .admin-search input {
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 0.65rem;
   min-height: 2.4rem;
   padding: 0 0.75rem;
@@ -2679,7 +3033,7 @@ input:focus {
   margin-top: 0.7rem;
   display: grid;
   gap: 0.6rem;
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 0.75rem;
   background: rgba(255, 255, 255, 0.8);
   padding: 0.65rem;
@@ -2693,10 +3047,10 @@ input:focus {
 }
 
 .report-status-tabs button {
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 999px;
   background: #ffffff;
-  color: var(--admin-title);
+  color: var(--workspace-title);
   min-height: 2rem;
   padding: 0.2rem 0.7rem;
   font-size: 0.76rem;
@@ -2707,7 +3061,7 @@ input:focus {
 
 .report-status-tabs button.active {
   border-color: #7f3c1d;
-  background: var(--admin-accent);
+  background: var(--workspace-accent);
   color: #ffffff;
   box-shadow: none;
 }
@@ -2724,11 +3078,11 @@ input:focus {
 
 .report-filter-row input,
 .report-filter-row select {
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 0.6rem;
   min-height: 2.2rem;
   padding: 0 0.62rem;
-  color: var(--admin-title);
+  color: var(--workspace-title);
   background: #ffffff;
   font-size: 0.8rem;
 }
@@ -2763,10 +3117,10 @@ input:focus {
 }
 
 .filter-pill {
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 999px;
   background: #ffffff;
-  color: var(--admin-text);
+  color: var(--workspace-text);
   min-height: 1.85rem;
   padding: 0.18rem 0.58rem;
   display: inline-flex;
@@ -2776,7 +3130,7 @@ input:focus {
 }
 
 .filter-pill strong {
-  color: var(--admin-title);
+  color: var(--workspace-title);
   font-size: 0.7rem;
   font-weight: 800;
   letter-spacing: 0.02em;
@@ -2796,7 +3150,7 @@ input:focus {
 
 .selection-summary-card {
   margin-top: 0.6rem;
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 0.75rem;
   background: rgba(255, 255, 255, 0.9);
   padding: 0.6rem 0.7rem;
@@ -2804,13 +3158,13 @@ input:focus {
 
 .selection-summary-card h3 {
   margin: 0 0 0.38rem;
-  color: var(--admin-title);
+  color: var(--workspace-title);
   font-size: 0.9rem;
 }
 
 .selection-summary-card p {
   margin: 0.22rem 0;
-  color: var(--admin-text);
+  color: var(--workspace-text);
   font-size: 0.79rem;
 }
 
@@ -2819,7 +3173,7 @@ input:focus {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.65rem;
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 0.85rem;
   background: rgba(255, 255, 255, 0.84);
   padding: 0.75rem;
@@ -2828,18 +3182,18 @@ input:focus {
 .reassignment-form label {
   display: grid;
   gap: 0.35rem;
-  color: var(--admin-title);
+  color: var(--workspace-title);
   font-size: 0.8rem;
   font-weight: 700;
 }
 
 .reassignment-form select,
 .reassignment-form input {
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 0.6rem;
   min-height: 2.35rem;
   padding: 0 0.66rem;
-  color: var(--admin-title);
+  color: var(--workspace-title);
   background: #ffffff;
   font-size: 0.84rem;
 }
@@ -2873,7 +3227,7 @@ input:focus {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.65rem;
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 0.85rem;
   background: rgba(255, 255, 255, 0.84);
   padding: 0.75rem;
@@ -2882,17 +3236,17 @@ input:focus {
 .resource-form-grid label {
   display: grid;
   gap: 0.35rem;
-  color: var(--admin-title);
+  color: var(--workspace-title);
   font-size: 0.8rem;
   font-weight: 700;
 }
 
 .resource-form-grid input {
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 0.6rem;
   min-height: 2.35rem;
   padding: 0 0.66rem;
-  color: var(--admin-title);
+  color: var(--workspace-title);
   background: #ffffff;
   font-size: 0.84rem;
 }
@@ -2924,17 +3278,17 @@ input:focus {
 
 .search-results li,
 .notification-list li {
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 0.65rem;
   background: rgba(255, 255, 255, 0.72);
   padding: 0.52rem 0.62rem;
   display: grid;
   gap: 0.15rem;
-  color: var(--admin-text);
+  color: var(--workspace-text);
 }
 
 .notification-list li strong {
-  color: var(--admin-title);
+  color: var(--workspace-title);
 }
 
 .system-badge {
@@ -2959,7 +3313,7 @@ input:focus {
   margin-top: 0.72rem;
   display: grid;
   gap: 0.5rem;
-  color: var(--admin-text);
+  color: var(--workspace-text);
 }
 
 .maintenance-controls p {
@@ -2968,7 +3322,7 @@ input:focus {
 
 .admin-panel-intro p {
   margin: 0.4rem 0 0;
-  color: var(--admin-text);
+  color: var(--workspace-text);
   line-height: 1.52;
 }
 
@@ -2976,16 +3330,16 @@ input:focus {
   display: grid;
   gap: 0.35rem;
   font-weight: 700;
-  color: var(--admin-title);
+  color: var(--workspace-title);
 }
 
 .maintenance-input-label input {
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   border-radius: 0.65rem;
   min-height: 2.4rem;
   padding: 0 0.7rem;
   background: rgba(255, 255, 255, 0.9);
-  color: var(--admin-title);
+  color: var(--workspace-title);
 }
 
 .maintenance-actions {
@@ -3007,11 +3361,11 @@ input:focus {
 .admin-confirm-modal {
   width: min(520px, 100%);
   border-radius: 0.85rem;
-  border: 1px solid var(--admin-border);
+  border: 1px solid var(--workspace-border);
   background: #ffffff;
   box-shadow: 0 14px 36px rgba(16, 24, 40, 0.2);
   padding: 1rem;
-  color: var(--admin-title);
+  color: var(--workspace-title);
   display: grid;
   gap: 0.5rem;
 }
@@ -3034,13 +3388,48 @@ input:focus {
   justify-content: flex-end;
 }
 
+/* Ban modal form field styling */
+.ban-modal-field {
+  margin-bottom: 1rem;
+}
+
+.ban-modal-field label {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--workspace-title);
+}
+
+.ban-modal-field label span {
+  color: var(--danger);
+}
+
+.ban-modal-field textarea,
+.ban-modal-field input {
+  display: block;
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(139, 94, 60, 0.25);
+  font-size: 0.85rem;
+  background: var(--surface);
+  color: var(--body);
+}
+
+.ban-modal-field textarea {
+  resize: vertical;
+  font-family: var(--font-body);
+}
+
 .admin-empty {
-  margin: 0;
-  border: 1px dashed var(--admin-border);
+  margin: 0.8rem 0 0 0;
+  border: 1px dashed var(--workspace-border);
   border-radius: 0.85rem;
-  background: var(--admin-panel);
+  background: var(--workspace-surface);
   padding: 1rem;
-  color: var(--admin-text);
+  color: var(--workspace-text);
   text-align: center;
 }
 
@@ -3734,4 +4123,96 @@ input:focus {
   margin-top: 0.5rem;
   border-top: 1px solid #d6b8e8;
   padding-top: 0.75rem;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Dark Mode Theme (Phase 5-F)
+   ───────────────────────────────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Surfaces — dark background with warm tones */
+    --warm-white:   #1a1210;
+    --surface:      #231a15;
+    --cream:        #2c2018;
+    --sand:         #3a2a1e;
+
+    /* Text — light colors on dark background */
+    --brown-dark:   #f0e6dc;
+    --body:         #d4c4b8;
+    --muted:        #9e8e82;
+
+    /* Primary action — lighter, warmer */
+    --brown:        #c4855a;
+    --brown-hover:  #d49066;
+
+    /* Accents — adjusted for dark mode */
+    --clay:         #e08060;
+    --sage:         #7aad8a;
+    --sage-soft:    #1e3324;
+
+    /* Semantic — dark mode versions */
+    --danger:       #e05555;
+    --danger-bg:    #3a1a1a;
+    --success:      #4daa72;
+    --success-bg:   #1a3326;
+
+    /* Borders — lighter on dark background */
+    --color-border: rgba(255, 220, 190, 0.12);
+
+    /* Shadows — darker environments need darker shadows */
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 18px 44px rgba(0, 0, 0, 0.5);
+    --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.6);
+
+    /* Focus ring — brighter for dark mode */
+    --focus-ring: 0 0 0 3px rgba(196, 133, 90, 0.45);
+  }
+
+  /* Admin workspace theme variants for dark mode */
+  .admin-workspace.ngo {
+    --workspace-bg:      #1c1410;
+    --workspace-surface: #261c16;
+    --workspace-border:  rgba(200, 140, 90, 0.18);
+    --workspace-accent:  #c4855a;
+    --workspace-title:   #f0dfd0;
+    --workspace-text:    #c4b0a0;
+  }
+
+  .admin-workspace.system {
+    --workspace-bg:      #0f1520;
+    --workspace-surface: #161e2e;
+    --workspace-border:  rgba(90, 140, 220, 0.18);
+    --workspace-accent:  #6699dd;
+    --workspace-title:   #d0dff0;
+    --workspace-text:    #8aa4cc;
+  }
+
+  /* Community and legal palette overrides for dark mode */
+  :root {
+    --community-border: rgba(150, 180, 255, 0.18);
+    --community-bg:     #0f1a2e;
+    --community-title:  #b0d4ff;
+    --community-text:   #7aafff;
+    --community-muted:  #5a8fcc;
+
+    --legal-border:  #8060a8;
+    --legal-bg:      #1a0f2e;
+    --legal-accent:  #b885d8;
+    --legal-text:    #d4c4b8;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Accessibility: Respect user motion preferences
+   ───────────────────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration:       0.01ms !important;
+    animation-iteration-count: 1     !important;
+    transition-duration:      0.01ms !important;
+    scroll-behavior:          auto   !important;
+  }
 }

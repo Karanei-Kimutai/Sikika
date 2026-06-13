@@ -10,6 +10,7 @@ import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import axios from 'axios';
 import { io } from 'socket.io-client';
+import { getToken } from '../utils/auth';
 import { getSharedKey, encryptMessage, decryptMessage } from '../utils/cryptoUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
@@ -171,7 +172,7 @@ function decodeJwtPayload(token) {
 }
 
 const DirectChatPage = () => {
-  const initialToken = localStorage.getItem('authToken');
+  const initialToken = getToken();
   const initialPayload = initialToken ? decodeJwtPayload(initialToken) : null;
   const [channels, setChannels] = useState([]);
   const [activeChannelId, setActiveChannelId] = useState(null);
@@ -220,7 +221,7 @@ const DirectChatPage = () => {
    */
   useEffect(() => {
     // Session bootstrap comes from the same auth token written during login.
-    const token = localStorage.getItem('authToken');
+    const token = getToken();
     if (!token) {
       const timerId = window.setTimeout(() => {
         setErrorMessage('You need to log in first to access direct chat.');
@@ -277,7 +278,7 @@ const DirectChatPage = () => {
   const updateChannelStatus = async (chatId, status) => {
     if (!chatId) return;
 
-    const token = localStorage.getItem('authToken');
+    const token = getToken();
     if (!token) return;
 
     try {
@@ -316,7 +317,7 @@ const DirectChatPage = () => {
     persistPreferredChannel(activeChannelId);
 
     const setupSecureChannel = async () => {
-      const token = localStorage.getItem('authToken');
+      const token = getToken();
       if (!token) {
         setErrorMessage('Session expired. Please log in again.');
         return;
@@ -459,7 +460,7 @@ const DirectChatPage = () => {
 
   useEffect(() => {
     const markRead = async () => {
-      const token = localStorage.getItem('authToken');
+      const token = getToken();
       if (!token || !activeChannelId) return;
 
       try {
@@ -636,7 +637,7 @@ const DirectChatPage = () => {
                 {noticeMessage && <p className="wa-notice">{noticeMessage}</p>}
               </header>
 
-              {activeChannel?.asyncDeliveryHint && <p className="status-message warning">{activeChannel.asyncDeliveryHint}</p>}
+              {activeChannel?.asyncDeliveryHint && <p role="alert" className="status-message warning">{activeChannel.asyncDeliveryHint}</p>}
 
               <div className="wa-messages">
                 {messages.length === 0 ? (

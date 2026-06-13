@@ -796,8 +796,8 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
 
   if (loading) {
     return (
-      <main className="admin-page ngo-admin-theme">
-        <section className="admin-shell">
+      <main className="admin-workspace ngo">
+        <section className="admin-content-area">
           <p className="admin-empty">Loading NGO operations workspace...</p>
         </section>
       </main>
@@ -806,8 +806,8 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
 
   if (!dashboard) {
     return (
-      <main className="admin-page ngo-admin-theme">
-        <section className="admin-shell">
+      <main className="admin-workspace ngo">
+        <section className="admin-content-area">
           <p className="admin-empty">NGO workspace is unavailable right now.</p>
         </section>
       </main>
@@ -836,8 +836,8 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
       onSignOut={onSignOut}
       showSidebar={false}
     >
-      {errorMessage && <p className="status-message warning">{errorMessage}</p>}
-      {successMessage && <p className="status-message">{successMessage}</p>}
+      {errorMessage && <p className="status-message warning" role="alert">{errorMessage}</p>}
+      {successMessage && <p className="status-message" role="status">{successMessage}</p>}
 
       {activeSection === "command-center" && (
         <section className="admin-module-grid" aria-label="Command center metrics">
@@ -2024,29 +2024,27 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
             </p>
 
             <form onSubmit={handleSubmitBan}>
-              <div style={{ marginBottom: "1rem" }}>
-                <label style={{ display: "block", marginBottom: "0.4rem", fontWeight: 700, fontSize: "0.85rem" }}>
-                  Ban reason <span style={{ color: "var(--danger)" }}>*</span>
+              <div className="ban-modal-field">
+                <label>
+                  Ban reason <span>*</span>
                   <textarea
                     value={banForm.reason}
                     onChange={(e) => setBanForm((prev) => ({ ...prev, reason: e.target.value }))}
                     placeholder="Describe the policy violation or reason for the ban…"
                     rows={3}
                     required
-                    style={{ display: "block", width: "100%", marginTop: "0.35rem", padding: "0.5rem", borderRadius: "0.5rem", border: "1px solid rgba(139,94,60,0.25)", fontSize: "0.85rem", resize: "vertical" }}
                   />
                 </label>
               </div>
 
-              <div style={{ marginBottom: "1.2rem" }}>
-                <label style={{ display: "block", marginBottom: "0.4rem", fontWeight: 700, fontSize: "0.85rem" }}>
+              <div className="ban-modal-field">
+                <label>
                   Ban expires (optional — leave blank for permanent)
                   <input
                     type="date"
                     value={banForm.expiresAt}
                     onChange={(e) => setBanForm((prev) => ({ ...prev, expiresAt: e.target.value }))}
                     min={new Date().toISOString().split("T")[0]}
-                    style={{ display: "block", marginTop: "0.35rem", padding: "0.5rem", borderRadius: "0.5rem", border: "1px solid rgba(139,94,60,0.25)", fontSize: "0.85rem" }}
                   />
                 </label>
               </div>
