@@ -2,6 +2,12 @@
  * chatController.js
  * -----------------
  * Handles fetching chat channels and retrieving historical direct messages.
+ *
+ * Presence integration:
+ * - getChannels derives effective presence via presenceRegistry (real socket
+ *   connectivity combined with the manual DB availabilityStatus).
+ * - markChannelRead sets seenAt on newly-read messages and emits `message:seen`
+ *   via app.locals.io so the sender's open chat UI shows Seen ticks immediately.
  */
 
 const {
@@ -18,6 +24,7 @@ const {
   ensureAutoChannelsForSurvivor,
   canUserAccessChannel
 } = require('../services/chatAccessService');
+const presenceRegistry = require('../services/presenceRegistry');
 
 function getUserIdFromRequest(req) {
   return req.user?.userId || req.user?.id || null;
@@ -130,18 +137,25 @@ const getChannels = async (req, res) => {
           attributes: ['userId', 'userRole']
         });
 
+        // Derive effective presence from real socket connectivity, layered on top of
+        // the manual DB status. Staff may appear OFFLINE even if they set AVAILABLE
+        // in their profile if they are not actually connected right now.
+        const staffUserId = channel.supportStaffCounterpartId;
+        const manualStatus = availabilityByUserId.get(staffUserId) || null;
+        const effectivePresence = actor.role === 'SURVIVOR'
+          ? presenceRegistry.getEffectivePresence(staffUserId, manualStatus)
+          : null;
+
         return {
           ...channel.toJSON(),
           unreadCount,
           counterpartRole: counterpart?.userRole || null,
-          // Staff availability is only meaningful to survivor-side viewers.
-          counterpartAvailability:
-            actor.role === 'SURVIVOR'
-              ? availabilityByUserId.get(channel.supportStaffCounterpartId) || null
-              : null,
+          // Effective presence is only meaningful on the survivor side of the channel.
+          counterpartAvailability: effectivePresence,
+          // Async copy nudges the survivor to send even if staff is offline.
           asyncDeliveryHint:
-            actor.role === 'SURVIVOR' && availabilityByUserId.get(channel.supportStaffCounterpartId) === 'OFFLINE'
-              ? 'Staff member is currently offline. Your messages will be delivered when they return.'
+            effectivePresence === 'OFFLINE'
+              ? 'Your support worker is currently offline. Your messages will be delivered when they return.'
               : null
         };
       })
@@ -267,16 +281,43 @@ const markChannelRead = async (req, res) => {
       return res.status(403).json({ error: 'Unauthorized.' });
     }
 
-    await DirectChatMessage.update(
-      { messageReadStatus: 'READ' },
-      {
-        where: {
-          chatId,
-          senderUserId: { [Op.ne]: userId },
-          messageReadStatus: 'UNREAD'
+    const now = new Date();
+
+    // Find the UNREAD messages sent by the counterpart (not this user) before marking them.
+    // We need their IDs to emit a targeted seen event to the sender.
+    const unreadMessages = await DirectChatMessage.findAll({
+      where: {
+        chatId,
+        senderUserId: { [Op.ne]: userId },
+        messageReadStatus: 'UNREAD'
+      },
+      attributes: ['messageId', 'senderUserId']
+    });
+
+    if (unreadMessages.length > 0) {
+      const messageIds = unreadMessages.map((m) => m.messageId);
+
+      // Atomically flip to READ and set seenAt timestamp.
+      await DirectChatMessage.update(
+        { messageReadStatus: 'READ', seenAt: now },
+        { where: { messageId: { [Op.in]: messageIds } } }
+      );
+
+      // Push a seen event so the original sender's chat view can flip ticks to Seen
+      // without waiting for a page reload. We target the channel room and the sender's
+      // personal room so multi-tab senders all receive the update.
+      const io = req.app.locals.io;
+      if (io) {
+        const seenPayload = { chatId, messageIds, seenAt: now };
+        io.to(chatId).emit('message:seen', seenPayload);
+
+        // Deduplicate senderUserIds and target their personal rooms too.
+        const senderIds = [...new Set(unreadMessages.map((m) => m.senderUserId))];
+        for (const senderId of senderIds) {
+          io.to(`user:${senderId}`).emit('message:seen', seenPayload);
         }
       }
-    );
+    }
 
     // Read operations are idempotent so clients can safely call this on view open.
     return res.json({ message: 'Messages marked as read.' });
