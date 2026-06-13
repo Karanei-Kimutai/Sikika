@@ -11,7 +11,11 @@ import {
   getNgoReassignmentRequests,
   reviewNgoReassignmentRequest,
   getUssdCallbackRequests,
-  updateUssdCallbackRequest
+  updateUssdCallbackRequest,
+  updateNgoStaffStatus,
+  banUser,
+  unbanUser,
+  listBannedUsers
 } from "../services/admin";
 import { getEvidenceAccessUrl, getReportById } from "../services/reports";
 
@@ -37,7 +41,8 @@ const ngoMenu = [
   { id: "team-capacity", label: "Team Capacity", description: "Counsellor and legal workload" },
   { id: "moderation-desk", label: "Moderation Desk", description: "Community safety decisions" },
   { id: "resources", label: "Resources", description: "Resource center and case intelligence" },
-  { id: "ussd-callbacks", label: "USSD Callbacks", description: "Callback requests from USSD callers" }
+  { id: "ussd-callbacks", label: "USSD Callbacks", description: "Callback requests from USSD callers" },
+  { id: "banned-users", label: "Banned Users", description: "Review and lift bans on survivor and staff accounts" }
 ];
 
 function formatNumber(value) {
@@ -153,6 +158,167 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
   const [ussdCallbacks, setUssdCallbacks] = useState([]);
   const [updatingCallbackId, setUpdatingCallbackId] = useState("");
 
+  // ── Banned users registry state ──────────────────────────────────────────
+  const [bannedUsers, setBannedUsers] = useState([]);
+  const [bannedUsersFilter, setBannedUsersFilter] = useState("");
+  const [bannedUsersLoading, setBannedUsersLoading] = useState(false);
+  const [liftingBanId, setLiftingBanId] = useState(null);
+
+  // ── Staff active/inactive toggle state ───────────────────────────────────
+  /** In-flight userId for the active/inactive flip (drives per-row loading state). */
+  const [togglingStaffId, setTogglingStaffId] = useState(null);
+
+  /**
+   * handleToggleStaffActive
+   * -----------------------
+   * Flips a counsellor/legal-counsel account between ACTIVE ("Active") and
+   * SUSPENDED ("Inactive"). This is the operational pause/resume control;
+   * it intentionally does not interact with the ban workflow.
+   *
+   * @param {string} userId     - UUID of the staff account to toggle.
+   * @param {"ACTIVE"|"SUSPENDED"} nextStatus - Target status to set.
+   * @param {string} label      - Human-readable label for the success banner.
+   */
+  async function handleToggleStaffActive(userId, nextStatus, label) {
+    setErrorMessage("");
+    setSuccessMessage("");
+    setTogglingStaffId(userId);
+    try {
+      await updateNgoStaffStatus(userId, nextStatus);
+      const verb = nextStatus === "SUSPENDED" ? "set to inactive" : "reactivated";
+      setSuccessMessage(`${label} ${verb} successfully.`);
+      await loadDashboard();
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Failed to update staff status.");
+    } finally {
+      setTogglingStaffId(null);
+    }
+  }
+
+  // ── Ban workflow state ────────────────────────────────────────────────────
+  /**
+   * banModal: null (closed) or { userId, label, reportId? }
+   *
+   * reportId is present when the ban originates from the Moderation Desk —
+   * submit then calls reviewModerationReport (ban_user action) so the underlying
+   * report is resolved atomically with the ban.
+   * When reportId is absent (Staff Directory path), submit calls banUser directly.
+   */
+  const [banModal, setBanModal] = useState(null);
+  const [banForm, setBanForm] = useState({ reason: "", expiresAt: "" });
+  const [banLoading, setBanLoading] = useState(false);
+
+  /**
+   * handleOpenBanModal
+   * ------------------
+   * Opens the ban reason/expiry modal for a given user.
+   *
+   * @param {string} userId      - UUID of the user to be banned.
+   * @param {string} label       - Human-readable label for the modal heading.
+   * @param {string} [reportId]  - If banning from the Moderation Desk, the
+   *   contentReportId to resolve atomically. Omit for Staff Directory bans.
+   */
+  function handleOpenBanModal(userId, label, reportId) {
+    setBanForm({ reason: "", expiresAt: "" });
+    setBanModal({ userId, label, reportId: reportId || null });
+  }
+
+  /**
+   * handleSubmitBan
+   * ---------------
+   * Submits the ban form. Two paths based on origin:
+   *
+   * - Moderation Desk (banModal.reportId present): calls reviewModerationReport
+   *   with action "ban_user" so the harmful-content report is marked APPROVED
+   *   (resolved) in the same backend transaction as the ban.
+   * - Staff Directory (no reportId): calls banUser directly.
+   *
+   * On success: reloads the dashboard and shows a success message.
+   */
+  async function handleSubmitBan(event) {
+    event.preventDefault();
+    if (!banModal?.userId) return;
+    if (!banForm.reason.trim()) {
+      setErrorMessage("A ban reason is required.");
+      return;
+    }
+
+    setBanLoading(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      if (banModal.reportId) {
+        // Moderation-desk path: ban + resolve the report atomically.
+        await reviewModerationReport(banModal.reportId, "APPROVED", "ban_user", {
+          reason: banForm.reason.trim(),
+          expiresAt: banForm.expiresAt || null
+        });
+      } else {
+        // Staff-directory path: plain ban, no report to resolve.
+        await banUser(banModal.userId, {
+          reason: banForm.reason.trim(),
+          expiresAt: banForm.expiresAt || null
+        });
+      }
+      setSuccessMessage("User banned successfully.");
+      setBanModal(null);
+      await loadDashboard();
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Failed to apply ban.");
+    } finally {
+      setBanLoading(false);
+    }
+  }
+
+  /**
+   * handleUnban
+   * -----------
+   * Directly lifts the ban for a given user (no modal — ban history is visible
+   * in the staff directory row or moderation queue row).
+   *
+   * @param {string} userId - UUID of the user to unban.
+   * @param {string} label  - Human-readable label for success message.
+   */
+  async function handleUnban(userId, label) {
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      await unbanUser(userId);
+      setSuccessMessage(`Ban lifted for ${label}.`);
+      await loadDashboard();
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Failed to lift ban.");
+    }
+  }
+
+  /**
+   * handleUnbanFromRegistry
+   * -----------------------
+   * Lifts a ban from the Banned Users registry section and refreshes the list.
+   * This path handles survivors and any staff member that may not be visible in
+   * the Staff Directory (e.g., deactivated or never fully onboarded).
+   *
+   * @param {string} userId - UUID of the user to unban.
+   * @param {string} label  - Phone number or role label for success message.
+   */
+  async function handleUnbanFromRegistry(userId, label) {
+    setErrorMessage("");
+    setSuccessMessage("");
+    setLiftingBanId(userId);
+    try {
+      await unbanUser(userId);
+      setSuccessMessage(`Ban lifted for ${label}.`);
+      // Refresh the banned list in place (no full dashboard reload needed).
+      const data = await listBannedUsers(bannedUsersFilter || undefined);
+      setBannedUsers(data.bannedUsers || []);
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Failed to lift ban.");
+    } finally {
+      setLiftingBanId(null);
+    }
+  }
+
   function resetReportFilters() {
     setReportFilters({
       status: "ALL",
@@ -213,6 +379,24 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
 
     loadReassignmentRequests();
   }, [activeSection, reassignmentFilter]);
+
+  useEffect(() => {
+    if (activeSection !== "banned-users") return;
+
+    async function loadBannedUsers() {
+      setBannedUsersLoading(true);
+      try {
+        const data = await listBannedUsers(bannedUsersFilter || undefined);
+        setBannedUsers(data.bannedUsers || []);
+      } catch {
+        setBannedUsers([]);
+      } finally {
+        setBannedUsersLoading(false);
+      }
+    }
+
+    loadBannedUsers();
+  }, [activeSection, bannedUsersFilter]);
 
   useEffect(() => {
     // App route aliases map to section ids through initialSection prop.
@@ -1168,22 +1352,96 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
                     <th>Specialization</th>
                     <th>Active Cases</th>
                     <th>Availability</th>
+                    <th>Account Status</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(dashboard.staffDirectory || []).map((staff) => (
-                    <tr key={`${staff.type}-${staff.id}`}>
-                      <td>{staff.label}</td>
-                      <td>{staff.type === "COUNSELLOR" ? "Counsellor" : "Legal Counsel"}</td>
-                      <td>{staff.specialization}</td>
-                      <td>{formatNumber(staff.activeCases)}</td>
-                      <td>
-                        <span className={availabilityClass(staff.availability)}>
-                          {prettifyLabel(staff.availability)}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {(dashboard.staffDirectory || []).map((staff) => {
+                    const status = staff.accountStatus || "ACTIVE";
+                    const isBanned = status === "BANNED";
+                    const isSuspended = status === "SUSPENDED";
+                    const isActive = status === "ACTIVE";
+                    const isToggling = togglingStaffId === staff.userId;
+
+                    // Display SUSPENDED as "Inactive" so the staffing context reads
+                    // naturally — this is an operational pause, not a punitive ban.
+                    const statusLabel = isSuspended ? "Inactive" : status.charAt(0) + status.slice(1).toLowerCase();
+
+                    return (
+                      <tr key={`${staff.type}-${staff.id}`}>
+                        <td>{staff.label}</td>
+                        <td>{staff.type === "COUNSELLOR" ? "Counsellor" : "Legal Counsel"}</td>
+                        <td>{staff.specialization}</td>
+                        <td>{formatNumber(staff.activeCases)}</td>
+                        <td>
+                          <span className={availabilityClass(staff.availability)}>
+                            {prettifyLabel(staff.availability)}
+                          </span>
+                        </td>
+                        <td>
+                          {/* Badge uses CSS class for colour; label maps SUSPENDED → "Inactive" */}
+                          <span className={`account-status-badge account-status-badge--${status.toLowerCase()}`}>
+                            {statusLabel}
+                          </span>
+                          {/* Ban reason + expiry shown for transparency */}
+                          {isBanned && (
+                            <div className="ban-info">
+                              {staff.banReason && <p><strong>Reason:</strong> {staff.banReason}</p>}
+                              {staff.banExpiresAt
+                                ? <p><strong>Expires:</strong> {formatDate(staff.banExpiresAt)}</p>
+                                : <p>Permanent ban</p>}
+                            </div>
+                          )}
+                        </td>
+                        <td className="action-cell">
+                          {isBanned ? (
+                            // Banned accounts: only Lift Ban — cannot use Active/Inactive flip
+                            // while banned (backend guards this too).
+                            <button
+                              type="button"
+                              className="admin-action-btn"
+                              onClick={() => handleUnban(staff.userId, staff.label)}
+                            >
+                              Lift Ban
+                            </button>
+                          ) : staff.userId && status !== "DEACTIVATED" && (
+                            <>
+                              {/* Active/Inactive operational toggle */}
+                              {isActive && (
+                                <button
+                                  type="button"
+                                  className="admin-action-btn"
+                                  disabled={isToggling}
+                                  onClick={() => handleToggleStaffActive(staff.userId, "SUSPENDED", staff.label)}
+                                >
+                                  {isToggling ? "Updating…" : "Set Inactive"}
+                                </button>
+                              )}
+                              {isSuspended && (
+                                <button
+                                  type="button"
+                                  className="admin-action-btn"
+                                  disabled={isToggling}
+                                  onClick={() => handleToggleStaffActive(staff.userId, "ACTIVE", staff.label)}
+                                >
+                                  {isToggling ? "Updating…" : "Set Active"}
+                                </button>
+                              )}
+                              {/* Ban Account — available for both Active and Inactive staff */}
+                              <button
+                                type="button"
+                                className="admin-action-btn danger"
+                                onClick={() => handleOpenBanModal(staff.userId, staff.label)}
+                              >
+                                Ban Account
+                              </button>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1428,9 +1686,32 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
                         <button type="button" className="admin-action-btn" onClick={() => handleModerationAction(row.reportId, "issue_warning")}>
                           Issue Warning
                         </button>
-                        <button type="button" className="admin-action-btn danger" onClick={() => handleModerationAction(row.reportId, "suspend_user")}>
-                          Suspend User
-                        </button>
+                        {/* Ban / Lift Ban — branches on whether the author is already banned.
+                            Banning from here resolves the report atomically (reportId is passed
+                            to the modal so handleSubmitBan uses reviewModerationReport). */}
+                        {row.senderUserId && (
+                          row.senderAccountStatus === "BANNED" ? (
+                            <button
+                              type="button"
+                              className="admin-action-btn"
+                              onClick={() => handleUnban(row.senderUserId, `Community Member ${row.senderUserId.slice(0, 8)}`)}
+                            >
+                              Lift Ban
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="admin-action-btn danger"
+                              onClick={() => handleOpenBanModal(
+                                row.senderUserId,
+                                `Community Member ${row.senderUserId.slice(0, 8)}`,
+                                row.reportId
+                              )}
+                            >
+                              Ban User
+                            </button>
+                          )
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -1642,6 +1923,149 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
             )}
           </article>
         </section>
+      )}
+
+      {/* ── Banned Users Registry ───────────────────────────────────────────── */}
+      {activeSection === "banned-users" && (
+        <section className="dashboard-section" aria-label="Banned Users">
+          <article className="admin-card">
+            <h3 className="admin-card-title">Banned Users Registry</h3>
+            <p className="admin-card-subtitle">
+              All accounts currently banned — survivors, counsellors, and legal counsel.
+              Use Lift Ban to restore ACTIVE status.
+            </p>
+
+            {/* Role filter */}
+            <div className="filter-row" style={{ marginBottom: "1rem" }}>
+              <label htmlFor="banned-role-filter" className="filter-label">Filter by role:</label>
+              <select
+                id="banned-role-filter"
+                className="filter-select"
+                value={bannedUsersFilter}
+                onChange={(e) => setBannedUsersFilter(e.target.value)}
+              >
+                <option value="">All roles</option>
+                <option value="SURVIVOR">Survivor</option>
+                <option value="COUNSELLOR">Counsellor</option>
+                <option value="LEGAL_COUNSEL">Legal Counsel</option>
+              </select>
+            </div>
+
+            {bannedUsersLoading && <p className="admin-empty">Loading banned accounts…</p>}
+
+            {!bannedUsersLoading && bannedUsers.length === 0 && (
+              <p className="admin-empty">No accounts are currently banned.</p>
+            )}
+
+            {!bannedUsersLoading && bannedUsers.length > 0 && (
+              <div className="table-wrap">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Phone</th>
+                      <th>Role</th>
+                      <th>Reason</th>
+                      <th>Banned At</th>
+                      <th>Expires</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bannedUsers.map((u) => (
+                      <tr key={u.userId}>
+                        <td className="mono">{u.phoneNumber || u.userId}</td>
+                        <td>
+                          <span className="pill pill-neutral">{prettifyLabel(u.role)}</span>
+                        </td>
+                        <td style={{ maxWidth: "260px", wordBreak: "break-word" }}>
+                          {u.banReason || "-"}
+                        </td>
+                        <td>{formatDate(u.bannedAt)}</td>
+                        <td>
+                          {u.isPermanent
+                            ? <span className="pill priority-high">Permanent</span>
+                            : formatDate(u.banExpiresAt)}
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="btn-sm btn-secondary"
+                            disabled={liftingBanId === u.userId}
+                            onClick={() => handleUnbanFromRegistry(u.userId, u.phoneNumber || u.role)}
+                          >
+                            {liftingBanId === u.userId ? "Lifting…" : "Lift Ban"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </article>
+        </section>
+      )}
+
+      {/* ── Ban User Modal ──────────────────────────────────────────────────── */}
+      {banModal && (
+        <div
+          className="admin-confirm-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="ban-modal-title"
+          onClick={() => setBanModal(null)}
+          onKeyDown={(e) => e.key === "Escape" && setBanModal(null)}
+        >
+          <article className="admin-confirm-modal" onClick={(e) => e.stopPropagation()}>
+            <h3 id="ban-modal-title">Ban Account</h3>
+            <p className="admin-empty" style={{ marginBottom: "1rem" }}>
+              Banning <strong>{banModal.label}</strong> will immediately block all platform access,
+              including active sessions. The account can be unbanned at any time from the Staff Directory.
+            </p>
+
+            <form onSubmit={handleSubmitBan}>
+              <div style={{ marginBottom: "1rem" }}>
+                <label style={{ display: "block", marginBottom: "0.4rem", fontWeight: 700, fontSize: "0.85rem" }}>
+                  Ban reason <span style={{ color: "var(--danger)" }}>*</span>
+                  <textarea
+                    value={banForm.reason}
+                    onChange={(e) => setBanForm((prev) => ({ ...prev, reason: e.target.value }))}
+                    placeholder="Describe the policy violation or reason for the ban…"
+                    rows={3}
+                    required
+                    style={{ display: "block", width: "100%", marginTop: "0.35rem", padding: "0.5rem", borderRadius: "0.5rem", border: "1px solid rgba(139,94,60,0.25)", fontSize: "0.85rem", resize: "vertical" }}
+                  />
+                </label>
+              </div>
+
+              <div style={{ marginBottom: "1.2rem" }}>
+                <label style={{ display: "block", marginBottom: "0.4rem", fontWeight: 700, fontSize: "0.85rem" }}>
+                  Ban expires (optional — leave blank for permanent)
+                  <input
+                    type="date"
+                    value={banForm.expiresAt}
+                    onChange={(e) => setBanForm((prev) => ({ ...prev, expiresAt: e.target.value }))}
+                    min={new Date().toISOString().split("T")[0]}
+                    style={{ display: "block", marginTop: "0.35rem", padding: "0.5rem", borderRadius: "0.5rem", border: "1px solid rgba(139,94,60,0.25)", fontSize: "0.85rem" }}
+                  />
+                </label>
+              </div>
+
+              <div className="admin-confirm-actions">
+                <button
+                  type="submit"
+                  className="admin-action-btn danger"
+                  disabled={banLoading || !banForm.reason.trim()}
+                >
+                  {banLoading ? "Applying ban…" : "Confirm Ban"}
+                </button>
+                <button type="button" className="secondary-btn" onClick={() => setBanModal(null)}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </article>
+        </div>
       )}
 
       {selectedModerationRow && (

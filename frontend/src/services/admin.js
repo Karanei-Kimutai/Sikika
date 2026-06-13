@@ -101,11 +101,61 @@ export async function updateNgoStaffStatus(userId, status) {
   return response.data;
 }
 
-// Community moderation decision endpoint.
-export async function reviewModerationReport(reportId, reviewStatus, action = "none") {
+/**
+ * banUser
+ * -------
+ * Applies a BANNED lifecycle state to the target user via the NGO admin ban endpoint.
+ *
+ * @param {string} userId - UUID of the account to ban.
+ * @param {{ reason: string, expiresAt?: string|null }} payload
+ *   reason is required; expiresAt is an ISO date string for temporary bans or
+ *   null/omitted for a permanent ban.
+ * @returns {Promise<object>} Updated user account status data from the backend.
+ */
+export async function banUser(userId, { reason, expiresAt = null } = {}) {
+  const response = await axios.patch(
+    `${API_BASE_URL}/api/admin/ngo/users/${userId}/ban`,
+    { reason, expiresAt },
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+}
+
+/**
+ * unbanUser
+ * ---------
+ * Lifts the BANNED lifecycle state and restores the account to ACTIVE.
+ *
+ * @param {string} userId - UUID of the account to unban.
+ * @returns {Promise<object>} Updated user account status data from the backend.
+ */
+export async function unbanUser(userId) {
+  const response = await axios.patch(
+    `${API_BASE_URL}/api/admin/ngo/users/${userId}/unban`,
+    {},
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+}
+
+/**
+ * reviewModerationReport
+ * -----------------------
+ * Submits a moderation decision for a harmful-content report.
+ *
+ * @param {string} reportId - UUID of the HarmfulContentReport to review.
+ * @param {string} reviewStatus - "APPROVED" or "REJECTED".
+ * @param {string} [action="none"] - Side-effect action: "remove_message", "issue_warning",
+ *   "ban_user", or "none".
+ * @param {{ reason?: string, expiresAt?: string|null }} [options={}] - Extra body fields
+ *   for "ban_user": reason (defaults to the report's own text on the backend) and optional
+ *   expiresAt ISO date string for a temporary ban. Ignored by other actions.
+ * @returns {Promise<object>}
+ */
+export async function reviewModerationReport(reportId, reviewStatus, action = "none", options = {}) {
   const response = await axios.patch(
     `${API_BASE_URL}/api/community/moderation/reports/${reportId}`,
-    { reviewStatus, action },
+    { reviewStatus, action, ...options },
     { headers: getAuthHeaders() }
   );
   return response.data;
@@ -206,6 +256,24 @@ export async function updateUssdCallbackRequest(requestId, status) {
     { callbackFulfillmentStatus: status },
     { headers: getAuthHeaders() }
   );
+  return response.data;
+}
+
+/**
+ * listBannedUsers
+ * ---------------
+ * Returns all accounts currently in BANNED status.
+ * NGO admin only. Optional `role` filter: 'SURVIVOR' | 'COUNSELLOR' | 'LEGAL_COUNSEL'.
+ *
+ * @param {string} [role] - Optional role to filter by.
+ * @returns {Promise<{bannedUsers: Array, total: number}>}
+ */
+export async function listBannedUsers(role) {
+  const params = role ? { role } : undefined;
+  const response = await axios.get(`${API_BASE_URL}/api/admin/ngo/banned-users`, {
+    headers: getAuthHeaders(),
+    params
+  });
   return response.data;
 }
 

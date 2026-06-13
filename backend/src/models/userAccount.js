@@ -95,14 +95,68 @@ const UserAccount = sequelize.define('userAccount', {
 },
 
   /**
-   * Account status — SUSPENDED accounts cannot log in.
-   * DEACTIVATED accounts are soft-deleted (data preserved for audit).
+   * Account status lifecycle.
+   * - ACTIVE: normal access.
+   * - SUSPENDED: temporary operational block (staff suspension, moderation hold).
+   * - DEACTIVATED: soft-delete — data preserved for audit; account unreachable.
+   * - BANNED: explicit NGO admin enforcement action for policy violations.
+   *   Ban metadata (reason, expiry, actor) is stored in banReason / banExpiresAt /
+   *   bannedAt / bannedByUserId fields below.
+   *
+   * IMPORTANT (MySQL ENUM): adding a new value to this ENUM via sequelize.sync
+   * with alter:true can be unreliable. If the BANNED value does not appear after
+   * sync, run: ALTER TABLE userAccount MODIFY accountStatus
+   * ENUM('ACTIVE','SUSPENDED','DEACTIVATED','BANNED') NOT NULL DEFAULT 'ACTIVE';
    */
   accountStatus: {
-    type:         DataTypes.ENUM('ACTIVE', 'SUSPENDED', 'DEACTIVATED'),
+    type:         DataTypes.ENUM('ACTIVE', 'SUSPENDED', 'DEACTIVATED', 'BANNED'),
     allowNull:    false,
     defaultValue: 'ACTIVE',
     comment:      'Controls whether the user can access the platform'
+  },
+
+  /**
+   * Ban reason — human-readable justification entered by the NGO admin at ban time.
+   * Required when accountStatus is set to BANNED; null otherwise.
+   * Follows the discreet wording policy when surfaced to non-admin users.
+   */
+  banReason: {
+    type:      DataTypes.TEXT,
+    allowNull: true,
+    comment:   'Mandatory reason entered by NGO admin when banning this account'
+  },
+
+  /**
+   * UTC timestamp when this account was banned.
+   * Set by the ban endpoint; cleared on unban.
+   */
+  bannedAt: {
+    type:      DataTypes.DATE,
+    allowNull: true,
+    comment:   'UTC timestamp of when the ban was applied'
+  },
+
+  /**
+   * Optional UTC expiry for temporary bans.
+   * NULL means permanent — ban stands until an admin manually unbans.
+   * When banExpiresAt is set to a past date and the user authenticates,
+   * the system auto-restores accountStatus to ACTIVE and clears ban fields.
+   */
+  banExpiresAt: {
+    type:      DataTypes.DATE,
+    allowNull: true,
+    comment:   'UTC expiry for temporary bans — null means permanent'
+  },
+
+  /**
+   * userId of the NGO admin who issued the ban.
+   * Stored for audit trail and ban-history display; not a FK association
+   * to avoid circular cascade complexity.
+   */
+  bannedByUserId: {
+    type:      DataTypes.STRING(36),
+    allowNull: true,
+    comment:   'userId of the NGO admin who applied the ban'
   },
 
   /**
