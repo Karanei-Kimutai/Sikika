@@ -179,6 +179,36 @@ export async function reviewNgoReassignmentRequest(requestId, payload) {
   return response.data;
 }
 
+/**
+ * Fetch all USSD callback requests, newest first.
+ * NGO admin only.
+ *
+ * @returns {Promise<{requests: Array}>}
+ */
+export async function getUssdCallbackRequests() {
+  const response = await axios.get(`${API_BASE_URL}/api/ussd/callback-requests`, {
+    headers: getAuthHeaders()
+  });
+  return response.data;
+}
+
+/**
+ * Update the fulfillment status of a USSD callback request.
+ * NGO admin only.
+ *
+ * @param {string} requestId
+ * @param {'COMPLETED'|'CANCELLED'} status
+ * @returns {Promise<{message: string, request: object}>}
+ */
+export async function updateUssdCallbackRequest(requestId, status) {
+  const response = await axios.patch(
+    `${API_BASE_URL}/api/ussd/callback-requests/${requestId}`,
+    { callbackFulfillmentStatus: status },
+    { headers: getAuthHeaders() }
+  );
+  return response.data;
+}
+
 // Governance note:
 // System-admin staff lifecycle helpers were intentionally removed from this file.
 // Staffing ownership now lives under NGO admin routes and UI flows.
