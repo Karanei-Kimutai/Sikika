@@ -18,13 +18,7 @@ const {
  * - provisions assignment-driven channels idempotently
  */
 
-function normalizeRole(value) {
-  const role = String(value || "").trim().toUpperCase();
-  if (role === "LEGALCOUNSEL") return "LEGAL_COUNSEL";
-  if (role === "NGOADMIN") return "NGO_ADMIN";
-  if (role === "SYSTEMADMIN") return "SYSTEM_ADMIN";
-  return role;
-}
+const { normalizeRole } = require("../utils/roles");
 
 async function getActorContextByUserId(userId) {
   if (!userId) return null;
@@ -88,19 +82,20 @@ async function ensureAutoChannelsForSurvivor(survivorProfile) {
 
   if (survivorProfile.assignedLegalCounselId) {
     // Auto-provision legal counsel channel from assignment if missing.
+    // Note: channel type must be "legal_counsel_channel" to match model/frontend convention.
     const assignedLegal = await LegalCounselProfile.findByPk(survivorProfile.assignedLegalCounselId);
     if (assignedLegal?.userId) {
       const [channel] = await DirectChatChannel.findOrCreate({
         where: {
           survivorId: survivorProfile.survivorId,
           supportStaffCounterpartId: assignedLegal.userId,
-          chatChannelType: "legal_channel"
+          chatChannelType: "legal_counsel_channel"
         },
         defaults: {
           chatId: randomUUID(),
           survivorId: survivorProfile.survivorId,
           supportStaffCounterpartId: assignedLegal.userId,
-          chatChannelType: "legal_channel",
+          chatChannelType: "legal_counsel_channel",
           chatChannelStatus: "active"
         }
       });

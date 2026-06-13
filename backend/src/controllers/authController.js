@@ -94,9 +94,57 @@ function getCanonicalRole(user) {
     return user.userRole || user.role;
 }
 
+/**
+ * isAccountActive
+ * ---------------
+ * Returns true only for accounts in the ACTIVE lifecycle state.
+ *
+ * Uses an allowlist (rather than a blocklist) so any new non-ACTIVE status
+ * automatically blocks access without a code change.
+ *
+ * States blocked:
+ * - SUSPENDED: temporary operational block (staff suspension, moderation).
+ * - DEACTIVATED: soft-deleted account.
+ * - BANNED: explicit NGO admin enforcement ban (may be time-limited).
+ *
+ * IMPORTANT: for BANNED accounts, callers should surface banReason so the user
+ * understands why access was denied rather than receiving a generic error.
+ *
+ * @param {object} user - UserAccount model instance or plain object with accountStatus.
+ * @returns {boolean} true only when accountStatus is exactly 'ACTIVE'.
+ */
 function isAccountActive(user) {
     const status = String(user?.accountStatus || 'ACTIVE').toUpperCase();
-    return status !== 'SUSPENDED' && status !== 'DEACTIVATED';
+    // Allowlist: only ACTIVE accounts have full platform access.
+    return status === 'ACTIVE';
+}
+
+/**
+ * liftExpiredBan
+ * --------------
+ * Checks whether a BANNED account has a past-expiry temporary ban and, if so,
+ * auto-restores it to ACTIVE by clearing all ban fields.
+ *
+ * Called at login time and in authMiddleware. Shared here to avoid duplication.
+ *
+ * @param {UserAccount} user - Sequelize UserAccount instance (must be loaded with ban fields).
+ * @returns {Promise<boolean>} true if the ban was lifted and accountStatus changed to ACTIVE.
+ */
+async function liftExpiredBan(user) {
+    if (!user || user.accountStatus !== 'BANNED') return false;
+    if (!user.banExpiresAt) return false; // Permanent ban — no auto-lift.
+
+    const now = new Date();
+    if (new Date(user.banExpiresAt) > now) return false; // Ban still active.
+
+    // Temporary ban has expired — restore the account to full access.
+    user.accountStatus = 'ACTIVE';
+    user.banReason = null;
+    user.bannedAt = null;
+    user.banExpiresAt = null;
+    user.bannedByUserId = null;
+    await user.save();
+    return true;
 }
 
 // Normalizes accepted phone formats into a stable canonical representation.
@@ -169,8 +217,11 @@ async function clearPasswordFailureState(user) {
 }
 
 // Sets a fresh OTP with purpose, expiry, and reset attempt counter.
+// The plaintext code is hashed before storage so the DB never contains
+// readable OTPs — a critical requirement on a GBV safety platform where
+// DB exposure must not also expose user auth codes.
 async function setOtpForUser(user, otpCode, purpose) {
-    user.otpHash = otpCode;
+    user.otpHash = await bcrypt.hash(otpCode, 10);
     user.otpPurpose = purpose;
     user.otpExpiresAt = new Date(Date.now() + OTP_TTL_MS);
     user.otpAttemptCount = 0;
@@ -461,8 +512,18 @@ const verifyOTP = async (req, res) => {
             return res.status(401).json({ error: 'Invalid or expired OTP.' });
         }
 
+        // Lift a time-limited ban whose expiry has passed before evaluating access.
+        await liftExpiredBan(user);
+
         if (!isAccountActive(user)) {
-            return res.status(403).json({ error: 'This account is suspended or deactivated.' });
+            const isBanned = String(user.accountStatus).toUpperCase() === 'BANNED';
+            return res.status(403).json({
+                error: isBanned
+                    ? 'This account has been suspended from the platform.'
+                    : 'This account is suspended or deactivated.',
+                ...(isBanned && user.banReason ? { reason: user.banReason } : {}),
+                ...(isBanned && user.banExpiresAt ? { expiresAt: user.banExpiresAt } : {})
+            });
         }
 
         if (isLocked(user)) {
@@ -484,7 +545,8 @@ const verifyOTP = async (req, res) => {
             return res.status(401).json({ error: 'OTP has expired. Request a new code.' });
         }
 
-        if (user.otpHash !== otp) {
+        const otpMatches = await bcrypt.compare(String(otp), user.otpHash);
+        if (!otpMatches) {
             const failure = await registerOtpFailure(user);
             if (failure.exhausted) {
                 return res.status(429).json({ error: 'Too many invalid OTP attempts. Request a new code.' });
@@ -595,8 +657,18 @@ const loginWithPassword = async (req, res) => {
             return res.status(401).json({ error: 'Invalid credentials.' });
         }
 
+        // Lift a time-limited ban whose expiry has passed before evaluating access.
+        await liftExpiredBan(user);
+
         if (!isAccountActive(user)) {
-            return res.status(403).json({ error: 'This account is suspended or deactivated.' });
+            const isBanned = String(user.accountStatus).toUpperCase() === 'BANNED';
+            return res.status(403).json({
+                error: isBanned
+                    ? 'This account has been suspended from the platform.'
+                    : 'This account is suspended or deactivated.',
+                ...(isBanned && user.banReason ? { reason: user.banReason } : {}),
+                ...(isBanned && user.banExpiresAt ? { expiresAt: user.banExpiresAt } : {})
+            });
         }
 
         if (isLocked(user)) {
@@ -722,7 +794,8 @@ const resetPasswordWithOtp = async (req, res) => {
             return res.status(401).json({ error: 'OTP has expired. Request a new code.' });
         }
 
-        if (user.otpHash !== otp) {
+        const resetOtpMatches = await bcrypt.compare(String(otp), user.otpHash);
+        if (!resetOtpMatches) {
             const failure = await registerOtpFailure(user);
             if (failure.exhausted) {
                 return res.status(429).json({ error: 'Too many invalid OTP attempts. Request a new code.' });
@@ -781,5 +854,7 @@ module.exports = {
     resetPasswordWithOtp,
     setPassword,
     AUTH_STAGES,
-    AUTH_INTENTS
+    AUTH_INTENTS,
+    // Exported for use in authMiddleware and other auth-adjacent flows.
+    liftExpiredBan
 };

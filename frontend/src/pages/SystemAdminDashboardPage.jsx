@@ -384,7 +384,12 @@ function SystemAdminDashboardPage({ onNavigate, onSignOut, initialSection = "inf
                       <td>{entry.phoneNumber}</td>
                       <td>{entry.systemAccessLevel}</td>
                       <td>{entry.maintenancePrivileges}</td>
-                      <td>{entry.accountStatus}</td>
+                      <td>
+                        {/* account-status-badge classes match the shared CSS in App.css */}
+                        <span className={`account-status-badge account-status-badge--${String(entry.accountStatus || "active").toLowerCase()}`}>
+                          {entry.accountStatus || "ACTIVE"}
+                        </span>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

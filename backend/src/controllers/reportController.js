@@ -8,14 +8,14 @@ const {
   CounsellorProfile,
   LegalCounselProfile,
   NgoAdministratorProfile,
-  UserAccount,
-  InAppNotification
+  UserAccount
 } = require("../models");
 const {
   isCloudinaryConfigured,
   uploadEvidenceBuffer,
   generateEvidenceSignedUrl
 } = require("../config/cloudinary");
+const { createNotification, createNotificationsBulk } = require("../services/notificationService");
 
 /**
  * reportController.js
@@ -74,15 +74,7 @@ const STATUS_UPDATE_PERMISSIONS = {
 // Roles are allowed to set only specific next states, even when a transition
 // itself is valid in STATUS_TRANSITIONS.
 
-function normalizeRole(value) {
-  if (!value) return "";
-
-  const role = String(value).trim().toUpperCase();
-  if (role === "LEGALCOUNSEL") return "LEGAL_COUNSEL";
-  if (role === "NGOADMIN") return "NGO_ADMIN";
-  if (role === "SYSTEMADMIN") return "SYSTEM_ADMIN";
-  return role.replace(/\s+/g, "_");
-}
+const { normalizeRole } = require("../utils/roles");
 
 function normalizeSeverity(value) {
   return String(value || "").trim().toUpperCase();
@@ -134,7 +126,16 @@ function toApiLegalCase(legalCase) {
     reportId: legalCase.reportId,
     escalationDate: legalCase.escalationTimestamp,
     caseStatus: legalCase.currentCaseStatus,
-    generatedDocumentPath: legalCase.generatedDocumentPath
+    // generatedDocumentPath is a Cloudinary public_id — access requires a signed URL
+    // obtained via GET /api/legal-cases/:legalCaseId/document/access-url.
+    generatedDocumentPath: legalCase.generatedDocumentPath,
+    // Authoring fields — written by legal counsel via PATCH /api/legal-cases/:legalCaseId
+    caseSummary: legalCase.caseSummary || null,
+    legalGroundsText: legalCase.legalGroundsText || null,
+    requestedReliefText: legalCase.requestedReliefText || null,
+    recommendedActionsText: legalCase.recommendedActionsText || null,
+    draftLastUpdatedAt: legalCase.draftLastUpdatedAt || null,
+    documentGeneratedAt: legalCase.documentGeneratedAt || null
   };
 }
 
@@ -152,16 +153,6 @@ function toApiReport(report) {
     evidence: (report.evidenceFiles || []).map(toApiEvidence),
     legalCase: toApiLegalCase(report.legalCaseFile)
   };
-}
-
-async function createNotification(recipientUserId, message, category = "REPORT_UPDATE") {
-  await InAppNotification.create({
-    notificationId: randomUUID(),
-    recipientUserId,
-    notificationCategoryType: category,
-    discreetNotificationMessage: message,
-    notificationReadStatus: "UNREAD"
-  });
 }
 
 async function getReportStakeholderUserIds(survivorId) {
@@ -200,7 +191,7 @@ async function notifyStakeholders({
   if (survivorMessage) {
     const survivor = await SurvivorProfile.findByPk(survivorId, { attributes: ["userId"] });
     if (survivor?.userId) {
-      await createNotification(survivor.userId, survivorMessage, category);
+      await createNotification({ recipientUserId: survivor.userId, message: survivorMessage, category });
     }
   }
 
@@ -216,9 +207,7 @@ async function notifyStakeholders({
   }
 
   // Fan-out runs in parallel to avoid serial notification delays on write paths.
-  await Promise.all(
-    [...stakeholderIds].map((recipientUserId) => createNotification(recipientUserId, staffMessage, category))
-  );
+  await createNotificationsBulk([...stakeholderIds], staffMessage, category);
 }
 
 async function getActorContext(req) {
@@ -322,12 +311,20 @@ async function fetchReportById(reportId) {
       },
       {
         model: LegalCaseFile,
+        // Include all authoring fields so legal counsel can load draft state
+        // from the report response without a separate legal-case fetch.
         attributes: [
           "legalCaseId",
           "reportId",
           "escalationTimestamp",
           "currentCaseStatus",
-          "generatedDocumentPath"
+          "generatedDocumentPath",
+          "caseSummary",
+          "legalGroundsText",
+          "requestedReliefText",
+          "recommendedActionsText",
+          "draftLastUpdatedAt",
+          "documentGeneratedAt"
         ]
       }
     ]

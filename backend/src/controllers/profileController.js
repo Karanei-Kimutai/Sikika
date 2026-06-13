@@ -11,13 +11,7 @@ function getUserIdFromRequest(req) {
   return req.user?.userId || req.user?.id || null;
 }
 
-function normalizeRole(value) {
-  const role = String(value || '').trim().toUpperCase();
-  if (role === 'LEGALCOUNSEL') return 'LEGAL_COUNSEL';
-  if (role === 'NGOADMIN') return 'NGO_ADMIN';
-  if (role === 'SYSTEMADMIN') return 'SYSTEM_ADMIN';
-  return role;
-}
+const { normalizeRole } = require('../utils/roles');
 
 async function getActorWithRole(userId) {
   if (!userId) return null;

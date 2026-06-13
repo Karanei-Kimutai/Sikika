@@ -49,6 +49,7 @@ const StaffAssignmentHistory    = require('./staffAssignmentHistory');
 const StaffReassignmentRequest  = require('./staffReassignmentRequest');
 const UssdCallbackRequest       = require('./ussdCallbackRequest');
 const OtpVerificationRequest    = require('./otpVerificationRequest');
+const SystemSetting             = require('./systemSetting');
 
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -300,5 +301,8 @@ module.exports = {
   StaffAssignmentHistory,
   StaffReassignmentRequest,
   UssdCallbackRequest,
-  OtpVerificationRequest
+  OtpVerificationRequest,
+
+  // Platform settings
+  SystemSetting
 };

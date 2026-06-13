@@ -18,14 +18,7 @@ const {
 
 const ALLOWED_MANAGEMENT_ROLES = new Set(["COUNSELLOR", "LEGAL_COUNSEL", "NGO_ADMIN"]);
 
-// Normalize historical/legacy role spellings to canonical RBAC role values.
-function normalizeRole(value) {
-  const role = String(value || "").trim().toUpperCase();
-  if (role === "LEGALCOUNSEL") return "LEGAL_COUNSEL";
-  if (role === "NGOADMIN") return "NGO_ADMIN";
-  if (role === "SYSTEMADMIN") return "SYSTEM_ADMIN";
-  return role.replace(/\s+/g, "_");
-}
+const { normalizeRole } = require("../utils/roles");
 
 // Keep category values normalized for consistent search/filter matching.
 function normalizeCategory(value) {
