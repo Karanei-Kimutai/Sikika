@@ -54,6 +54,19 @@ Preview build:
 npm run preview
 ```
 
+Browser E2E smoke tests (Playwright):
+
+```bash
+npx playwright install chromium
+npm run test:e2e
+```
+
+Run E2E tests in headed mode:
+
+```bash
+npm run test:e2e:headed
+```
+
 ## Routing and Role Resolution
 
 Main route shell: src/App.jsx

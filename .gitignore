@@ -7,3 +7,4 @@ frontend/dist/
 frontend/.env
 backend/*.log
 csprojectrelatedfiles/
+CLAUDE.md

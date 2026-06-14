@@ -70,6 +70,7 @@ app.use(cors({
 
 // Parse JSON request bodies before route handlers access req.body.
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 
 // Global maintenance enforcement is applied before business routes.
 app.use(maintenanceGuard);
