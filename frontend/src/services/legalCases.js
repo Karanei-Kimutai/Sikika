@@ -2,9 +2,8 @@
  * legalCases.js — Frontend service for legal case drafting and export.
  *
  * All functions are thin wrappers over the REST endpoints exposed by
- * legalCaseController.js. They read the auth token from localStorage
- * and attach it as a Bearer header, consistent with the rest of the
- * service layer in this project.
+ * legalCaseController.js. They read the auth token from sessionStorage
+ * via getToken() and attach it as a Bearer header.
  *
  * Endpoints consumed:
  *   PATCH  /api/legal-cases/:legalCaseId               — saveLegalCaseDraft
@@ -14,16 +13,17 @@
  */
 
 import axios from 'axios';
+import { getToken } from '../utils/auth';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 /**
- * Returns headers with the Bearer token from localStorage.
+ * Returns headers with the Bearer token from sessionStorage.
  *
  * @returns {{ Authorization: string }}
  */
 function authHeaders() {
-  const token = localStorage.getItem('authToken');
+  const token = getToken();
   return { Authorization: `Bearer ${token}` };
 }
 
