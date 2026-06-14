@@ -465,8 +465,6 @@ button {
 
 .brand-mark small {
   display: block;
-
-.brand-mark small {
   color: var(--muted);
   font-size: 0.78rem;
   margin-top: 0.1rem;
