@@ -349,7 +349,11 @@ function NotificationBell({ isAuthenticated }) {
           {/* Panel body */}
           <div className="notification-panel-body">
             {loading && (
-              <p className="notification-empty">Loading updates…</p>
+              <div aria-busy="true" aria-label="Loading notifications" style={{ padding: '0.5rem 0.75rem' }}>
+                <div className="skeleton skeleton-line" />
+                <div className="skeleton skeleton-line" style={{ width: '80%' }} />
+                <div className="skeleton skeleton-line" style={{ width: '65%' }} />
+              </div>
             )}
 
             {!loading && error && (

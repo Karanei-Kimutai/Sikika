@@ -1,3 +1,4 @@
+import { ArrowRight } from "lucide-react";
 import heroArtwork from "../assets/hero.png";
 
 /**
@@ -40,7 +41,7 @@ function LandingPage({ onNavigate }) {
           </p>
           <div className="hero-actions">
             <button type="button" className="primary-btn" onClick={() => onNavigate("/library")}>
-              Browse Resources
+              Browse Resources <ArrowRight size={16} aria-hidden="true" />
             </button>
             <button type="button" className="secondary-btn" onClick={() => onNavigate("/join")}>
               Join Community

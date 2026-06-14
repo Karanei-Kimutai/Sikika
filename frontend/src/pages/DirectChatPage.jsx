@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { MoreHorizontal } from 'lucide-react';
+import { MoreHorizontal, Send, Lock } from 'lucide-react';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import { getToken } from '../utils/auth';
@@ -352,7 +352,8 @@ const DirectChatPage = () => {
                 : peerRoleLabelFromSession(currentUserRole),
             // Carry delivery/seen timestamps so ticks render correctly on history load.
             deliveredAt: dbMessage.deliveredAt || null,
-            seenAt: dbMessage.seenAt || null
+            seenAt: dbMessage.seenAt || null,
+            sentAt: dbMessage.messageDispatchTimestamp || null
           }))
         );
 
@@ -399,7 +400,8 @@ const DirectChatPage = () => {
             : peerRoleLabelFromSession(currentUserRole),
         // Delivery/seen ticks — pre-populated if the counterpart was already online.
         deliveredAt: dbMessage.deliveredAt || null,
-        seenAt: dbMessage.seenAt || null
+        seenAt: dbMessage.seenAt || null,
+        sentAt: dbMessage.messageDispatchTimestamp || null
       };
 
       setMessages((prev) => [...prev, decryptedMsg]);
@@ -626,7 +628,7 @@ const DirectChatPage = () => {
                   <span className="wa-avatar muted">{currentUserRole === 'survivor' ? 'S' : 'U'}</span>
                   <div>
                     <strong>{currentUserRole === 'survivor' ? 'Secure Staff Channel' : 'Secure Survivor Channel'}</strong>
-                    <small>end-to-end encrypted</small>
+                    <small className="wa-e2ee-label"><Lock size={10} aria-hidden="true" /> End-to-end encrypted</small>
                     {activeChannel?.counterpartAvailability && (
                       <small className="wa-presence-row">
                         <span className={presenceDotClass(activeChannel.counterpartAvailability)} aria-hidden="true" />
@@ -650,6 +652,11 @@ const DirectChatPage = () => {
                       <div className={`wa-bubble ${msg.isMine ? 'mine' : 'theirs'}`}>
                         <small className="wa-msg-role">{msg.senderLabel || (msg.isMine ? 'You' : 'Peer')}</small>
                         <p>{msg.plaintext}</p>
+                        {msg.sentAt && (
+                          <time className="wa-msg-time" dateTime={msg.sentAt}>
+                            {new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </time>
+                        )}
                         {/* Delivery/seen ticks — only rendered on sender's own bubbles */}
                         <MessageTicks msg={msg} />
                       </div>
@@ -667,8 +674,8 @@ const DirectChatPage = () => {
                   onChange={(e) => setNewMessage(e.target.value)}
                   disabled={!cryptoKey}
                 />
-                <button type="submit" disabled={!cryptoKey || !newMessage.trim()}>
-                  Send
+                <button type="submit" className="wa-send-btn" aria-label="Send message" disabled={!cryptoKey || !newMessage.trim()}>
+                  <Send size={14} aria-hidden="true" />
                 </button>
               </form>
             </>

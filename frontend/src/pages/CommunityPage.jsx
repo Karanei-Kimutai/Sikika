@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { io } from "socket.io-client";
+import { Send } from "lucide-react";
 import { getToken, getUserId } from "../utils/auth";
 import ConfirmDialog from "../components/ConfirmDialog";
 
@@ -512,6 +513,12 @@ function CommunityPage() {
 
                   <p>{message.publicMessageContent}</p>
 
+                  {message.messageDispatchTimestamp && (
+                    <time className="community-msg-time" dateTime={message.messageDispatchTimestamp}>
+                      {new Date(message.messageDispatchTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </time>
+                  )}
+
                   {activeMessageMenuId === message.communityMessageId && (
                     <div className="message-actions-menu">
                       {message.senderUserId !== currentUserId && (
@@ -554,8 +561,8 @@ function CommunityPage() {
               onChange={(event) => setNewMessage(event.target.value)}
               disabled={!canAccessActiveRoom}
             />
-            <button type="submit" className="primary-btn" disabled={!newMessage.trim() || !canAccessActiveRoom}>
-              Post
+            <button type="submit" className="wa-send-btn" aria-label="Post message" disabled={!newMessage.trim() || !canAccessActiveRoom}>
+              <Send size={14} aria-hidden="true" />
             </button>
           </form>
         </section>
