@@ -8,3 +8,4 @@ frontend/test-results/
 frontend/.env
 backend/*.log
 csprojectrelatedfiles/
+.claude

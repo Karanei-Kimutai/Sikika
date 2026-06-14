@@ -47,7 +47,7 @@ const DirectChatChannel = sequelize.define('directChatChannel', {
    * Stored as a string rather than ENUM to allow future channel types.
    */
   chatChannelType: {
-    type:      DataTypes.STRING(20),
+    type:      DataTypes.STRING(40),
     allowNull: false,
     comment:   'Channel type — counsellor_channel | legal_counsel_channel'
   },
