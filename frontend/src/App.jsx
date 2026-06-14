@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
+import { getToken, removeToken, removeUserId } from "./utils/auth";
 import SiteHeader from "./components/SiteHeader";
 import AuthPage from "./pages/AuthPage";
 import LandingPage from "./pages/LandingPage";
@@ -85,7 +86,7 @@ function getRoutesForRole(role, isAuthenticated) {
 
 // UI-only route gating helper; API authorization still happens on the backend.
 function decodeRoleFromToken() {
-  const token = localStorage.getItem("authToken");
+  const token = getToken();
   if (!token) return "";
 
   try {
@@ -115,7 +116,7 @@ function App() {
   const [currentPath, setCurrentPath] = useState(getCurrentPath);
   const [isQuickExitCollapsed, setIsQuickExitCollapsed] = useState(false);
   const quickExitIdleTimerRef = useRef(null);
-  const isAuthenticated = Boolean(localStorage.getItem("authToken"));
+  const isAuthenticated = Boolean(getToken());
   const role = decodeRoleFromToken();
   const [maintenanceMode, setMaintenanceMode] = useState({ enabled: false, updatedAt: null });
 
@@ -153,8 +154,8 @@ function App() {
   };
 
   const handleSignOut = () => {
-    localStorage.removeItem("authToken");
-    localStorage.removeItem("userId");
+    removeToken();
+    removeUserId();
     navigate("/join");
   };
 
@@ -166,8 +167,8 @@ function App() {
       return;
     }
 
-    localStorage.removeItem("authToken");
-    localStorage.removeItem("userId");
+    removeToken();
+    removeUserId();
     window.location.replace(QUICK_EXIT_URL);
   };
 

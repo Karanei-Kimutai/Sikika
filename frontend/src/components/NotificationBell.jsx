@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { Bell, X } from "lucide-react";
+import { getToken } from "../utils/auth";
 import {
   getNotifications,
   getUnreadCount,
@@ -148,7 +150,7 @@ function NotificationBell({ isAuthenticated }) {
     if (!isAuthenticated) return;
 
     // Connect using the stored auth token and subscribe to push events.
-    const token = localStorage.getItem("authToken");
+    const token = getToken();
     if (token) {
       notificationSocket.connect(token);
     }
@@ -319,8 +321,7 @@ function NotificationBell({ isAuthenticated }) {
         aria-label={hasUnread ? `${unreadCount} unread updates` : "Notification center"}
         title={hasUnread ? `${unreadCount} unread updates` : "No new updates"}
       >
-        {/* Bell icon using unicode — no dependency on icon libraries */}
-        <span className="notification-bell-icon" aria-hidden="true">🔔</span>
+        <Bell className="notification-bell-icon" size={20} aria-hidden="true" focusable="false" />
         {hasUnread && (
           <span className="notification-badge" aria-live="polite">
             {unreadCount > 99 ? "99+" : unreadCount}
@@ -348,7 +349,11 @@ function NotificationBell({ isAuthenticated }) {
           {/* Panel body */}
           <div className="notification-panel-body">
             {loading && (
-              <p className="notification-empty">Loading updates…</p>
+              <div aria-busy="true" aria-label="Loading notifications" style={{ padding: '0.5rem 0.75rem' }}>
+                <div className="skeleton skeleton-line" />
+                <div className="skeleton skeleton-line" style={{ width: '80%' }} />
+                <div className="skeleton skeleton-line" style={{ width: '65%' }} />
+              </div>
             )}
 
             {!loading && error && (
@@ -393,7 +398,7 @@ function NotificationBell({ isAuthenticated }) {
                   aria-label="Dismiss this update"
                   title="Dismiss"
                 >
-                  ×
+                  <X size={14} aria-hidden="true" focusable="false" />
                 </button>
               </div>
             ))}
