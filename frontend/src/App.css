@@ -1906,6 +1906,23 @@ input:focus {
   border-left: 3px solid var(--brown);
 }
 
+/* TODO: unread count — shown when backend exposes unread message count per channel */
+.unread-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.2rem;
+  height: 1.2rem;
+  padding: 0 0.28rem;
+  border-radius: var(--radius-pill);
+  background: var(--brown);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
 .wa-chat-item-actions {
   display: flex;
   align-items: center;
@@ -3102,6 +3119,9 @@ input:focus {
 }
 
 .admin-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
   border: 1px solid var(--workspace-border);
   border-radius: 0.55rem;
   background: #ffffff;
