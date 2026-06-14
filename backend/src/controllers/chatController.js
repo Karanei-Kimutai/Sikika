@@ -36,14 +36,21 @@ function getUserIdFromRequest(req) {
  * Survivor-only endpoint for chat lifecycle actions.
  *
  * Allowed transitions:
- * - active -> archived
- * - archived -> active
- * - active/archived -> deleted
+ * - active   → archived
+ * - archived → active   (restore)
+ * - active   → deleted
+ * - archived → deleted
+ * - deleted  → active   (restore from Trash — previously blocked; now allowed)
+ *
+ * "deleted → active" is intentionally allowed so survivors can recover contact
+ * with their assigned counsellor/legal counsel after accidentally deleting a thread
+ * (the Trash/Restore UX, Item 2). Other transitions out of deleted remain blocked.
  *
  * Security notes:
  * - actor must be a survivor account
  * - actor can only mutate channels linked to their own survivor profile
- * - deleted channels are terminal and cannot be modified again
+ * - canUserAccessChannel rejects deleted channels, so we authorize by direct
+ *   survivorId ownership in this handler instead of using that helper
  */
 
 /**
@@ -89,11 +96,30 @@ const getChannels = async (req, res) => {
     }
 
     const includeArchived = String(req.query?.includeArchived || '').trim().toLowerCase() === 'true';
-    // Survivors can optionally request archived channels to support restore/delete
-    // actions, while staff continue to see active channels only.
-    const visibleStatuses = includeArchived && actor.role === 'SURVIVOR'
-      ? ['active', 'archived']
-      : ['active'];
+    const includeDeleted  = String(req.query?.includeDeleted  || '').trim().toLowerCase() === 'true';
+
+    // Visibility matrix (survivors only; staff always see active channels):
+    //   default (no params)              → ['active']
+    //   includeArchived=true             → ['active', 'archived']
+    //   includeDeleted=true              → ['deleted']  (Trash view — deliberately excluded from active+archived)
+    //   includeArchived=true + includeDeleted=true → ['active', 'archived', 'deleted']
+    // Only survivors may view archived or deleted channels. Staff always see active only
+    // to prevent accidental exposure of deleted threads on the staff side.
+    let visibleStatuses;
+    if (actor.role === 'SURVIVOR') {
+      if (includeDeleted && includeArchived) {
+        visibleStatuses = ['active', 'archived', 'deleted'];
+      } else if (includeDeleted) {
+        visibleStatuses = ['deleted'];
+      } else if (includeArchived) {
+        visibleStatuses = ['active', 'archived'];
+      } else {
+        visibleStatuses = ['active'];
+      }
+    } else {
+      // COUNSELLOR / LEGAL_COUNSEL — always active only; deleted channels must not leak.
+      visibleStatuses = ['active'];
+    }
 
     // Return channels by membership and visibility status for sidebar rendering.
     const channels = await DirectChatChannel.findAll({
@@ -195,20 +221,24 @@ const updateChannelStatus = async (req, res) => {
       return res.status(403).json({ error: 'Unauthorized for this chat channel.' });
     }
 
-    if (channel.chatChannelStatus === 'deleted') {
-      return res.status(400).json({ error: 'Deleted channels cannot be changed.' });
+    // Deleted channels may only transition to 'active' (restore from Trash).
+    // All other transitions out of 'deleted' are blocked to prevent ambiguous states.
+    if (channel.chatChannelStatus === 'deleted' && nextStatus !== 'active') {
+      return res.status(400).json({
+        error: 'Deleted channels can only be restored to active. Other transitions are not permitted.'
+      });
     }
 
     channel.chatChannelStatus = nextStatus;
     await channel.save();
 
+    const message =
+      nextStatus === 'archived' ? 'Chat archived successfully.' :
+      nextStatus === 'deleted'  ? 'Chat moved to Trash.' :
+                                  'Chat restored successfully.';
+
     return res.json({
-      message:
-        nextStatus === 'archived'
-          ? 'Chat archived successfully.'
-          : nextStatus === 'deleted'
-            ? 'Chat deleted successfully.'
-            : 'Chat restored successfully.',
+      message,
       channel: {
         chatId: channel.chatId,
         chatChannelStatus: channel.chatChannelStatus

@@ -10,9 +10,10 @@
  *   - 3 counsellors
  *   - 3 legal counsel
  *   - 5 survivors (each auto-assigned to a counsellor and legal counsel)
- *   - Incident reports (some with evidence, one escalated to legal case)
- *   - Community rooms, memberships, and messages
- *   - Direct chat channels and messages
+ *   - Incident reports (multiple statuses; one escalated to legal case)
+ *   - Community rooms, memberships, and messages (incl. two flagged messages)
+ *   - Direct chat channels and messages for each survivor↔staff pair
+ *     (incl. one archived and one deleted channel for Trash/Restore testing)
  *   - Notifications, resources, moderation logs
  *   - OTP requests and USSD callback requests
  *
@@ -20,10 +21,24 @@
  *   node src/seeders/index.js
  *
  * WARNING: This script uses { force: true } on sync — it DROPS and recreates
- * all tables before seeding. Only run in development.
+ * all tables before seeding. Only run in development. NEVER run against a
+ * production database. The hard guard below aborts if NODE_ENV=production.
  */
 
 require('dotenv').config();
+
+// ── Hard production guard ──────────────────────────────────────────────────
+// The force-reset sync will DROP all tables. This cannot be undone. Abort
+// immediately when running in a production environment.
+if (process.env.NODE_ENV === 'production') {
+  console.error(
+    '❌ ABORTED: seeders/index.js must not run in a production environment.\n' +
+    '   NODE_ENV=production detected. This seeder uses sync({ force: true })\n' +
+    '   which DROPS all tables. Unset NODE_ENV or change it to "development".'
+  );
+  process.exit(1);
+}
+
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcrypt');
 const {
@@ -55,7 +70,6 @@ const {
 // ── Helper: hash a password ────────────────────────────────────────────────
 /**
  * Hashes a plaintext password using bcrypt with 12 salt rounds.
- * In production, all passwords pass through this function before storage.
  * @param {string} plaintext
  * @returns {Promise<string>} bcrypt hash
  */
@@ -66,6 +80,11 @@ async function hash(plaintext) {
 // ── Helper: generate a UUID ────────────────────────────────────────────────
 const id = () => uuidv4();
 
+/**
+ * Returns a Date set to 10:00 AM on `days` days ago.
+ * @param {number} days
+ * @returns {Date}
+ */
 function daysAgo(days) {
   const date = new Date();
   date.setHours(10, 0, 0, 0);
@@ -94,34 +113,34 @@ async function seed() {
 
     const sysAdminUserId1 = id();
     await UserAccount.create({
-      userId:                   sysAdminUserId1,
-      phoneNumber:              '+254700000001',
-      hashedPassword:           await hash('SysAdmin@2026!'),
-      userRole:                 'SYSTEM_ADMIN',
-      accountStatus:            'ACTIVE',
-      isOtpVerified:            true
+      userId:        sysAdminUserId1,
+      phoneNumber:   '+254700000001',
+      hashedPassword: await hash('SysAdmin@2026!'),
+      userRole:      'SYSTEM_ADMIN',
+      accountStatus: 'ACTIVE',
+      isOtpVerified: true
     });
     await SystemAdministratorProfile.create({
-      systemAdminId:       id(),
-      userId:              sysAdminUserId1,
+      systemAdminId:         id(),
+      userId:                sysAdminUserId1,
       maintenancePrivileges: 'server_restart,log_access,backup_management',
-      systemAccessLevel:   3
+      systemAccessLevel:     3
     });
 
     const sysAdminUserId2 = id();
     await UserAccount.create({
-      userId:                   sysAdminUserId2,
-      phoneNumber:              '+254700000002',
-      hashedPassword:           await hash('SysAdmin2@2026!'),
-      userRole:                 'SYSTEM_ADMIN',
-      accountStatus:            'ACTIVE',
-      isOtpVerified:            true
+      userId:        sysAdminUserId2,
+      phoneNumber:   '+254700000002',
+      hashedPassword: await hash('SysAdmin2@2026!'),
+      userRole:      'SYSTEM_ADMIN',
+      accountStatus: 'ACTIVE',
+      isOtpVerified: true
     });
     await SystemAdministratorProfile.create({
-      systemAdminId:       id(),
-      userId:              sysAdminUserId2,
+      systemAdminId:         id(),
+      userId:                sysAdminUserId2,
       maintenancePrivileges: 'log_access,backup_management',
-      systemAccessLevel:   2
+      systemAccessLevel:     2
     });
 
 
@@ -169,13 +188,13 @@ async function seed() {
     console.log('🌱 Seeding counsellors...');
 
     const counsellorData = [
-      { phone: '+254700000020', spec: 'Trauma Counselling',           county: 'Nairobi',    workload: 0 },
-      { phone: '+254700000021', spec: 'Domestic Violence Support',    county: 'Mombasa',    workload: 0 },
-      { phone: '+254700000022', spec: 'Psychosocial Support',         county: 'Kisumu',     workload: 0 }
+      { phone: '+254700000020', spec: 'Trauma Counselling',        county: 'Nairobi', workload: 0 },
+      { phone: '+254700000021', spec: 'Domestic Violence Support', county: 'Mombasa', workload: 0 },
+      { phone: '+254700000022', spec: 'Psychosocial Support',      county: 'Kisumu',  workload: 0 }
     ];
 
-    const counsellorIds = [];  // counsellorId values for assignment later
-    const counsellorUserIds = [];
+    const counsellorIds    = [];  // { counsellorId, county } — for survivor assignment
+    const counsellorUserIds = []; // UserAccount userId — for channel population
 
     for (const c of counsellorData) {
       const userId       = id();
@@ -185,11 +204,11 @@ async function seed() {
 
       await UserAccount.create({
         userId,
-        phoneNumber:   c.phone,
+        phoneNumber:    c.phone,
         hashedPassword: await hash('Counsellor@2026!'),
-        userRole:      'COUNSELLOR',
-        accountStatus: 'ACTIVE',
-        isOtpVerified: true
+        userRole:       'COUNSELLOR',
+        accountStatus:  'ACTIVE',
+        isOtpVerified:  true
       });
       await CounsellorProfile.create({
         counsellorId,
@@ -206,25 +225,27 @@ async function seed() {
     console.log('🌱 Seeding legal counsel...');
 
     const legalData = [
-      { phone: '+254700000030', spec: 'Family Law',        county: 'Nairobi',  workload: 0 },
-      { phone: '+254700000031', spec: 'Criminal Law',      county: 'Mombasa',  workload: 0 },
-      { phone: '+254700000032', spec: 'Human Rights Law',  county: 'Kisumu',   workload: 0 }
+      { phone: '+254700000030', spec: 'Family Law',       county: 'Nairobi', workload: 0 },
+      { phone: '+254700000031', spec: 'Criminal Law',     county: 'Mombasa', workload: 0 },
+      { phone: '+254700000032', spec: 'Human Rights Law', county: 'Kisumu',  workload: 0 }
     ];
 
-    const legalCounselIds = [];
+    const legalCounselIds     = [];  // { legalCounselId, county } — for survivor assignment
+    const legalCounselUserIds = [];  // UserAccount userId — for channel population
 
     for (const l of legalData) {
-      const userId        = id();
+      const userId         = id();
       const legalCounselId = id();
+      legalCounselUserIds.push(userId);
       legalCounselIds.push({ legalCounselId, county: l.county });
 
       await UserAccount.create({
         userId,
-        phoneNumber:   l.phone,
+        phoneNumber:    l.phone,
         hashedPassword: await hash('LegalCounsel@2026!'),
-        userRole:      'LEGAL_COUNSEL',
-        accountStatus: 'ACTIVE',
-        isOtpVerified: true
+        userRole:       'LEGAL_COUNSEL',
+        accountStatus:  'ACTIVE',
+        isOtpVerified:  true
       });
       await LegalCounselProfile.create({
         legalCounselId,
@@ -241,24 +262,27 @@ async function seed() {
     console.log('🌱 Seeding survivors...');
 
     /**
-     * Auto-assignment logic:
-     * Match survivor to counsellor and legal counsel in the same county.
+     * Auto-assignment: match survivor to counsellor/legal counsel in the same county.
      * Falls back to first available if no county match (simplified for seed).
+     * @param {string} county
+     * @param {Array<object>} staffArray
      */
     function assignStaff(county, staffArray) {
       return staffArray.find(s => s.county === county) || staffArray[0];
     }
 
     const survivorData = [
-      { phone: '+254711000001', nickname: 'Starlight',   gender: 'Female', county: 'Nairobi'  },
-      { phone: '+254711000002', nickname: 'Brave Heart',  gender: 'Female', county: 'Nairobi'  },
-      { phone: '+254711000003', nickname: 'Rising Dawn',  gender: 'Female', county: 'Mombasa'  },
-      { phone: '+254711000004', nickname: 'Still Waters', gender: 'Male',   county: 'Kisumu'   },
-      { phone: '+254711000005', nickname: 'New Horizon',  gender: 'Female', county: 'Mombasa'  }
+      { phone: '+254711000001', nickname: 'Starlight',    gender: 'Female', county: 'Nairobi' },
+      { phone: '+254711000002', nickname: 'Brave Heart',  gender: 'Female', county: 'Nairobi' },
+      { phone: '+254711000003', nickname: 'Rising Dawn',  gender: 'Female', county: 'Mombasa' },
+      { phone: '+254711000004', nickname: 'Still Waters', gender: 'Male',   county: 'Kisumu'  },
+      { phone: '+254711000005', nickname: 'New Horizon',  gender: 'Female', county: 'Mombasa' }
     ];
 
-    const survivorIds    = [];
-    const survivorUserIds = [];
+    const survivorIds         = [];
+    const survivorUserIds     = [];
+    // Persist assignment pairing keyed by index for channel verification later.
+    const survivorAssignments = [];
 
     for (const s of survivorData) {
       const userId     = id();
@@ -266,17 +290,27 @@ async function seed() {
       survivorUserIds.push(userId);
       survivorIds.push(survivorId);
 
-      // Match to staff in same county
       const assignedCounsellor   = assignStaff(s.county, counsellorIds);
       const assignedLegalCounsel = assignStaff(s.county, legalCounselIds);
 
+      // Resolve UserAccount userIds for channel wiring.
+      const counsellorUserId   = counsellorUserIds[counsellorIds.indexOf(assignedCounsellor)];
+      const legalCounselUserId = legalCounselUserIds[legalCounselIds.indexOf(assignedLegalCounsel)];
+      survivorAssignments.push({
+        survivorId,
+        counsellorUserId,
+        legalCounselUserId,
+        counsellorId:   assignedCounsellor.counsellorId,
+        legalCounselId: assignedLegalCounsel.legalCounselId
+      });
+
       await UserAccount.create({
         userId,
-        phoneNumber:   s.phone,
+        phoneNumber:    s.phone,
         hashedPassword: await hash('Survivor@2026!'),
-        userRole:      'SURVIVOR',
-        accountStatus: 'ACTIVE',
-        isOtpVerified: true
+        userRole:       'SURVIVOR',
+        accountStatus:  'ACTIVE',
+        isOtpVerified:  true
       });
 
       await SurvivorProfile.create({
@@ -290,13 +324,12 @@ async function seed() {
         privacyPreferencesJson: { notificationsEnabled: true }
       });
 
-      // Record the initial assignment in the history table
       await StaffAssignmentHistory.create({
-        assignmentHistoryId:      id(),
+        assignmentHistoryId: id(),
         survivorId,
-        counsellorId:             assignedCounsellor.counsellorId,
-        legalCounselId:           assignedLegalCounsel.legalCounselId,
-        assignmentReason:         'Initial auto-assignment at registration'
+        counsellorId:        assignedCounsellor.counsellorId,
+        legalCounselId:      assignedLegalCounsel.legalCounselId,
+        assignmentReason:    'Initial auto-assignment at registration'
       });
     }
 
@@ -310,18 +343,17 @@ async function seed() {
     const reportId3 = id();
 
     await IncidentReport.create({
-      reportId:               reportId1,
-      survivorId:             survivorIds[0],
-      incidentCategory:       'domestic_violence',
-      severityLevel:          'HIGH',
+      reportId:                reportId1,
+      survivorId:              survivorIds[0],
+      incidentCategory:        'domestic_violence',
+      severityLevel:           'HIGH',
       incidentDescriptionText: 'Repeated incidents at home over the past three months. Increasing frequency.',
-      incidentLocation:       'Nairobi, Eastlands',
-      incidentDate:           '2026-04-15',
-      currentReportStatus:    'IN_PROGRESS',
+      incidentLocation:        'Nairobi, Eastlands',
+      incidentDate:            '2026-04-15',
+      currentReportStatus:     'UNDER_REVIEW',
       reportCreationTimestamp: daysAgo(29)
     });
 
-    // Evidence file for report 1
     await EvidenceFile.create({
       evidenceFileId:             id(),
       reportId:                   reportId1,
@@ -334,18 +366,17 @@ async function seed() {
     });
 
     await IncidentReport.create({
-      reportId:               reportId2,
-      survivorId:             survivorIds[1],
-      incidentCategory:       'sexual_violence',
-      severityLevel:          'CRITICAL',
+      reportId:                reportId2,
+      survivorId:              survivorIds[1],
+      incidentCategory:        'sexual_violence',
+      severityLevel:           'CRITICAL',
       incidentDescriptionText: 'Incident occurred on the stated date. Medical attention was sought.',
-      incidentLocation:       'Nairobi, CBD',
-      incidentDate:           '2026-05-01',
-      currentReportStatus:    'ESCALATED',
+      incidentLocation:        'Nairobi, CBD',
+      incidentDate:            '2026-05-01',
+      currentReportStatus:     'ESCALATED_TO_LEGAL_CASE',
       reportCreationTimestamp: daysAgo(25)
     });
 
-    // Legal case escalated from report 2
     await LegalCaseFile.create({
       legalCaseId:           id(),
       reportId:              reportId2,
@@ -354,14 +385,14 @@ async function seed() {
     });
 
     await IncidentReport.create({
-      reportId:               reportId3,
-      survivorId:             survivorIds[2],
-      incidentCategory:       'stalking',
-      severityLevel:          'MEDIUM',
+      reportId:                reportId3,
+      survivorId:              survivorIds[2],
+      incidentCategory:        'stalking',
+      severityLevel:           'MEDIUM',
       incidentDescriptionText: 'Ongoing stalking behaviour from a known individual.',
-      incidentLocation:       'Mombasa, Old Town',
-      incidentDate:           '2026-05-10',
-      currentReportStatus:    'SUBMITTED',
+      incidentLocation:        'Mombasa, Old Town',
+      incidentDate:            '2026-05-10',
+      currentReportStatus:     'SUBMITTED',
       reportCreationTimestamp: daysAgo(21)
     });
 
@@ -423,30 +454,30 @@ async function seed() {
     }
 
     const bulkReportTemplates = [
-      { category: 'physical_violence', severity: 'HIGH', status: 'UNDER_REVIEW', location: 'Nairobi, Embakasi' },
-      { category: 'emotional_abuse', severity: 'MEDIUM', status: 'ACTIVE_SUPPORT', location: 'Mombasa, Bamburi' },
-      { category: 'economic_abuse', severity: 'LOW', status: 'SUBMITTED', location: 'Kisumu, Kondele' },
-      { category: 'digital_harassment', severity: 'MEDIUM', status: 'UNDER_INVESTIGATION', location: 'Nairobi, Kilimani' },
-      { category: 'sexual_violence', severity: 'CRITICAL', status: 'LEGAL_REVIEW', location: 'Mombasa, Nyali' },
-      { category: 'child_protection', severity: 'HIGH', status: 'UNDER_REVIEW', location: 'Kisumu, Mamboleo' }
+      { category: 'physical_violence',  severity: 'HIGH',     status: 'UNDER_REVIEW',         location: 'Nairobi, Embakasi' },
+      { category: 'emotional_abuse',    severity: 'MEDIUM',   status: 'ACTIVE_SUPPORT',        location: 'Mombasa, Bamburi'  },
+      { category: 'economic_abuse',     severity: 'LOW',      status: 'SUBMITTED',             location: 'Kisumu, Kondele'   },
+      { category: 'digital_harassment', severity: 'MEDIUM',   status: 'UNDER_INVESTIGATION',   location: 'Nairobi, Kilimani' },
+      { category: 'sexual_violence',    severity: 'CRITICAL', status: 'LEGAL_REVIEW',          location: 'Mombasa, Nyali'    },
+      { category: 'child_protection',   severity: 'HIGH',     status: 'UNDER_REVIEW',          location: 'Kisumu, Mamboleo'  }
     ];
 
-    // Add more reports with denser activity around recent days to make trend shifts visible.
+    // Dense activity around recent days for trend-chart visibility.
     const additionalReportDays = [28, 27, 24, 23, 20, 19, 16, 15, 12, 11, 8, 7, 5, 4, 3, 1];
 
     for (let i = 0; i < additionalReportDays.length; i += 1) {
-      const template = bulkReportTemplates[i % bulkReportTemplates.length];
+      const template   = bulkReportTemplates[i % bulkReportTemplates.length];
       const survivorId = survivorIds[i % survivorIds.length];
 
       await IncidentReport.create({
         reportId: id(),
         survivorId,
-        incidentCategory: template.category,
-        severityLevel: template.severity,
+        incidentCategory:        template.category,
+        severityLevel:           template.severity,
         incidentDescriptionText: `Follow-up seeded case ${i + 1} for analytics visibility and dashboard testing.`,
-        incidentLocation: template.location,
-        incidentDate: new Date(Date.now() - (additionalReportDays[i] + 2) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-        currentReportStatus: template.status,
+        incidentLocation:        template.location,
+        incidentDate:            new Date(Date.now() - (additionalReportDays[i] + 2) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+        currentReportStatus:     template.status,
         reportCreationTimestamp: daysAgo(additionalReportDays[i])
       });
     }
@@ -460,43 +491,36 @@ async function seed() {
     const roomId2 = id();
 
     await CommunityRoom.create({
-      roomId:             roomId1,
-      roomName:           'General Support Circle',
+      roomId:              roomId1,
+      roomName:            'General Support Circle',
       roomDescriptionText: 'A safe space for survivors to share experiences and support each other.',
-      createdByAdminId:   ngoAdminId1
+      createdByAdminId:    ngoAdminId1
     });
 
     await CommunityRoom.create({
-      roomId:             roomId2,
-      roomName:           'Legal Rights Awareness',
+      roomId:              roomId2,
+      roomName:            'Legal Rights Awareness',
       roomDescriptionText: 'Resources and discussions around legal rights and the justice system.',
-      createdByAdminId:   ngoAdminId2
+      createdByAdminId:    ngoAdminId2
     });
 
-    // Add some survivors and staff to rooms
+    // Room memberships
     for (let i = 0; i < 3; i++) {
-      await RoomMembership.create({
-        membershipId: id(),
-        roomId:       roomId1,
-        userId:       survivorUserIds[i]
-      });
+      await RoomMembership.create({ membershipId: id(), roomId: roomId1, userId: survivorUserIds[i] });
     }
     await RoomMembership.create({ membershipId: id(), roomId: roomId2, userId: survivorUserIds[0] });
     await RoomMembership.create({ membershipId: id(), roomId: roomId2, userId: survivorUserIds[3] });
+    await RoomMembership.create({ membershipId: id(), roomId: roomId2, userId: survivorUserIds[4] });
 
-    // Community messages — survivors post under their nicknames
-    const commMsgId1 = id();
-    const commMsgId2 = id();
-
+    // Community messages
     await CommunityMessage.create({
-      communityMessageId:   commMsgId1,
+      communityMessageId:   id(),
       roomId:               roomId1,
       senderUserId:         survivorUserIds[0],
       publicMessageContent: 'Thank you for this space. It really helps to know others understand.'
     });
-
     await CommunityMessage.create({
-      communityMessageId:   commMsgId2,
+      communityMessageId:   id(),
       roomId:               roomId1,
       senderUserId:         survivorUserIds[1],
       publicMessageContent: 'I found the legal resources here very helpful. Recommended!'
@@ -508,41 +532,54 @@ async function seed() {
       { roomId: roomId2, senderUserId: survivorUserIds[3], publicMessageContent: 'Can someone explain what happens after filing a police abstract?' },
       { roomId: roomId2, senderUserId: survivorUserIds[0], publicMessageContent: 'The legal rights PDF answered many of my questions.' },
       { roomId: roomId2, senderUserId: survivorUserIds[4], publicMessageContent: 'I need guidance on obtaining protective orders.' },
-      { roomId: roomId1, senderUserId: counsellorUserIds[1], publicMessageContent: 'Reminder: You can step away and come back later. Your pace matters.' }
+      { roomId: roomId1, senderUserId: counsellorUserIds[1], publicMessageContent: 'Reminder: You can step away and come back later. Your pace matters.' },
+      { roomId: roomId1, senderUserId: survivorUserIds[3], publicMessageContent: 'Small steps forward still count. Today was hard but I am still here.' },
+      { roomId: roomId2, senderUserId: survivorUserIds[1], publicMessageContent: 'Is there a template for documenting incidents for legal purposes?' }
     ];
 
     for (const message of additionalCommunityMessages) {
-      await CommunityMessage.create({
-        communityMessageId: id(),
-        ...message
-      });
+      await CommunityMessage.create({ communityMessageId: id(), ...message });
     }
 
-    // A flagged message for moderation testing
-    const flaggedMsgId = id();
+    // Flagged message #1 — for moderation queue testing
+    const flaggedMsgId1 = id();
     await CommunityMessage.create({
-      communityMessageId:   flaggedMsgId,
+      communityMessageId:   flaggedMsgId1,
       roomId:               roomId1,
       senderUserId:         survivorUserIds[2],
       publicMessageContent: '[Test message flagged for moderation review]'
     });
-
-    // Harmful content report on the flagged message
     await HarmfulContentReport.create({
-      contentReportId:              id(),
-      reportedCommunityMessageId:   flaggedMsgId,
-      reporterUserId:               survivorUserIds[0],
-      reportReasonText:             'This content felt inappropriate for this space.',
-      moderationReviewStatus:       'PENDING'
+      contentReportId:            id(),
+      reportedCommunityMessageId: flaggedMsgId1,
+      reporterUserId:             survivorUserIds[0],
+      reportReasonText:           'This content felt inappropriate for this space.',
+      moderationReviewStatus:     'PENDING'
     });
 
-    // Moderation action taken on the flagged content
+    // Flagged message #2 — second moderation case for queue depth testing
+    const flaggedMsgId2 = id();
+    await CommunityMessage.create({
+      communityMessageId:   flaggedMsgId2,
+      roomId:               roomId2,
+      senderUserId:         survivorUserIds[4],
+      publicMessageContent: '[Second test message flagged for moderation review]'
+    });
+    await HarmfulContentReport.create({
+      contentReportId:            id(),
+      reportedCommunityMessageId: flaggedMsgId2,
+      reporterUserId:             survivorUserIds[3],
+      reportReasonText:           'Message made me feel unsafe.',
+      moderationReviewStatus:     'PENDING'
+    });
+
+    // Moderation warning for flagged message #1
     await ModerationActionLog.create({
-      moderationActionId:       id(),
-      moderatorUserId:          ngoAdminUserId1,
-      targetUserId:             survivorUserIds[2],
-      moderationActionType:     'WARNING',
-      moderationActionReason:   'Community guidelines reminder issued to user.'
+      moderationActionId:     id(),
+      moderatorUserId:        ngoAdminUserId1,
+      targetUserId:           survivorUserIds[2],
+      moderationActionType:   'WARNING',
+      moderationActionReason: 'Community guidelines reminder issued to user.'
     });
 
 
@@ -551,222 +588,282 @@ async function seed() {
     console.log('🌱 Seeding direct chat channels and messages...');
 
     /**
-     * Create one counsellor channel for the first survivor.
-     * In production this is created automatically at assignment time.
+     * Provision one counsellor_channel and one legal_counsel_channel per survivor.
+     * In production these are created by ensureAutoChannelsForSurvivor.
+     * The seeder provisions them explicitly so the DB is fully usable without a
+     * prior server run.
+     *
+     * Special channel statuses for UI feature testing:
+     *   Survivor[2]↔counsellor  → "archived"  (Archive/Restore UI flow)
+     *   Survivor[3]↔legal        → "deleted"   (Trash/Restore UI flow, Item 2)
      */
-    const chatId1 = id();
-    await DirectChatChannel.create({
-      chatId:                    chatId1,
-      survivorId:                survivorIds[0],
-      supportStaffCounterpartId: counsellorUserIds[0],
-      chatChannelType:           'counsellor_channel',
-      chatChannelStatus:         'active'
-    });
+    const seededChannels = [];
 
-    // A few messages in this channel
-    await DirectChatMessage.create({
-      messageId:               id(),
-      chatId:                  chatId1,
-      senderUserId:            survivorUserIds[0],
-      // In production this would be ciphertext — plaintext used in seed only
-      encryptedMessageContent: '[ENCRYPTED: Hello, I would like to talk about what happened.]',
-      messageReadStatus:       'READ'
-    });
+    for (let i = 0; i < survivorIds.length; i++) {
+      const assignment = survivorAssignments[i];
 
-    await DirectChatMessage.create({
-      messageId:               id(),
-      chatId:                  chatId1,
-      senderUserId:            counsellorUserIds[0],
-      encryptedMessageContent: '[ENCRYPTED: Thank you for reaching out. I am here to listen.]',
-      messageReadStatus:       'UNREAD'
-    });
+      const counsellorChannelStatus = (i === 2) ? 'archived' : 'active';
+      const legalChannelStatus      = (i === 3) ? 'deleted'  : 'active';
+
+      // ── Counsellor channel ─────────────────────────────────────────────
+      const counsellorChatId = id();
+      await DirectChatChannel.create({
+        chatId:                    counsellorChatId,
+        survivorId:                assignment.survivorId,
+        supportStaffCounterpartId: assignment.counsellorUserId,
+        chatChannelType:           'counsellor_channel',
+        chatChannelStatus:         counsellorChannelStatus
+      });
+      seededChannels.push({
+        chatId:      counsellorChatId,
+        survivorId:  assignment.survivorId,
+        channelType: 'counsellor_channel',
+        staffUserId: assignment.counsellorUserId,
+        status:      counsellorChannelStatus
+      });
+
+      if (counsellorChannelStatus === 'active') {
+        await DirectChatMessage.create({
+          messageId:               id(),
+          chatId:                  counsellorChatId,
+          senderUserId:            survivorUserIds[i],
+          encryptedMessageContent: '[ENCRYPTED: Hello, I would like to talk about what happened.]',
+          messageReadStatus:       'READ'
+        });
+        await DirectChatMessage.create({
+          messageId:               id(),
+          chatId:                  counsellorChatId,
+          senderUserId:            assignment.counsellorUserId,
+          encryptedMessageContent: '[ENCRYPTED: Thank you for reaching out. I am here to listen.]',
+          messageReadStatus:       'UNREAD'
+        });
+        if (i === 0) {
+          // Extra thread for the primary demo survivor
+          await DirectChatMessage.create({
+            messageId:               id(),
+            chatId:                  counsellorChatId,
+            senderUserId:            survivorUserIds[0],
+            encryptedMessageContent: '[ENCRYPTED: I have a follow-up question about the next steps.]',
+            messageReadStatus:       'UNREAD'
+          });
+        }
+      }
+
+      // ── Legal counsel channel ──────────────────────────────────────────
+      const legalChatId = id();
+      await DirectChatChannel.create({
+        chatId:                    legalChatId,
+        survivorId:                assignment.survivorId,
+        supportStaffCounterpartId: assignment.legalCounselUserId,
+        chatChannelType:           'legal_counsel_channel',
+        chatChannelStatus:         legalChannelStatus
+      });
+      seededChannels.push({
+        chatId:      legalChatId,
+        survivorId:  assignment.survivorId,
+        channelType: 'legal_counsel_channel',
+        staffUserId: assignment.legalCounselUserId,
+        status:      legalChannelStatus
+      });
+
+      if (legalChannelStatus === 'active') {
+        await DirectChatMessage.create({
+          messageId:               id(),
+          chatId:                  legalChatId,
+          senderUserId:            survivorUserIds[i],
+          encryptedMessageContent: '[ENCRYPTED: I would like legal advice on the next steps I can take.]',
+          messageReadStatus:       'READ'
+        });
+        await DirectChatMessage.create({
+          messageId:               id(),
+          chatId:                  legalChatId,
+          senderUserId:            assignment.legalCounselUserId,
+          encryptedMessageContent: '[ENCRYPTED: I have reviewed the information. Here are your available options.]',
+          messageReadStatus:       'UNREAD'
+        });
+      }
+    }
 
 
-    // ── 9. NOTIFICATIONS ─────────────────────────────────────────────────
+    // ── 9. DATA INTEGRITY GUARD ──────────────────────────────────────────
+
+    console.log('🔍 Running post-seed data integrity checks...');
+
+    /**
+     * Assert every survivor has exactly one counsellor_channel and one
+     * legal_counsel_channel, and each points to the assigned staff member.
+     * Fails loudly on any broken link so problems surface at seed time.
+     */
+    for (let i = 0; i < survivorIds.length; i++) {
+      const assignment = survivorAssignments[i];
+      const survivorChannels = seededChannels.filter(c => c.survivorId === assignment.survivorId);
+
+      const counsellorChannels   = survivorChannels.filter(c => c.channelType === 'counsellor_channel');
+      const legalCounselChannels = survivorChannels.filter(c => c.channelType === 'legal_counsel_channel');
+
+      if (counsellorChannels.length !== 1) {
+        throw new Error(
+          `Seed integrity check failed: survivor[${i}] (${assignment.survivorId}) ` +
+          `has ${counsellorChannels.length} counsellor_channel(s); expected 1.`
+        );
+      }
+      if (legalCounselChannels.length !== 1) {
+        throw new Error(
+          `Seed integrity check failed: survivor[${i}] (${assignment.survivorId}) ` +
+          `has ${legalCounselChannels.length} legal_counsel_channel(s); expected 1.`
+        );
+      }
+
+      // Verify channel → assignment link (catches mismatched userIds).
+      if (counsellorChannels[0].staffUserId !== assignment.counsellorUserId) {
+        throw new Error(
+          `Seed assignment-link check failed: survivor[${i}] counsellor channel ` +
+          `points to ${counsellorChannels[0].staffUserId} but assigned userId is ${assignment.counsellorUserId}.`
+        );
+      }
+      if (legalCounselChannels[0].staffUserId !== assignment.legalCounselUserId) {
+        throw new Error(
+          `Seed assignment-link check failed: survivor[${i}] legal_counsel channel ` +
+          `points to ${legalCounselChannels[0].staffUserId} but assigned userId is ${assignment.legalCounselUserId}.`
+        );
+      }
+    }
+
+    console.log('✅ Integrity checks passed: all survivors have correct counsellor and legal-counsel channels.');
+
+
+    // ── 10. NOTIFICATIONS ─────────────────────────────────────────────────
 
     console.log('🌱 Seeding notifications...');
 
     /**
-     * All notification messages follow the discreet wording policy (SSD §22.2).
+     * All notification messages use discreet wording per SSD §22.2.
      * No mention of GBV, counselling, or the platform's purpose.
      */
     await InAppNotification.create({
-      notificationId:             id(),
-      recipientUserId:            survivorUserIds[0],
-      notificationCategoryType:   'NEW_MESSAGE',
+      notificationId:              id(),
+      recipientUserId:             survivorUserIds[0],
+      notificationCategoryType:    'NEW_MESSAGE',
       discreetNotificationMessage: 'You have a new message.',
-      notificationReadStatus:     'UNREAD'
+      notificationReadStatus:      'UNREAD'
     });
-
     await InAppNotification.create({
-      notificationId:             id(),
-      recipientUserId:            survivorUserIds[1],
-      notificationCategoryType:   'REPORT_UPDATE',
+      notificationId:              id(),
+      recipientUserId:             survivorUserIds[1],
+      notificationCategoryType:    'REPORT_UPDATE',
       discreetNotificationMessage: 'Your request has been updated.',
-      notificationReadStatus:     'READ'
+      notificationReadStatus:      'READ'
     });
-
     await InAppNotification.create({
-      notificationId:             id(),
-      recipientUserId:            counsellorUserIds[0],
-      notificationCategoryType:   'ASSIGNMENT',
+      notificationId:              id(),
+      recipientUserId:             counsellorUserIds[0],
+      notificationCategoryType:    'ASSIGNMENT',
       discreetNotificationMessage: 'A new assignment has been made.',
-      notificationReadStatus:     'READ'
+      notificationReadStatus:      'READ'
     });
-
     await InAppNotification.create({
-      notificationId:             id(),
-      recipientUserId:            ngoAdminUserId1,
-      notificationCategoryType:   'MODERATION_ALERT',
+      notificationId:              id(),
+      recipientUserId:             ngoAdminUserId1,
+      notificationCategoryType:    'MODERATION_ALERT',
       discreetNotificationMessage: 'A moderation alert requires review.',
-      notificationReadStatus:     'UNREAD'
+      notificationReadStatus:      'UNREAD'
+    });
+    await InAppNotification.create({
+      notificationId:              id(),
+      recipientUserId:             survivorUserIds[2],
+      notificationCategoryType:    'NEW_MESSAGE',
+      discreetNotificationMessage: 'You have a new message.',
+      notificationReadStatus:      'UNREAD'
     });
 
 
-    // ── 10. SUPPORT RESOURCES ─────────────────────────────────────────────
+    // ── 11. SUPPORT RESOURCES ─────────────────────────────────────────────
 
     console.log('🌱 Seeding support resources...');
 
     const resources = [
-      {
-        title:    'GBV Emergency Hotlines — Kenya',
-        category: 'emergency_hotlines',
-        desc:     'A compiled list of 24/7 emergency hotlines for GBV survivors in Kenya.',
-        url:      'https://example.com/resources/emergency-hotlines.pdf'
-      },
-      {
-        title:    'Know Your Legal Rights',
-        category: 'legal_guidance',
-        desc:     'A plain-language guide to legal rights for GBV survivors under Kenyan law.',
-        url:      'https://example.com/resources/legal-rights-guide.pdf'
-      },
-      {
-        title:    'Safe Houses in Nairobi',
-        category: 'shelters',
-        desc:     'Directory of verified safe houses and shelters in the Nairobi region.',
-        url:      'https://example.com/resources/nairobi-shelters.pdf'
-      },
-      {
-        title:    'Healing After Trauma — Self-Help Guide',
-        category: 'self_help',
-        desc:     'Evidence-based self-help strategies for trauma recovery.',
-        url:      'https://example.com/resources/trauma-recovery.pdf'
-      },
-      {
-        title:    'Safety Planning Template',
-        category: 'safety_planning',
-        desc:     'A step-by-step personal safety plan template for survivors in active risk.',
-        url:      'https://example.com/resources/safety-plan-template.pdf'
-      },
-      {
-        title:    'County Referral Directory',
-        category: 'service_directory',
-        desc:     'County-by-county contacts for shelters, counselling, and legal support desks.',
-        url:      'https://example.com/resources/county-referrals.pdf'
-      },
-      {
-        title:    'Court Process Checklist',
-        category: 'legal_guidance',
-        desc:     'Step list of documents and milestones for GBV-related legal follow-up.',
-        url:      'https://example.com/resources/court-process-checklist.pdf'
-      },
-      {
-        title:    'Trauma-Informed Grounding Exercises',
-        category: 'self_help',
-        desc:     'Quick grounding and regulation practices for high-stress moments.',
-        url:      'https://example.com/resources/grounding-exercises.pdf'
-      }
+      { title: 'GBV Emergency Hotlines — Kenya',      category: 'emergency_hotlines', desc: 'A compiled list of 24/7 emergency hotlines for GBV survivors in Kenya.',                  url: 'https://example.com/resources/emergency-hotlines.pdf'      },
+      { title: 'Know Your Legal Rights',              category: 'legal_guidance',     desc: 'A plain-language guide to legal rights for GBV survivors under Kenyan law.',              url: 'https://example.com/resources/legal-rights-guide.pdf'      },
+      { title: 'Safe Houses in Nairobi',              category: 'shelters',           desc: 'Directory of verified safe houses and shelters in the Nairobi region.',                   url: 'https://example.com/resources/nairobi-shelters.pdf'        },
+      { title: 'Healing After Trauma — Self-Help',    category: 'self_help',          desc: 'Evidence-based self-help strategies for trauma recovery.',                               url: 'https://example.com/resources/trauma-recovery.pdf'         },
+      { title: 'Safety Planning Template',            category: 'safety_planning',    desc: 'A step-by-step personal safety plan template for survivors in active risk.',              url: 'https://example.com/resources/safety-plan-template.pdf'    },
+      { title: 'County Referral Directory',           category: 'service_directory',  desc: 'County-by-county contacts for shelters, counselling, and legal support desks.',          url: 'https://example.com/resources/county-referrals.pdf'        },
+      { title: 'Court Process Checklist',             category: 'legal_guidance',     desc: 'Step list of documents and milestones for GBV-related legal follow-up.',                 url: 'https://example.com/resources/court-process-checklist.pdf' },
+      { title: 'Trauma-Informed Grounding Exercises', category: 'self_help',          desc: 'Quick grounding and regulation practices for high-stress moments.',                      url: 'https://example.com/resources/grounding-exercises.pdf'     }
     ];
 
     for (const r of resources) {
       await SupportResource.create({
-        resourceId:              id(),
-        resourceTitle:           r.title,
-        resourceDescription:     r.desc,
-        resourceCategory:        r.category,
-        resourceFileUrl:         r.url,
-        uploadedByStaffId:       ngoAdminUserId1
+        resourceId:          id(),
+        resourceTitle:       r.title,
+        resourceDescription: r.desc,
+        resourceCategory:    r.category,
+        resourceFileUrl:     r.url,
+        uploadedByStaffId:   ngoAdminUserId1
       });
     }
 
 
-    // ── 11. OTP REQUESTS ─────────────────────────────────────────────────
+    // ── 12. OTP REQUESTS ─────────────────────────────────────────────────
 
     console.log('🌱 Seeding OTP verification requests...');
 
-    // Simulate one pending OTP and one verified OTP
-    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 min from now
-
     await OtpVerificationRequest.create({
-      otpRequestId:         id(),
-      targetPhoneNumber:    '+254711000099',
-      hashedOtpCode:        await hash('482910'), // Hash of test OTP
-      otpExpirationTimestamp: otpExpiry,
-      otpVerificationStatus: 'PENDING'
+      otpRequestId:           id(),
+      targetPhoneNumber:      '+254711000099',
+      hashedOtpCode:          await hash('482910'),
+      otpExpirationTimestamp: new Date(Date.now() + 10 * 60 * 1000), // 10 min from now
+      otpVerificationStatus:  'PENDING'
     });
-
     await OtpVerificationRequest.create({
-      otpRequestId:         id(),
-      targetPhoneNumber:    '+254711000001',
-      hashedOtpCode:        await hash('193847'),
-      otpExpirationTimestamp: new Date(Date.now() - 60000), // Already expired
-      otpVerificationStatus: 'VERIFIED'
+      otpRequestId:           id(),
+      targetPhoneNumber:      '+254711000001',
+      hashedOtpCode:          await hash('193847'),
+      otpExpirationTimestamp: new Date(Date.now() - 60000), // already expired
+      otpVerificationStatus:  'VERIFIED'
     });
 
 
-    // ── 12. USSD CALLBACK REQUESTS ───────────────────────────────────────
+    // ── 13. USSD CALLBACK REQUESTS ───────────────────────────────────────
 
     console.log('🌱 Seeding USSD callback requests...');
 
-    await UssdCallbackRequest.create({
-      callbackRequestId:        id(),
-      requesterPhoneNumber:     '+254722000001',
-      callbackFulfillmentStatus: 'PENDING'
-    });
-
-    await UssdCallbackRequest.create({
-      callbackRequestId:        id(),
-      requesterPhoneNumber:     '+254722000002',
-      callbackFulfillmentStatus: 'COMPLETED'
-    });
+    await UssdCallbackRequest.create({ callbackRequestId: id(), requesterPhoneNumber: '+254722000001', callbackFulfillmentStatus: 'PENDING'   });
+    await UssdCallbackRequest.create({ callbackRequestId: id(), requesterPhoneNumber: '+254722000002', callbackFulfillmentStatus: 'COMPLETED' });
+    await UssdCallbackRequest.create({ callbackRequestId: id(), requesterPhoneNumber: '+254722000003', callbackFulfillmentStatus: 'PENDING'   });
 
 
-    // ── 13. AUDIT LOG ENTRIES ────────────────────────────────────────────
+    // ── 14. AUDIT LOG ENTRIES ────────────────────────────────────────────
 
     console.log('🌱 Seeding audit log entries...');
 
-    await AuditLog.create({
-      auditId:       id(),
-      actorUserId:   survivorUserIds[0],
-      actionType:    'LOGIN',
-      targetEntity:  null
-    });
-
-    await AuditLog.create({
-      auditId:       id(),
-      actorUserId:   survivorUserIds[0],
-      actionType:    'REPORT_SUBMITTED',
-      targetEntity:  'incidentReport'
-    });
-
-    await AuditLog.create({
-      auditId:       id(),
-      actorUserId:   ngoAdminUserId1,
-      actionType:    'COMMUNITY_ROOM_CREATED',
-      targetEntity:  'communityRoom'
-    });
+    await AuditLog.create({ auditId: id(), actorUserId: survivorUserIds[0], actionType: 'LOGIN',               targetEntity: null             });
+    await AuditLog.create({ auditId: id(), actorUserId: survivorUserIds[0], actionType: 'REPORT_SUBMITTED',    targetEntity: 'incidentReport' });
+    await AuditLog.create({ auditId: id(), actorUserId: ngoAdminUserId1,    actionType: 'COMMUNITY_ROOM_CREATED', targetEntity: 'communityRoom' });
+    await AuditLog.create({ auditId: id(), actorUserId: ngoAdminUserId1,    actionType: 'STAFF_ACCOUNT_CREATED', targetEntity: 'userAccount'   });
 
 
     console.log('\n✅ Database seeded successfully.');
     console.log('─────────────────────────────────────────');
-    console.log('  System Admins:   2');
-    console.log('  NGO Admins:      2');
-    console.log('  Counsellors:     3');
-    console.log('  Legal Counsel:   3');
-    console.log('  Survivors:       5');
-    console.log('  Reports:         24 (1 escalated to legal case)');
-    console.log('  Community Rooms: 2');
-    console.log('  Resources:       8');
+    console.log('  System Admins:         2');
+    console.log('  NGO Admins:            2');
+    console.log('  Counsellors:           3');
+    console.log('  Legal Counsel:         3');
+    console.log('  Survivors:             5');
+    console.log('  Reports:               24 (1 escalated to legal case)');
+    console.log('  Community Rooms:       2');
+    console.log('  Flagged Messages:      2');
+    console.log('  Direct Chat Channels:  10 (2 per survivor: 1 counsellor + 1 legal)');
+    console.log('    ↳ 1 archived  (Survivor[2] ↔ counsellor)  — Archive/Restore test');
+    console.log('    ↳ 1 deleted   (Survivor[3] ↔ legal)       — Trash/Restore test');
+    console.log('  Resources:             8');
+    console.log('─────────────────────────────────────────');
+    console.log('  Demo credentials (unchanged):');
+    console.log('    Survivor:       +254711000001 / Survivor@2026!');
+    console.log('    Counsellor:     +254700000020 / Counsellor@2026!');
+    console.log('    Legal Counsel:  +254700000030 / LegalCounsel@2026!');
+    console.log('    NGO Admin:      +254700000010 / NgoAdmin@2026!');
+    console.log('    System Admin:   +254700000001 / SysAdmin@2026!');
     console.log('─────────────────────────────────────────\n');
 
   } catch (error) {

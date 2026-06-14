@@ -103,10 +103,11 @@ const UserAccount = sequelize.define('userAccount', {
    *   Ban metadata (reason, expiry, actor) is stored in banReason / banExpiresAt /
    *   bannedAt / bannedByUserId fields below.
    *
-   * IMPORTANT (MySQL ENUM): adding a new value to this ENUM via sequelize.sync
-   * with alter:true can be unreliable. If the BANNED value does not appear after
-   * sync, run: ALTER TABLE userAccount MODIFY accountStatus
-   * ENUM('ACTIVE','SUSPENDED','DEACTIVATED','BANNED') NOT NULL DEFAULT 'ACTIVE';
+   * IMPORTANT (MySQL ENUM): ENUM drift is handled automatically by
+   * backend/src/utils/schemaCompatibility.js on every server startup (after sync).
+   * Do NOT run manual ALTER TABLE commands — they are deprecated. The schema helper
+   * includes a data-backfill step before any ENUM modification to avoid data-truncation
+   * errors on existing rows. To skip reconciliation temporarily, set ENABLE_SCHEMA_COMPAT=false.
    */
   accountStatus: {
     type:         DataTypes.ENUM('ACTIVE', 'SUSPENDED', 'DEACTIVATED', 'BANNED'),

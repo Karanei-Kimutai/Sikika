@@ -1,16 +1,56 @@
 import { useMemo } from "react";
 import { formatNumber, prettifyLabel, buildLineChartPoints, buildMovingAverage } from "./helpers";
 
+// ── Chart coordinate constants — must match buildLineChartPoints in helpers.js ──
+const CHART_W = 660;
+const CHART_H = 260;
+const PAD_L   = 52;
+const PAD_R   = 12;
+const PAD_T   = 22;
+const PAD_B   = 44;
+/** Y-coordinate of the X-axis baseline in SVG space. */
+const BASELINE = CHART_H - PAD_B;
+
+/**
+ * Maps a data value to an SVG Y-coordinate using the shared vertical scale.
+ * @param {number} value
+ * @param {number} max
+ * @returns {number}
+ */
+function yForVal(value, max) {
+  const norm = max > 0 ? Number(value || 0) / max : 0;
+  return CHART_H - PAD_B - norm * (CHART_H - PAD_T - PAD_B);
+}
+
+/**
+ * Builds a smooth SVG cubic-bezier path string through a list of {x, y} points.
+ * Uses the mid-point of each segment as control-point handles, which produces
+ * a visually natural curve without any overshoot.
+ *
+ * @param {{ x: number, y: number }[]} pts
+ * @returns {string}
+ */
+function smoothLinePath(pts) {
+  if (!pts.length) return "";
+  if (pts.length === 1) return `M${pts[0].x},${pts[0].y}`;
+  let d = `M${pts[0].x},${pts[0].y}`;
+  for (let i = 1; i < pts.length; i++) {
+    const cpx = (pts[i - 1].x + pts[i].x) / 2;
+    d += ` C${cpx},${pts[i - 1].y} ${cpx},${pts[i].y} ${pts[i].x},${pts[i].y}`;
+  }
+  return d;
+}
+
 /**
  * CommandCenterSection
  * --------------------
  * KPI stat cards + 30-day report trend chart + community metrics +
  * report breakdown by category/status/county.
  *
- * Chart design: soft rounded **bars** show daily granularity; a single dashed
- * **7-day average trend line** sits on top as the signal. Both share the same
- * rounded Y-axis scale (chartMax) so gridlines, labels, bars, and the line
- * are perfectly aligned.
+ * Chart design: gradient-filled **bars** show daily granularity; a smooth
+ * bezier **area + line** layer on top shows the 7-day rolling average. Both
+ * share one vertical scale (chartMax) so gridlines, labels, bars, and the
+ * trend are pixel-aligned.
  *
  * @param {object}  props
  * @param {object}  props.overview           - dashboard.overview aggregation object.
@@ -19,106 +59,102 @@ import { formatNumber, prettifyLabel, buildLineChartPoints, buildMovingAverage }
  * @param {object}  props.reportsBreakdown    - dashboard.reportsBreakdown object.
  */
 export default function CommandCenterSection({ overview, reportsOverTime, communityMetrics, reportsBreakdown }) {
-  // ── Shared vertical scale (computed once; used by bars, gridlines, and avg line) ──
+
+  // ── Shared Y scale ─────────────────────────────────────────────────────────
   const chartMax = useMemo(() => {
     const rawMax = Math.max(...(reportsOverTime || []).map((p) => Number(p.count || 0)), 1);
-    // Choose a step that keeps Y-axis tick labels from crowding for any data range.
     const step = rawMax <= 5 ? 1 : rawMax <= 20 ? 2 : rawMax <= 50 ? 5 : 10;
     return Math.ceil(rawMax / step) * step;
   }, [reportsOverTime]);
 
-  // buildLineChartPoints now receives chartMax so bar Y-coords use the same scale
-  // as the axis labels and gridlines — no more dual-scale mismatch.
   const chartPoints = useMemo(
     () => buildLineChartPoints(reportsOverTime || [], chartMax),
     [reportsOverTime, chartMax]
   );
 
-  // 7-day moving average, keyed by the same x positions as the bars.
   const movingAveragePoints = useMemo(() => buildMovingAverage(chartPoints), [chartPoints]);
 
-  // Single trend polyline using the shared chartMax for Y — replacing the old
-  // "avgPolylinePoints" that had its own independent max computation.
-  const avgPolylinePoints = useMemo(() => {
-    if (!movingAveragePoints.length) return "";
-    const height = 220;
-    const padTop = 16;
-    const padBottom = 34;
-    return movingAveragePoints
-      .map((point) => {
-        const y =
-          height - padBottom -
-          (Number(point.avg || 0) / Math.max(chartMax, 1)) * (height - padTop - padBottom);
-        return `${point.x},${y}`;
-      })
-      .join(" ");
+  // ── Smooth bezier trend paths ───────────────────────────────────────────────
+  /**
+   * `trendLinePath` — smooth bezier path for the 7-day average line.
+   * `trendAreaPath` — same path closed at the baseline to create a fill region.
+   */
+  const { trendLinePath, trendAreaPath } = useMemo(() => {
+    if (!movingAveragePoints.length) return { trendLinePath: "", trendAreaPath: "" };
+    const pts = movingAveragePoints.map((p) => ({
+      x: p.x,
+      y: yForVal(p.avg, chartMax)
+    }));
+    const linePath = smoothLinePath(pts);
+    if (pts.length < 2) return { trendLinePath: linePath, trendAreaPath: "" };
+    const last  = pts[pts.length - 1];
+    const first = pts[0];
+    const areaPath = `${linePath} L${last.x},${BASELINE} L${first.x},${BASELINE} Z`;
+    return { trendLinePath: linePath, trendAreaPath: areaPath };
   }, [movingAveragePoints, chartMax]);
 
+  // ── Derived chart metadata ─────────────────────────────────────────────────
   const hasTrendData = chartPoints.some((p) => p.count > 0);
-  const trendTotal = chartPoints.reduce((sum, p) => sum + Number(p.count || 0), 0);
-  const peakPoint = chartPoints.reduce((current, p) => {
-    if (!current || p.count > current.count) return p;
-    return current;
+  const trendTotal   = chartPoints.reduce((sum, p) => sum + Number(p.count || 0), 0);
+  const peakPoint    = chartPoints.reduce((best, p) => {
+    if (!best || p.count > best.count) return p;
+    return best;
   }, null);
 
-  // Y-axis gridlines at 5 evenly-spaced values (0 → chartMax).
+  // ── Y-axis ticks (0 → chartMax in 4 equal steps) ──────────────────────────
   const yTicks = useMemo(() => {
     const intervals = 4;
     return Array.from({ length: intervals + 1 }, (_, i) => Math.round((chartMax * i) / intervals));
   }, [chartMax]);
 
-  // X-axis: label every 7th day plus the last, formatted as "Jun 07".
+  // ── X-axis tick labels (every 7th day + last day) ─────────────────────────
   const xTicks = useMemo(() => {
     if (!chartPoints.length) return [];
     return chartPoints.filter((_, i) => i % 7 === 0 || i === chartPoints.length - 1);
   }, [chartPoints]);
 
-  /** Maps a y-axis value → SVG y-coordinate using the shared chartMax. */
-  function yForValue(value) {
-    const height = 220;
-    const padTop = 16;
-    const padBottom = 34;
-    const normalized = chartMax > 0 ? Number(value || 0) / chartMax : 0;
-    return height - padBottom - normalized * (height - padTop - padBottom);
-  }
-
   /**
-   * Formats a "YYYY-MM-DD" date string as a short "Mon DD" label for X-axis ticks.
+   * Formats a "YYYY-MM-DD" string as a short "Mon DD" label.
    * @param {string} dateStr
    * @returns {string}
    */
   function formatDayLabel(dateStr) {
     if (!dateStr) return "";
     const [, month, day] = dateStr.split("-");
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     return `${months[Number(month) - 1] || ""} ${day}`;
   }
 
   return (
     <section className="admin-module-grid" aria-label="Command center metrics">
+
       {/* ── KPI stat cards ─────────────────────────────────────────────── */}
       <article className="admin-stat-card">
         <h3>Total Reports</h3>
         <p className="admin-metric">{formatNumber(overview?.totalReports)}</p>
         <span className={`trend ${Number(overview?.reportTrendPercent || 0) >= 0 ? "up" : "down"}`}>
-          {Number(overview?.reportTrendPercent || 0) >= 0 ? "▲" : "▼"} {Math.abs(Number(overview?.reportTrendPercent || 0))}% vs last month
+          {Number(overview?.reportTrendPercent || 0) >= 0 ? "▲" : "▼"}{" "}
+          {Math.abs(Number(overview?.reportTrendPercent || 0))}% vs last month
         </span>
       </article>
+
       <article className="admin-stat-card">
         <h3>Active Survivors</h3>
         <p className="admin-metric">{formatNumber(overview?.activeSurvivors)}</p>
         <span>Currently assigned and receiving support</span>
       </article>
+
       <article className="admin-stat-card">
-        <h3>Average Response Time</h3>
-        <p className="admin-metric">{formatNumber(overview?.averageResponseMinutes)} mins</p>
+        <h3>Avg Response Time</h3>
+        <p className="admin-metric">{formatNumber(overview?.averageResponseMinutes)} <small style={{ fontSize: "0.9rem", fontWeight: 700 }}>min</small></p>
         <span>
-          Computed from first survivor-to-staff replies in direct chat
+          First reply in direct chat
           {Number(overview?.averageResponseSampleCount || 0) > 0
-            ? ` (${formatNumber(overview?.averageResponseSampleCount)} samples)`
+            ? ` · ${formatNumber(overview.averageResponseSampleCount)} samples`
             : ""}
         </span>
       </article>
+
       <article className="admin-stat-card">
         <h3>Active Legal Cases</h3>
         <p className="admin-metric">{formatNumber(overview?.activeLegalCases)}</p>
@@ -127,66 +163,92 @@ export default function CommandCenterSection({ overview, reportsOverTime, commun
 
       {/* ── 30-day trend chart ─────────────────────────────────────────── */}
       <article className="admin-panel full-span">
-        <h2>30-Day Case Trend</h2>
-        <div className="chart-summary-row">
-          <div className="chart-summary-card">
-            <span>Reports in 30 days</span>
-            <strong>{formatNumber(trendTotal)}</strong>
-          </div>
-          <div className="chart-summary-card">
-            <span>Peak day</span>
-            <strong>
-              {peakPoint && peakPoint.count > 0
-                ? `${formatDayLabel(peakPoint.date)} (${peakPoint.count})`
-                : "-"}
-            </strong>
+        <div className="chart-header">
+          <h2>30-Day Case Trend</h2>
+          <div className="chart-header-stats">
+            <div className="chart-stat-chip">
+              <span>Total this period</span>
+              <strong>{formatNumber(trendTotal)}</strong>
+            </div>
+            <div className="chart-stat-chip">
+              <span>Peak day</span>
+              <strong>
+                {peakPoint && peakPoint.count > 0
+                  ? `${formatDayLabel(peakPoint.date)} · ${peakPoint.count}`
+                  : "—"}
+              </strong>
+            </div>
           </div>
         </div>
 
-        {/*
-          Design: bars = daily granularity (background context)
-                  dashed line = 7-day rolling average (primary trend signal)
-          Both share chartMax for the Y scale — gridlines, labels, bars, and
-          the average line are all aligned on the same coordinate system.
-        */}
         <svg
-          viewBox="0 0 620 220"
+          viewBox={`0 0 ${CHART_W} ${CHART_H}`}
           width="100%"
           preserveAspectRatio="xMidYMid meet"
           role="img"
-          aria-label="Bar chart with 7-day trend line showing reports over the last 30 days"
+          aria-label="Bar chart with 7-day rolling average showing reports over the last 30 days"
+          style={{ display: "block", overflow: "visible" }}
         >
-          <rect x="0" y="0" width="620" height="220" rx="14" className="chart-backdrop" />
+          <defs>
+            {/* Gradient fills for bars — vertical, accent colour fading to translucent */}
+            <linearGradient id="ngo-bar-grad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stopColor="var(--workspace-accent)" stopOpacity="0.82" />
+              <stop offset="100%" stopColor="var(--workspace-accent)" stopOpacity="0.22" />
+            </linearGradient>
+            {/* Peak day bar gets a brighter, fully-opaque gradient */}
+            <linearGradient id="ngo-peak-grad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stopColor="#bf4d12" stopOpacity="1"    />
+              <stop offset="100%" stopColor="#e07848" stopOpacity="0.55" />
+            </linearGradient>
+            {/* Area fill under the trend line — green with heavy fade to bottom */}
+            <linearGradient id="ngo-area-grad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stopColor="#2a7b50" stopOpacity="0.20" />
+              <stop offset="70%"  stopColor="#2a7b50" stopOpacity="0.05" />
+              <stop offset="100%" stopColor="#2a7b50" stopOpacity="0"    />
+            </linearGradient>
+            {/* Clip to the chart plot area so the trend line / area don't spill */}
+            <clipPath id="ngo-chart-clip">
+              <rect x={PAD_L} y={PAD_T} width={CHART_W - PAD_L - PAD_R} height={CHART_H - PAD_T - PAD_B + 2} />
+            </clipPath>
+          </defs>
+
+          {/* Subtle rounded chart surface */}
+          <rect x="0" y="0" width={CHART_W} height={CHART_H} rx="12" className="chart-backdrop" />
 
           {/* Horizontal gridlines + Y-axis labels */}
           {yTicks.map((tick) => (
             <g key={`y-${tick}`}>
               <line
-                x1="44"
-                y1={yForValue(tick)}
-                x2="604"
-                y2={yForValue(tick)}
+                x1={PAD_L}
+                y1={yForVal(tick, chartMax)}
+                x2={CHART_W - PAD_R}
+                y2={yForVal(tick, chartMax)}
                 className="chart-grid-line"
               />
-              <text x="38" y={yForValue(tick) + 4} className="chart-axis-label" textAnchor="end">
+              <text
+                x={PAD_L - 6}
+                y={yForVal(tick, chartMax) + 4}
+                className="chart-axis-label"
+                textAnchor="end"
+              >
                 {tick}
               </text>
             </g>
           ))}
 
-          {/* Daily bars — each anchored to the bottom baseline (y=186) */}
+          {/* Daily bars with gradient fill; peak bar uses a brighter gradient */}
           {chartPoints.map((point) => {
-            const barW = Math.min(point.slotWidth * 0.55, 12);
+            const isPeak = peakPoint && point.date === peakPoint.date && point.count > 0;
+            const barW   = Math.min(point.slotWidth * 0.62, 15);
             return (
               <rect
                 key={`bar-${point.date}`}
                 x={point.x - barW / 2}
                 y={point.y}
                 width={barW}
-                // Ensure a minimum 2 px pixel so zero-count days still show a
-                // hairline rather than disappearing entirely.
                 height={Math.max(point.barHeight, 2)}
-                rx="3"
+                rx="3.5"
+                fill={isPeak ? "url(#ngo-peak-grad)" : "url(#ngo-bar-grad)"}
                 className="chart-bar"
               >
                 <title>{`${formatDayLabel(point.date)}: ${point.count} report${point.count === 1 ? "" : "s"}`}</title>
@@ -194,17 +256,34 @@ export default function CommandCenterSection({ overview, reportsOverTime, commun
             );
           })}
 
-          {/* 7-day average trend line — the primary signal layer */}
-          {avgPolylinePoints && (
-            <polyline points={avgPolylinePoints} className="line-series-average" />
+          {/* Gradient fill area below the rolling-average curve */}
+          {trendAreaPath && (
+            <path
+              d={trendAreaPath}
+              fill="url(#ngo-area-grad)"
+              clipPath="url(#ngo-chart-clip)"
+            />
           )}
 
-          {/* X-axis date labels — weekly cadence, kept inside the viewBox bottom */}
+          {/* Smooth bezier trend line — the primary signal layer */}
+          {trendLinePath && (
+            <path
+              d={trendLinePath}
+              fill="none"
+              stroke="#2a7b50"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              clipPath="url(#ngo-chart-clip)"
+            />
+          )}
+
+          {/* X-axis date labels — weekly cadence + last day */}
           {xTicks.map((point) => (
             <text
               key={`x-${point.date}`}
               x={point.x}
-              y="214"
+              y={CHART_H - 6}
               className="chart-axis-label"
               textAnchor="middle"
             >
@@ -214,9 +293,16 @@ export default function CommandCenterSection({ overview, reportsOverTime, commun
         </svg>
 
         <div className="chart-legend">
-          <span><i className="legend-dot daily" /> Daily reports</span>
-          <span><i className="legend-dot avg" /> 7-day trend</span>
+          <span>
+            <span className="legend-swatch swatch-bar" aria-hidden="true" />
+            Daily reports
+          </span>
+          <span>
+            <span className="legend-swatch swatch-avg" aria-hidden="true" />
+            7-day average
+          </span>
         </div>
+
         {!hasTrendData && (
           <p className="admin-empty">No report activity in the last 30 days yet.</p>
         )}
@@ -246,19 +332,19 @@ export default function CommandCenterSection({ overview, reportsOverTime, commun
         <h2>Report Breakdown</h2>
         <div className="breakdown-grid">
           {[{
-            key: "category",
-            title: "By Category",
-            rows: reportsBreakdown?.byCategory || [],
+            key:      "category",
+            title:    "By Category",
+            rows:     reportsBreakdown?.byCategory || [],
             labelKey: "category"
           }, {
-            key: "status",
-            title: "By Status",
-            rows: reportsBreakdown?.byStatus || [],
+            key:      "status",
+            title:    "By Status",
+            rows:     reportsBreakdown?.byStatus || [],
             labelKey: "status"
           }, {
-            key: "county",
-            title: "By County",
-            rows: reportsBreakdown?.byCounty || [],
+            key:      "county",
+            title:    "By County",
+            rows:     reportsBreakdown?.byCounty || [],
             labelKey: "county"
           }].map((group) => {
             const max = Math.max(...group.rows.map((row) => Number(row.count || 0)), 1);
@@ -268,7 +354,7 @@ export default function CommandCenterSection({ overview, reportsOverTime, commun
                 <ul className="breakdown-list">
                   {group.rows.map((row) => {
                     const rawLabel = row[group.labelKey];
-                    const label = group.key === "county"
+                    const label    = group.key === "county"
                       ? String(rawLabel || "Unknown")
                       : prettifyLabel(rawLabel);
                     const count = Number(row.count || 0);
@@ -291,6 +377,7 @@ export default function CommandCenterSection({ overview, reportsOverTime, commun
           })}
         </div>
       </article>
+
     </section>
   );
 }
