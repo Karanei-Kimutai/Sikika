@@ -1,3 +1,5 @@
+import NotificationBell from "./NotificationBell";
+
 /**
  * SiteHeader
  * ----------
@@ -7,6 +9,8 @@
  * - primary nav tabs are role-aware
  * - admins do not use quick action buttons; they navigate via section tabs/routes
  * - sign-out is always available for authenticated sessions
+ * - notification bell is shown for all authenticated users; polling and
+ *   panel state are encapsulated inside NotificationBell
  */
 function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut }) {
   const navItems = (() => {
@@ -81,6 +85,9 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
             Join Community
           </button>
         )}
+        {/* Notification bell — shown for all authenticated roles.
+            Encapsulates its own polling and panel state. */}
+        <NotificationBell isAuthenticated={isAuthenticated} />
         {isAuthenticated && (
           <button type="button" className="header-signout" onClick={onSignOut}>
             Sign Out

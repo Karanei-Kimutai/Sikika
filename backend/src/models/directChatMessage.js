@@ -58,8 +58,30 @@ const DirectChatMessage = sequelize.define('directChatMessage', {
     type:         DataTypes.ENUM('UNREAD', 'READ'),
     defaultValue: 'UNREAD',
     comment:      'Read status — drives notification badges and read receipts'
+  },
+
+  /**
+   * UTC timestamp of when the recipient's socket acknowledged the message.
+   * Set server-side on two paths:
+   *  1. Immediately on create if the counterpart is currently connected.
+   *  2. In bulk on counterpart reconnect (delivery catch-up in chatSocket.js).
+   * NULL means the message has not yet reached an online recipient.
+   */
+  deliveredAt: {
+    type:    DataTypes.DATE,
+    comment: 'UTC timestamp when the message was delivered to an online recipient (null = not yet delivered)'
+  },
+
+  /**
+   * UTC timestamp of when the sender's message was seen (READ) by the recipient.
+   * Set server-side whenever messageReadStatus transitions to READ.
+   * Drives the Seen tick in the sender's chat view.
+   */
+  seenAt: {
+    type:    DataTypes.DATE,
+    comment: 'UTC timestamp when the message was seen (read) by the recipient (null = not yet seen)'
   }
- 
+
 }, {
   tableName: 'directChatMessage',
   comment:   'Individual E2EE message within a direct chat channel'

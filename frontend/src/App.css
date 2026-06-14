@@ -3289,3 +3289,449 @@ input:focus {
     grid-template-columns: 1fr;
   }
 }
+
+/* ─── Notification Bell ─────────────────────────────────────────────────────── */
+
+/**
+ * .notification-bell-container
+ * Wrapper that establishes the positioning context for the dropdown panel.
+ * Inline-flex keeps it aligned in the .header-actions flex row.
+ */
+.notification-bell-container {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/**
+ * .notification-bell-btn
+ * The bell icon button itself — styled to blend with the header action row
+ * without drawing more attention than necessary (discreet design ethos).
+ */
+.notification-bell-btn {
+  position: relative;
+  border: 1px solid rgba(139, 94, 60, 0.2);
+  border-radius: 0.7rem;
+  min-height: 2.75rem;
+  min-width: 2.75rem;
+  padding: 0.5rem 0.65rem;
+  background: #ffffff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.notification-bell-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(139, 94, 60, 0.15);
+}
+
+.notification-bell-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+/**
+ * .notification-badge
+ * Numeric unread count shown over the bell icon.
+ * Kept small and unobtrusive — survivors on shared devices shouldn't see
+ * information-dense UI elements that expose platform context.
+ */
+.notification-badge {
+  position: absolute;
+  top: 0.2rem;
+  right: 0.2rem;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.28rem;
+  border-radius: 9999px;
+  background: var(--danger, #9f2d2d);
+  color: #ffffff;
+  font-size: 0.65rem;
+  font-weight: 800;
+  line-height: 1.1rem;
+  text-align: center;
+  pointer-events: none;
+}
+
+/**
+ * .notification-panel
+ * Dropdown panel that appears below the bell button.
+ * z-index 200 keeps it above most page content but below modals (z-index 300+).
+ */
+.notification-panel {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  width: 22rem;
+  max-width: calc(100vw - 2rem);
+  background: #ffffff;
+  border: 1px solid rgba(139, 94, 60, 0.15);
+  border-radius: 0.85rem;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+  z-index: 200;
+  overflow: hidden;
+}
+
+.notification-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1rem 0.6rem;
+  border-bottom: 1px solid rgba(139, 94, 60, 0.1);
+}
+
+.notification-panel-title {
+  font-weight: 800;
+  font-size: 0.9rem;
+  color: var(--brown-dark, #3b2a1a);
+}
+
+.notification-mark-all-btn {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--brown, #8b5e3c);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.2rem 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.notification-mark-all-btn:hover {
+  color: var(--brown-dark, #3b2a1a);
+}
+
+.notification-panel-body {
+  max-height: 22rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/**
+ * .notification-empty
+ * Shown when there are no notifications, the list is loading, or an error occurred.
+ * Text follows the discreet wording policy (neutral, safe copy only).
+ */
+.notification-empty {
+  padding: 1.4rem 1rem;
+  text-align: center;
+  color: #888;
+  font-size: 0.85rem;
+}
+
+.notification-error {
+  color: var(--danger, #9f2d2d);
+}
+
+/**
+ * .notification-row
+ * Individual notification entry in the panel list.
+ * Cursor pointer + role="button" allow keyboard accessibility.
+ */
+.notification-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid rgba(139, 94, 60, 0.07);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.notification-row:last-child {
+  border-bottom: none;
+}
+
+.notification-row:hover {
+  background: rgba(139, 94, 60, 0.04);
+}
+
+/**
+ * .notification-row--unread
+ * Subtle left border accent to indicate unread status.
+ * Purposely low-contrast — avoids drawing attention on shared devices.
+ */
+.notification-row--unread {
+  border-left: 3px solid var(--brown, #8b5e3c);
+  padding-left: calc(1rem - 3px);
+  background: rgba(139, 94, 60, 0.03);
+}
+
+.notification-row-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.notification-category-tag {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--brown, #8b5e3c);
+  margin-bottom: 0.2rem;
+}
+
+.notification-message {
+  margin: 0 0 0.2rem;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--brown-dark, #3b2a1a);
+  word-break: break-word;
+}
+
+.notification-time {
+  font-size: 0.7rem;
+  color: #aaa;
+}
+
+.notification-dismiss-btn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: #bbb;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.1rem 0.2rem;
+  border-radius: 0.25rem;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.notification-dismiss-btn:hover {
+  color: var(--danger, #9f2d2d);
+  background: rgba(159, 45, 45, 0.08);
+}
+
+/* ─── Account Status Badges ─────────────────────────────────────────────────── */
+
+/**
+ * .account-status-badge
+ * Generic status badge for rendering accountStatus values in admin tables.
+ * Variants: --active (green), --suspended (amber), --banned (red), --deactivated (grey).
+ *
+ * Usage: <span className={`account-status-badge account-status-badge--${status.toLowerCase()}`}>
+ *          {status}
+ *        </span>
+ */
+.account-status-badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 9999px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.account-status-badge--active {
+  background: rgba(39, 174, 96, 0.12);
+  color: #1a8a4a;
+}
+
+.account-status-badge--suspended {
+  background: rgba(230, 162, 60, 0.15);
+  color: #a06a00;
+}
+
+.account-status-badge--banned {
+  background: rgba(159, 45, 45, 0.12);
+  color: var(--danger, #9f2d2d);
+  border: 1px solid rgba(159, 45, 45, 0.25);
+}
+
+.account-status-badge--deactivated {
+  background: rgba(0, 0, 0, 0.06);
+  color: #777;
+}
+
+/**
+ * .ban-info
+ * Expandable/inline ban reason + expiry shown beneath a BANNED badge.
+ */
+.ban-info {
+  margin-top: 0.3rem;
+  font-size: 0.72rem;
+  color: #888;
+  line-height: 1.4;
+}
+
+.ban-info strong {
+  color: var(--danger, #9f2d2d);
+  font-weight: 700;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Presence dots — real-time staff status indicator in DirectChat
+   ───────────────────────────────────────────────────────────────── */
+
+/**
+ * .presence-dot
+ * Small coloured circle rendered beside the presence label.
+ * Colour conveys connection status at a glance without relying on text alone.
+ */
+.presence-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.presence-dot--available {
+  background-color: #27ae60;   /* green — actively connected */
+  box-shadow: 0 0 0 2px rgba(39, 174, 96, 0.25);
+}
+
+.presence-dot--busy {
+  background-color: #e67e22;   /* amber — connected but in session */
+  box-shadow: 0 0 0 2px rgba(230, 126, 34, 0.25);
+}
+
+.presence-dot--offline {
+  background-color: #bdc3c7;   /* grey — no active socket */
+}
+
+/* Row wrapper so the dot and label share a flex context */
+.wa-presence-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Message ticks — delivery / seen state for outgoing messages
+   ───────────────────────────────────────────────────────────────── */
+
+/**
+ * .msg-ticks
+ * Appears at the bottom-right of a sender's own message bubble.
+ * Single tick → Sent; double tick grey → Delivered; double tick coloured → Seen.
+ */
+.msg-ticks {
+  display: block;
+  text-align: right;
+  font-size: 0.68rem;
+  margin-top: 3px;
+  user-select: none;
+}
+
+.msg-ticks--sent {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.msg-ticks--delivered {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.msg-ticks--seen {
+  color: #a8d8ff;   /* light blue — signals the counterpart has read the message */
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Legal case drafting panel — ReportingPage (LEGAL_COUNSEL role)
+   ───────────────────────────────────────────────────────────────── */
+
+/**
+ * .legal-draft-panel
+ * Full-width collapsible drafting workspace rendered inside a report tile
+ * for legal counsel users. Uses a distinct background to separate it from
+ * the surrounding report metadata.
+ */
+.legal-draft-panel {
+  margin-top: 1.25rem;
+  padding: 1.25rem 1.5rem;
+  background: #f8f2fb;
+  border: 1px solid #d6b8e8;
+  border-radius: 10px;
+}
+
+.legal-draft-heading {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #6c3483;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0 0 0.3rem;
+}
+
+.legal-draft-status-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: #6c3483;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.legal-draft-meta {
+  font-size: 0.78rem;
+  color: #7a6758;
+  margin: 0 0 1rem;
+}
+
+/**
+ * .legal-draft-field
+ * Wrapper for each labelled textarea in the authoring section.
+ */
+.legal-draft-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 1rem;
+}
+
+.legal-draft-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #5c4033;
+}
+
+.legal-draft-hint {
+  font-size: 0.74rem;
+  color: #7a6758;
+  font-style: italic;
+}
+
+.legal-draft-field textarea {
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid #c8a8d8;
+  border-radius: 6px;
+  font-size: 0.88rem;
+  font-family: inherit;
+  resize: vertical;
+  background: #fff;
+  color: var(--brown-dark, #2c1a0e);
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+
+.legal-draft-field textarea:focus {
+  outline: none;
+  border-color: #6c3483;
+  box-shadow: 0 0 0 2px rgba(108, 52, 131, 0.15);
+}
+
+.legal-draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.legal-draft-status-advance {
+  margin-top: 0.5rem;
+  border-top: 1px solid #d6b8e8;
+  padding-top: 0.75rem;
+}

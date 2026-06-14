@@ -14,6 +14,12 @@ import {
   createMyReassignmentRequest as submitMyReassignmentRequest,
   cancelMyReassignmentRequest as cancelReassignmentRequest
 } from "../services/admin";
+import {
+  saveLegalCaseDraft,
+  updateLegalCaseStatus,
+  generateLegalCaseDocument,
+  getLegalCaseDocumentUrl
+} from "../services/legalCases";
 
 const STATUS_OPTIONS = [
   "SUBMITTED",
@@ -81,6 +87,18 @@ function ReportingPage({ onNavigate }) {
   const [deletingReportId, setDeletingReportId] = useState("");
   const [openingEvidenceId, setOpeningEvidenceId] = useState("");
   const [reassignmentRequests, setReassignmentRequests] = useState([]);
+
+  // ── Legal case drafting state (legal counsel only) ─────────────────────────
+  // Tracks the draft fields being edited for a specific case, keyed by legalCaseId.
+  const [legalDraftByCase, setLegalDraftByCase] = useState({});
+  // Which legalCaseId is currently being saved (shows spinner on the Save button).
+  const [savingDraftId, setSavingDraftId] = useState("");
+  // Which legalCaseId's status is being updated.
+  const [updatingCaseStatusId, setUpdatingCaseStatusId] = useState("");
+  // Which legalCaseId is having its PDF generated.
+  const [generatingDocId, setGeneratingDocId] = useState("");
+  // Which legalCaseId document is being opened (signed-URL fetch in flight).
+  const [openingDocId, setOpeningDocId] = useState("");
 
   /**
    * Controls visibility of the emergency contacts modal on the intercept screen.
@@ -484,6 +502,131 @@ function ReportingPage({ onNavigate }) {
     }
   }
 
+  // ── Legal case drafting handlers ──────────────────────────────────────────
+
+  /**
+   * Initialises local draft state from a report's legalCase object when
+   * legal counsel expands the drafting panel. Does not persist anything yet.
+   *
+   * @param {object} legalCase - The legalCase object from the report API response.
+   */
+  function initLegalDraft(legalCase) {
+    if (!legalCase?.legalCaseId) return;
+    // Only initialise once; subsequent edits are maintained locally.
+    setLegalDraftByCase((prev) => {
+      if (prev[legalCase.legalCaseId]) return prev;
+      return {
+        ...prev,
+        [legalCase.legalCaseId]: {
+          caseSummary: legalCase.caseSummary || "",
+          legalGroundsText: legalCase.legalGroundsText || "",
+          requestedReliefText: legalCase.requestedReliefText || "",
+          recommendedActionsText: legalCase.recommendedActionsText || ""
+        }
+      };
+    });
+  }
+
+  /**
+   * Updates a single draft field in local state.
+   *
+   * @param {string} legalCaseId
+   * @param {string} field - One of the four authoring field names.
+   * @param {string} value
+   */
+  function handleLegalDraftChange(legalCaseId, field, value) {
+    setLegalDraftByCase((prev) => ({
+      ...prev,
+      [legalCaseId]: { ...(prev[legalCaseId] || {}), [field]: value }
+    }));
+  }
+
+  /**
+   * Persists the current local draft state for a case to the backend.
+   *
+   * @param {string} legalCaseId
+   */
+  async function handleSaveLegalDraft(legalCaseId) {
+    setSavingDraftId(legalCaseId);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      await saveLegalCaseDraft(legalCaseId, legalDraftByCase[legalCaseId] || {});
+      setSuccessMessage("Legal case draft saved.");
+      await loadReports();
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Could not save legal case draft.");
+    } finally {
+      setSavingDraftId("");
+    }
+  }
+
+  /**
+   * Advances the legal case to a new lifecycle status.
+   *
+   * @param {string} legalCaseId
+   * @param {string} nextStatus - Target case status.
+   */
+  async function handleUpdateCaseStatus(legalCaseId, nextStatus) {
+    setUpdatingCaseStatusId(legalCaseId);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      await updateLegalCaseStatus(legalCaseId, nextStatus);
+      setSuccessMessage(`Case status updated to ${nextStatus}.`);
+      await loadReports();
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Could not update case status.");
+    } finally {
+      setUpdatingCaseStatusId("");
+    }
+  }
+
+  /**
+   * Triggers server-side PDF generation from the current draft and refreshes
+   * the report list so the new documentGeneratedAt timestamp is visible.
+   *
+   * @param {string} legalCaseId
+   */
+  async function handleGenerateDocument(legalCaseId) {
+    setGeneratingDocId(legalCaseId);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      await generateLegalCaseDocument(legalCaseId);
+      setSuccessMessage("Legal case document generated successfully.");
+      await loadReports();
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Could not generate legal case document.");
+    } finally {
+      setGeneratingDocId("");
+    }
+  }
+
+  /**
+   * Fetches a short-lived signed URL for the legal case PDF and opens it.
+   * Mirrors handleOpenEvidence — the URL expires after ~5 minutes.
+   *
+   * @param {string} legalCaseId
+   */
+  async function handleOpenLegalDocument(legalCaseId) {
+    setOpeningDocId(legalCaseId);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      const data = await getLegalCaseDocumentUrl(legalCaseId);
+      window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Could not open legal case document.");
+    } finally {
+      setOpeningDocId("");
+    }
+  }
+
   return (
     <main className="library-page">
       <section className="library-intro">
@@ -676,11 +819,120 @@ function ReportingPage({ onNavigate }) {
                 <p><strong>Severity:</strong> {report.severityLevel}</p>
                 <p><strong>Location:</strong> {report.location || "Not provided"}</p>
                 <p><strong>Date:</strong> {report.date || "Not provided"}</p>
-                {report.legalCase && (
+                {report.legalCase && role !== "LEGAL_COUNSEL" && (
+                  /* Read-only summary for non-legal-counsel roles */
                   <p>
                     <strong>Legal case:</strong> {report.legalCase.caseStatus}
                     {report.legalCase.legalCaseId ? ` (${report.legalCase.legalCaseId})` : ""}
                   </p>
+                )}
+
+                {report.legalCase && role === "LEGAL_COUNSEL" && (
+                  /* Full drafting panel — visible only to the assigned legal counsel */
+                  <section
+                    className="legal-draft-panel"
+                    aria-label={`Legal case drafting — ${report.legalCase.legalCaseId}`}
+                    onFocus={() => initLegalDraft(report.legalCase)}
+                  >
+                    <h3 className="legal-draft-heading">
+                      Legal Case File
+                      <span className="legal-draft-status-badge">{report.legalCase.caseStatus}</span>
+                    </h3>
+                    <p className="legal-draft-meta">
+                      Case ID: {report.legalCase.legalCaseId}
+                      {report.legalCase.draftLastUpdatedAt
+                        ? ` · Draft saved ${new Date(report.legalCase.draftLastUpdatedAt).toLocaleString()}`
+                        : ""}
+                      {report.legalCase.documentGeneratedAt
+                        ? ` · Document generated ${new Date(report.legalCase.documentGeneratedAt).toLocaleString()}`
+                        : ""}
+                    </p>
+
+                    {/* Four structured authoring fields */}
+                    {[
+                      { key: "caseSummary", label: "Case Summary", hint: "Narrative overview of the case." },
+                      { key: "legalGroundsText", label: "Legal Grounds", hint: "Statutory or common-law basis, e.g. Sexual Offences Act (2006), Section 3." },
+                      { key: "requestedReliefText", label: "Requested Relief", hint: "Specific remedy or protection order being sought." },
+                      { key: "recommendedActionsText", label: "Recommended Next Steps", hint: "Manual handover actions — this platform does not contact any external party directly." }
+                    ].map(({ key, label, hint }) => (
+                      <label key={key} className="legal-draft-field">
+                        <span className="legal-draft-label">{label}</span>
+                        <span className="legal-draft-hint">{hint}</span>
+                        <textarea
+                          rows={3}
+                          value={legalDraftByCase[report.legalCase.legalCaseId]?.[key] ?? report.legalCase[key] ?? ""}
+                          onChange={(e) => handleLegalDraftChange(report.legalCase.legalCaseId, key, e.target.value)}
+                          onFocus={() => initLegalDraft(report.legalCase)}
+                          placeholder={`Enter ${label.toLowerCase()}…`}
+                        />
+                      </label>
+                    ))}
+
+                    {/* Drafting actions */}
+                    <div className="legal-draft-actions">
+                      <button
+                        type="button"
+                        className="primary-btn"
+                        onClick={() => handleSaveLegalDraft(report.legalCase.legalCaseId)}
+                        disabled={savingDraftId === report.legalCase.legalCaseId}
+                      >
+                        {savingDraftId === report.legalCase.legalCaseId ? "Saving…" : "Save Draft"}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="secondary-btn"
+                        onClick={() => handleGenerateDocument(report.legalCase.legalCaseId)}
+                        disabled={generatingDocId === report.legalCase.legalCaseId}
+                      >
+                        {generatingDocId === report.legalCase.legalCaseId ? "Generating…" : "Generate Document"}
+                      </button>
+
+                      {report.legalCase.generatedDocumentPath && (
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => handleOpenLegalDocument(report.legalCase.legalCaseId)}
+                          disabled={openingDocId === report.legalCase.legalCaseId}
+                        >
+                          {openingDocId === report.legalCase.legalCaseId ? "Opening…" : "Open Document"}
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Case lifecycle control */}
+                    {(() => {
+                      const NEXT_STATUSES = {
+                        OPEN: ["UNDER_INVESTIGATION"],
+                        UNDER_INVESTIGATION: ["READY_FOR_SUBMISSION"],
+                        READY_FOR_SUBMISSION: ["SUBMITTED"],
+                        SUBMITTED: ["CLOSED"],
+                        CLOSED: []
+                      };
+                      const nextOptions = NEXT_STATUSES[report.legalCase.caseStatus] || [];
+                      if (nextOptions.length === 0) return null;
+                      return (
+                        <div className="legal-draft-status-advance">
+                          <label className="status-select-label" htmlFor={`case-status-${report.legalCase.legalCaseId}`}>
+                            Advance case status
+                            <select
+                              id={`case-status-${report.legalCase.legalCaseId}`}
+                              defaultValue=""
+                              disabled={updatingCaseStatusId === report.legalCase.legalCaseId}
+                              onChange={(e) => {
+                                if (e.target.value) handleUpdateCaseStatus(report.legalCase.legalCaseId, e.target.value);
+                              }}
+                            >
+                              <option value="" disabled>Select next status…</option>
+                              {nextOptions.map((s) => (
+                                <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                      );
+                    })()}
+                  </section>
                 )}
               </div>
 

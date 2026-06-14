@@ -14,12 +14,56 @@ import { getSharedKey, encryptMessage, decryptMessage } from '../utils/cryptoUti
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
+/**
+ * Returns a human-readable presence label for a given availabilityStatus value.
+ *
+ * @param {string|null} value - The counterpartAvailability field from the channels API.
+ * @returns {string}
+ */
 function presenceLabel(value) {
   const normalized = String(value || '').trim().toUpperCase();
   if (normalized === 'AVAILABLE') return 'Online';
   if (normalized === 'BUSY') return 'Busy';
   if (normalized === 'OFFLINE') return 'Offline';
   return 'Unknown';
+}
+
+/**
+ * Returns a CSS class name for the presence status dot.
+ * Maps to .presence-dot--available / .presence-dot--busy / .presence-dot--offline
+ * defined in App.css.
+ *
+ * @param {string|null} value
+ * @returns {string}
+ */
+function presenceDotClass(value) {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (normalized === 'AVAILABLE') return 'presence-dot presence-dot--available';
+  if (normalized === 'BUSY') return 'presence-dot presence-dot--busy';
+  return 'presence-dot presence-dot--offline';
+}
+
+/**
+ * Renders the message delivery/seen tick suffix for outgoing messages.
+ * Returns null when the message is not mine (ticks are sender-facing only).
+ *
+ * Tick semantics:
+ *  seenAt      → ✓✓ Seen (double-tick, coloured)
+ *  deliveredAt → ✓✓ Delivered (double-tick, grey)
+ *  neither     → ✓ Sent (single-tick)
+ *
+ * @param {{ isMine: boolean, deliveredAt?: string|null, seenAt?: string|null }} msg
+ * @returns {JSX.Element|null}
+ */
+function MessageTicks({ msg }) {
+  if (!msg.isMine) return null;
+  if (msg.seenAt) {
+    return <span className="msg-ticks msg-ticks--seen" title={`Seen ${new Date(msg.seenAt).toLocaleTimeString()}`}>✓✓</span>;
+  }
+  if (msg.deliveredAt) {
+    return <span className="msg-ticks msg-ticks--delivered" title={`Delivered ${new Date(msg.deliveredAt).toLocaleTimeString()}`}>✓✓</span>;
+  }
+  return <span className="msg-ticks msg-ticks--sent" title="Sent">✓</span>;
 }
 
 function createSocket(token) {
@@ -303,7 +347,10 @@ const DirectChatPage = () => {
             senderLabel:
               dbMessage.senderUserId === currentUserId
                 ? roleLabelFromSession(currentUserRole)
-                : peerRoleLabelFromSession(currentUserRole)
+                : peerRoleLabelFromSession(currentUserRole),
+            // Carry delivery/seen timestamps so ticks render correctly on history load.
+            deliveredAt: dbMessage.deliveredAt || null,
+            seenAt: dbMessage.seenAt || null
           }))
         );
 
@@ -330,13 +377,14 @@ const DirectChatPage = () => {
   useEffect(() => {
     if (!cryptoKey || !currentUserId || !activeChannelId) return;
 
+    // ── receiveMessage — new incoming or echoed outgoing message ──────────────
     const handleNewMessage = async (dbMessage) => {
       // Ignore events for other channels when user switches rapidly.
       if (dbMessage.chatId !== activeChannelId) return;
 
       // Decrypt the incoming ciphertext payload
       const plaintext = await decryptMessage(dbMessage.encryptedMessageContent, cryptoKey);
-      
+
       const decryptedMsg = {
         messageId: dbMessage.messageId,
         senderUserId: dbMessage.senderUserId,
@@ -346,7 +394,10 @@ const DirectChatPage = () => {
         senderLabel:
           dbMessage.senderUserId === currentUserId
             ? roleLabelFromSession(currentUserRole)
-            : peerRoleLabelFromSession(currentUserRole)
+            : peerRoleLabelFromSession(currentUserRole),
+        // Delivery/seen ticks — pre-populated if the counterpart was already online.
+        deliveredAt: dbMessage.deliveredAt || null,
+        seenAt: dbMessage.seenAt || null
       };
 
       setMessages((prev) => [...prev, decryptedMsg]);
@@ -357,10 +408,53 @@ const DirectChatPage = () => {
       }
     };
 
-    socketRef.current?.on('receiveMessage', handleNewMessage);
+    // ── presence:update — staff came online or went offline ───────────────────
+    const handlePresenceUpdate = ({ chatId, presence }) => {
+      setChannels((prev) =>
+        prev.map((ch) => {
+          if (ch.chatId !== chatId) return ch;
+          return {
+            ...ch,
+            counterpartAvailability: presence,
+            asyncDeliveryHint:
+              presence === 'OFFLINE'
+                ? 'Your support worker is currently offline. Your messages will be delivered when they return.'
+                : null
+          };
+        })
+      );
+    };
 
-    // Cleanup listener to prevent duplicates
-    return () => socketRef.current?.off('receiveMessage', handleNewMessage);
+    // ── message:delivered — counterpart came back online and received pending messages ──
+    const handleMessageDelivered = ({ chatId, messageIds, deliveredAt }) => {
+      if (chatId !== activeChannelId) return;
+      const idSet = new Set(messageIds);
+      setMessages((prev) =>
+        prev.map((m) => (idSet.has(m.messageId) && !m.deliveredAt ? { ...m, deliveredAt } : m))
+      );
+    };
+
+    // ── message:seen — counterpart read the messages ──────────────────────────
+    const handleMessageSeen = ({ chatId, messageIds, seenAt }) => {
+      if (chatId !== activeChannelId) return;
+      const idSet = new Set(messageIds);
+      setMessages((prev) =>
+        prev.map((m) => (idSet.has(m.messageId) && !m.seenAt ? { ...m, seenAt } : m))
+      );
+    };
+
+    socketRef.current?.on('receiveMessage', handleNewMessage);
+    socketRef.current?.on('presence:update', handlePresenceUpdate);
+    socketRef.current?.on('message:delivered', handleMessageDelivered);
+    socketRef.current?.on('message:seen', handleMessageSeen);
+
+    // Cleanup listeners to prevent duplicates on re-register
+    return () => {
+      socketRef.current?.off('receiveMessage', handleNewMessage);
+      socketRef.current?.off('presence:update', handlePresenceUpdate);
+      socketRef.current?.off('message:delivered', handleMessageDelivered);
+      socketRef.current?.off('message:seen', handleMessageSeen);
+    };
   }, [activeChannelId, cryptoKey, currentUserId, currentUserRole]);
 
   useEffect(() => {
@@ -482,10 +576,14 @@ const DirectChatPage = () => {
                         : 'Survivor'}
                     </strong>
                     <small>Channel {channel.chatId.slice(0, 8)}...</small>
-                    <small>
-                      {presenceLabel(channel.counterpartAvailability)}
-                      {channel.chatChannelStatus === 'archived' ? ' · Archived' : ''}
-                    </small>
+                    {/* Presence dot + label — only shown for survivor-side viewers where counterpartAvailability is populated */}
+                    {currentUserRole === 'survivor' && channel.counterpartAvailability && (
+                      <small className="wa-presence-row">
+                        <span className={presenceDotClass(channel.counterpartAvailability)} aria-hidden="true" />
+                        {presenceLabel(channel.counterpartAvailability)}
+                        {channel.chatChannelStatus === 'archived' ? ' · Archived' : ''}
+                      </small>
+                    )}
                   </span>
                 </button>
 
@@ -528,7 +626,10 @@ const DirectChatPage = () => {
                     <strong>{currentUserRole === 'survivor' ? 'Secure Staff Channel' : 'Secure Survivor Channel'}</strong>
                     <small>end-to-end encrypted</small>
                     {activeChannel?.counterpartAvailability && (
-                      <small>Staff status: {presenceLabel(activeChannel.counterpartAvailability)}</small>
+                      <small className="wa-presence-row">
+                        <span className={presenceDotClass(activeChannel.counterpartAvailability)} aria-hidden="true" />
+                        {presenceLabel(activeChannel.counterpartAvailability)}
+                      </small>
                     )}
                   </div>
                 </div>
@@ -547,6 +648,8 @@ const DirectChatPage = () => {
                       <div className={`wa-bubble ${msg.isMine ? 'mine' : 'theirs'}`}>
                         <small className="wa-msg-role">{msg.senderLabel || (msg.isMine ? 'You' : 'Peer')}</small>
                         <p>{msg.plaintext}</p>
+                        {/* Delivery/seen ticks — only rendered on sender's own bubbles */}
+                        <MessageTicks msg={msg} />
                       </div>
                     </div>
                   ))
