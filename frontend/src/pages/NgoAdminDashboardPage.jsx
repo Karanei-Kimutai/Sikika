@@ -705,8 +705,13 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
   if (!dashboard) {
     return (
       <main className="admin-workspace ngo">
-        <section className="admin-content-area">
-          <p className="admin-empty">NGO workspace is unavailable right now.</p>
+        <section className="admin-content-area" style={{ padding: "2rem", maxWidth: "520px" }}>
+          <p className="status-message warning" role="alert" style={{ marginBottom: "1rem" }}>
+            {errorMessage || "Could not load the NGO workspace. Check that the backend is running."}
+          </p>
+          <button type="button" className="primary-btn" onClick={loadDashboard}>
+            Retry
+          </button>
         </section>
       </main>
     );
