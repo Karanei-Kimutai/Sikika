@@ -75,7 +75,7 @@ The goal, as defined in the System Design Document and proposal, is a **dual-cha
 - Message history (membership-gated). Non-production demo message seeder for empty rooms.
 - Privacy-safe display identities: survivors use their nickname, staff get role badges.
 - Harmful content report filing (self-report blocked).
-- Moderation review (NGO admin): approve/reject + actions: `remove_message`, `suspend_user`/`block_user`, `issue_warning` — all in a DB transaction with audit log entries and Socket.io real-time events.
+- Moderation review (NGO admin): approve/reject + actions: `remove_message`, `ban_user` (sets BANNED + reason + optional expiry + dual audit trail, resolves report atomically), `issue_warning` — all in a DB transaction with audit log entries and Socket.io real-time events. The legacy `suspend_user`/`block_user` moderation actions have been removed.
 - NGO admin can also delete any message directly (audit-logged).
 
 #### NGO Admin (`adminController.js`, `adminRoutes.js`)
@@ -230,12 +230,7 @@ The following is drawn from `docs/pending-roadmap-items.md` and analysis of the 
 - Dismissible state (distinct from read state) as described in the roadmap.
 
 ### 4.4 User Banning Workflow (Partial)
-**What exists:** `SUSPENDED` account status. Moderation `suspend_user` action exists. Staff suspension/reactivation by NGO admin exists.
-**What is missing:**
-- A dedicated `BANNED` account status separate from `SUSPENDED` (ban is permanent; suspension is temporary).
-- `POST /api/admin/users/:userId/ban` and `/unban` endpoints for NGO admin.
-- Ban reason and ban duration fields (could be on `UserAccount` or a separate `BanRecord` model).
-- Audit log entries specific to ban events.
+**Status: Done.** Full ban workflow implemented with `BANNED` account status (distinct from `SUSPENDED`), `PATCH /api/admin/ngo/users/:userId/ban` and `/unban` endpoints, ban metadata columns (`banReason`, `banExpiresAt`, `bannedByUserId`, `bannedAt`), dual audit trail (ModerationActionLog + AuditLog), automatic ban expiry lift at next auth check (`liftExpiredBan`), and cascading survivor reassignment when a COUNSELLOR/LEGAL_COUNSEL is banned (`cascadeReassignOnStaffBan`). Moderation `ban_user` action resolves the underlying content report atomically.
 - Frontend visibility: banned status indicator in user management surfaces, ban/unban controls.
 
 ### 4.5 Legal Case Document Drafting and Export (Partial)
@@ -329,7 +324,7 @@ Keep notifications lightweight — no pagination needed unless the product grows
    - `POST /api/admin/users/:userId/ban` (NGO admin): set `accountStatus = 'BANNED'`, write `banReason`, optionally set `banExpiresAt`, write `AuditLog`.
    - `POST /api/admin/users/:userId/unban` (NGO admin): set `accountStatus = 'ACTIVE'`, clear ban fields, write `AuditLog`.
 4. Update `isAccountActive()` in `authController.js` to also block `BANNED` accounts.
-5. Update moderation `suspend_user` to remain as a temporary suspension; banning is a separate, escalated action.
+5. ~~Update moderation `suspend_user` to remain as a temporary suspension~~ — **Done:** moderation now uses `ban_user` (BANNED + metadata + dual audit). The `suspend_user`/`block_user` moderation paths have been removed. `SUSPENDED` is reserved for the reversible Active/Inactive operational staff toggle only.
 
 **Frontend:** Add ban/unban buttons to the staff directory and user management tables in `NgoAdminDashboardPage.jsx`, with a confirmation modal that collects the ban reason.
 
