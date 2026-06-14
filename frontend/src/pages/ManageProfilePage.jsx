@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import { getToken } from "../utils/auth";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
 function getAuthHeaders() {
-  const token = localStorage.getItem("authToken");
+  const token = getToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { io } from "socket.io-client";
 import { Send } from "lucide-react";
-import { getToken } from "../utils/auth";
+import { getToken, getUserId } from "../utils/auth";
 import ConfirmDialog from "../components/ConfirmDialog";
 
 /**
@@ -87,7 +87,7 @@ function CommunityPage() {
   const activeRoomIdRef = useRef("");
   const messagesViewportRef = useRef(null);
 
-  const currentUserId = localStorage.getItem("userId");
+  const currentUserId = getUserId();
   const isNgoAdmin = currentUserRole === "NGO_ADMIN";
   const activeRoom = rooms.find((room) => room.roomId === activeRoomId) || null;
   // Membership gate: only joined rooms can load/render message history.

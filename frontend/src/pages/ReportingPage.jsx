@@ -53,7 +53,7 @@ function ReportingPage({ onNavigate }) {
       const data = await getReports();
       setReports(data.reports || []);
     } catch (error) {
-      setErrorMessage(error.response?.data?.error || "Could not load reports.");
+      setErrorMessage(error.response?.data?.error || "No reports available.");
     } finally {
       setLoading(false);
     }

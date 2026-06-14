@@ -182,8 +182,13 @@ function SystemAdminDashboardPage({ onNavigate, onSignOut, initialSection = "inf
   if (!dashboard) {
     return (
       <main className="admin-workspace system">
-        <section className="admin-content-area">
-          <p className="admin-empty">System workspace is unavailable right now.</p>
+        <section className="admin-content-area" style={{ padding: "2rem", maxWidth: "520px" }}>
+          <p className="status-message warning" role="alert" style={{ marginBottom: "1rem" }}>
+            {errorMessage || "System workspace could not be loaded. Check that the backend is running."}
+          </p>
+          <button type="button" className="primary-btn" onClick={loadDashboard}>
+            Retry
+          </button>
         </section>
       </main>
     );
