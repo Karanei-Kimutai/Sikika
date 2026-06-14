@@ -186,6 +186,8 @@ const DirectChatPage = () => {
   const [noticeMessage, setNoticeMessage] = useState('');
   const [isPrivacyMaskActive, setIsPrivacyMaskActive] = useState(false);
   const [showArchivedChannels, setShowArchivedChannels] = useState(false);
+  // showDeletedChannels renders the Trash view — only deleted channels, separate from active/archived.
+  const [showDeletedChannels, setShowDeletedChannels] = useState(false);
   const [menuChannelId, setMenuChannelId] = useState(null);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   
@@ -244,9 +246,20 @@ const DirectChatPage = () => {
     const loadChannels = async () => {
       try {
         // Channel list is identity-scoped by Authorization token.
+        // Survivors may request archived or deleted views via query params.
+        // Staff always receive active channels only (enforced server-side too).
+        let channelParams;
+        if (currentUserRole === 'survivor') {
+          if (showDeletedChannels) {
+            // Trash view: only deleted channels. Deliberately separate from active/archived.
+            channelParams = { includeDeleted: true };
+          } else if (showArchivedChannels) {
+            channelParams = { includeArchived: true };
+          }
+        }
         const response = await axios.get(`${API_BASE_URL}/api/chat/channels`, {
           headers: { Authorization: `Bearer ${token}` },
-          params: showArchivedChannels && currentUserRole === 'survivor' ? { includeArchived: true } : undefined
+          params: channelParams
         });
         const loadedChannels = Array.isArray(response.data) ? response.data : [];
         setChannels(loadedChannels);
@@ -271,7 +284,7 @@ const DirectChatPage = () => {
         socketRef.current.disconnect();
       }
     };
-  }, [showArchivedChannels, currentUserId, currentUserRole]);
+  }, [showArchivedChannels, showDeletedChannels, currentUserId, currentUserRole]);
 
   const activeChannel = channels.find((channel) => channel.chatId === activeChannelId) || null;
   const actionMenuChannel = channels.find((channel) => channel.chatId === menuChannelId) || null;
@@ -289,9 +302,18 @@ const DirectChatPage = () => {
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
+      // Mirror the same param logic as loadChannels so refresh shows the same view.
+      let refreshParams;
+      if (currentUserRole === 'survivor') {
+        if (showDeletedChannels) {
+          refreshParams = { includeDeleted: true };
+        } else if (showArchivedChannels) {
+          refreshParams = { includeArchived: true };
+        }
+      }
       const refreshed = await axios.get(`${API_BASE_URL}/api/chat/channels`, {
         headers: { Authorization: `Bearer ${token}` },
-        params: showArchivedChannels && currentUserRole === 'survivor' ? { includeArchived: true } : undefined
+        params: refreshParams
       });
       const loadedChannels = Array.isArray(refreshed.data) ? refreshed.data : [];
       setChannels(loadedChannels);
@@ -552,9 +574,30 @@ const DirectChatPage = () => {
             <h2>Chats</h2>
             <span>{channels.length}</span>
             {currentUserRole === 'survivor' && (
-              <button type="button" className="link-btn" onClick={() => setShowArchivedChannels((value) => !value)}>
-                {showArchivedChannels ? 'Hide Archived' : 'Show Archived'}
-              </button>
+              <>
+                {/* Archive toggle — mutually exclusive with Trash view */}
+                <button
+                  type="button"
+                  className="link-btn"
+                  onClick={() => {
+                    setShowDeletedChannels(false);
+                    setShowArchivedChannels((v) => !v);
+                  }}
+                >
+                  {showArchivedChannels ? 'Hide Archived' : 'Show Archived'}
+                </button>
+                {/* Trash toggle — shows only deleted channels so survivors can restore */}
+                <button
+                  type="button"
+                  className="link-btn"
+                  onClick={() => {
+                    setShowArchivedChannels(false);
+                    setShowDeletedChannels((v) => !v);
+                  }}
+                >
+                  {showDeletedChannels ? 'Hide Trash' : 'Trash'}
+                </button>
+              </>
             )}
           </header>
 
@@ -581,11 +624,16 @@ const DirectChatPage = () => {
                     </strong>
                     <small>Channel {channel.chatId.slice(0, 8)}...</small>
                     {/* Presence dot + label — only shown for survivor-side viewers where counterpartAvailability is populated */}
-                    {currentUserRole === 'survivor' && channel.counterpartAvailability && (
+                    {currentUserRole === 'survivor' && (
                       <small className="wa-presence-row">
-                        <span className={presenceDotClass(channel.counterpartAvailability)} aria-hidden="true" />
-                        {presenceLabel(channel.counterpartAvailability)}
+                        {channel.counterpartAvailability && (
+                          <>
+                            <span className={presenceDotClass(channel.counterpartAvailability)} aria-hidden="true" />
+                            {presenceLabel(channel.counterpartAvailability)}
+                          </>
+                        )}
                         {channel.chatChannelStatus === 'archived' ? ' · Archived' : ''}
+                        {channel.chatChannelStatus === 'deleted'  ? ' · Deleted'  : ''}
                       </small>
                     )}
                   </span>
@@ -615,7 +663,13 @@ const DirectChatPage = () => {
             ))}
 
             {channels.length === 0 && !errorMessage && (
-              <p className="wa-empty-list">No active direct chat channels.</p>
+              <p className="wa-empty-list">
+                {showDeletedChannels
+                  ? 'No deleted chats in Trash.'
+                  : showArchivedChannels
+                    ? 'No archived chats.'
+                    : 'No active direct chat channels.'}
+              </p>
             )}
           </div>
         </aside>
@@ -687,18 +741,32 @@ const DirectChatPage = () => {
 
       {menuChannelId && actionMenuChannel && createPortal(
         <div className="wa-chat-options-menu" style={{ top: menuPosition.top, left: menuPosition.left }}>
-          {actionMenuChannel.chatChannelStatus === 'archived' ? (
+          {actionMenuChannel.chatChannelStatus === 'deleted' ? (
+            /* Trash view: only Restore is available. Delete/Archive are blocked for deleted channels. */
             <button type="button" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'active')}>
               <ArchiveRestore size={14} aria-hidden="true" /> Restore Chat
             </button>
+          ) : actionMenuChannel.chatChannelStatus === 'archived' ? (
+            /* Archived view: Restore or Delete. */
+            <>
+              <button type="button" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'active')}>
+                <ArchiveRestore size={14} aria-hidden="true" /> Restore Chat
+              </button>
+              <button type="button" className="danger" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'deleted')}>
+                <Trash2 size={14} aria-hidden="true" /> Move to Trash
+              </button>
+            </>
           ) : (
-            <button type="button" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'archived')}>
-              <Archive size={14} aria-hidden="true" /> Archive Chat
-            </button>
+            /* Active view: Archive or Delete. */
+            <>
+              <button type="button" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'archived')}>
+                <Archive size={14} aria-hidden="true" /> Archive Chat
+              </button>
+              <button type="button" className="danger" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'deleted')}>
+                <Trash2 size={14} aria-hidden="true" /> Move to Trash
+              </button>
+            </>
           )}
-          <button type="button" className="danger" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'deleted')}>
-            <Trash2 size={14} aria-hidden="true" /> Delete Chat
-          </button>
         </div>,
         document.body
       )}
