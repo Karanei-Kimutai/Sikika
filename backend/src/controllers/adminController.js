@@ -19,11 +19,14 @@ const {
   SystemAdministratorProfile,
   NgoAdministratorProfile,
   AuditLog,
+  ModerationActionLog,
   SupportResource,
   StaffAssignmentHistory,
-  ResourceAccessEvent
+  ResourceAccessEvent,
+  SystemSetting
 } = require('../models');
 const { ensureAutoChannelsForSurvivor } = require('../services/chatAccessService');
+const { normalizeRole, BANNABLE_ROLES } = require('../utils/roles');
 
 /**
  * Admin Controller
@@ -41,21 +44,24 @@ const { ensureAutoChannelsForSurvivor } = require('../services/chatAccessService
  * - staff onboarding and staff account lifecycle status updates
  */
 
-// In-memory maintenance/runtime state (process-local, resets on server restart).
-let maintenanceModeEnabled = false;
-let maintenanceUpdatedAt = null;
-let maintenanceReason = null;
-let maintenanceExpectedUntil = null;
+// Runtime-only state (resets on restart — intentional for non-durable items).
 let lastCacheClearAt = null;
 let lastRestartRequestAt = null;
 
-function normalizeRole(value) {
-  const role = String(value || '').trim().toUpperCase();
-  if (role === 'LEGALCOUNSEL') return 'LEGAL_COUNSEL';
-  if (role === 'NGOADMIN') return 'NGO_ADMIN';
-  if (role === 'SYSTEMADMIN') return 'SYSTEM_ADMIN';
-  return role;
-}
+/**
+ * Maintenance mode cache — loaded from DB at boot via loadMaintenanceStateFromDb().
+ * Write-through: every toggle goes to SystemSetting AND updates this cache so the
+ * in-process guard (maintenanceGuard) can check without a DB round-trip per request.
+ */
+let _maintenanceCache = {
+  enabled: false,
+  updatedAt: null,
+  reason: null,
+  expectedUntil: null
+};
+
+// MAINTENANCE_SETTING_KEY is the SystemSetting PK for durable maintenance state.
+const MAINTENANCE_SETTING_KEY = 'maintenance';
 
 function getUserIdFromRequest(req) {
   return req.user?.userId || req.user?.id || null;
@@ -401,12 +407,14 @@ async function getNgoDashboard(req, res) {
       }),
       CounsellorProfile.findAll({
         attributes: ['counsellorId', 'professionalSpecialization', 'currentWorkloadScore', 'availabilityStatus'],
-        include: [{ model: UserAccount, attributes: ['userId', 'phoneNumber'] }],
+        // Include accountStatus + ban fields so staff directory can render status badges
+        // and NGO admins can see and act on BANNED accounts without a separate lookup.
+        include: [{ model: UserAccount, attributes: ['userId', 'phoneNumber', 'accountStatus', 'banReason', 'banExpiresAt'] }],
         order: [['currentWorkloadScore', 'DESC']]
       }),
       LegalCounselProfile.findAll({
         attributes: ['legalCounselId', 'professionalSpecialization', 'currentWorkloadScore', 'availabilityStatus'],
-        include: [{ model: UserAccount, attributes: ['userId', 'phoneNumber'] }],
+        include: [{ model: UserAccount, attributes: ['userId', 'phoneNumber', 'accountStatus', 'banReason', 'banExpiresAt'] }],
         order: [['currentWorkloadScore', 'DESC']]
       }),
       IncidentReport.findAll({
@@ -425,8 +433,13 @@ async function getNgoDashboard(req, res) {
         include: [{
           model: CommunityMessage,
           as: 'reportedMessage',
-          attributes: ['publicMessageContent'],
-          include: [{ model: CommunityRoom, attributes: ['roomName'] }]
+          // senderUserId is the author of the harmful message — used by the ban workflow.
+          // sender.accountStatus tells the UI whether to show "Ban User" or "Lift Ban".
+          attributes: ['publicMessageContent', 'senderUserId'],
+          include: [
+            { model: CommunityRoom, attributes: ['roomName'] },
+            { model: UserAccount, as: 'sender', attributes: ['accountStatus'] }
+          ]
         }],
         order: [['reportSubmissionTimestamp', 'DESC']],
         limit: 12
@@ -662,7 +675,11 @@ async function getNgoDashboard(req, res) {
           specialization: row.professionalSpecialization || 'General Support',
           activeCases: counsellorCountMap.get(row.counsellorId) || 0,
           availability: row.availabilityStatus,
-          userId: row.userAccount?.userId
+          userId: row.userAccount?.userId,
+          // Ban/account status fields for NGO admin staff directory controls.
+          accountStatus: row.userAccount?.accountStatus || 'ACTIVE',
+          banReason: row.userAccount?.banReason || null,
+          banExpiresAt: row.userAccount?.banExpiresAt || null
         })),
         ...legalWorkload.map((row) => ({
           id: row.legalCounselId,
@@ -671,7 +688,10 @@ async function getNgoDashboard(req, res) {
           specialization: row.professionalSpecialization || 'General Legal Support',
           activeCases: legalCountMap.get(row.legalCounselId) || 0,
           availability: row.availabilityStatus,
-          userId: row.userAccount?.userId
+          userId: row.userAccount?.userId,
+          accountStatus: row.userAccount?.accountStatus || 'ACTIVE',
+          banReason: row.userAccount?.banReason || null,
+          banExpiresAt: row.userAccount?.banExpiresAt || null
         }))
       ],
       survivorAssignments: survivorsWithAssignments.map((row) => ({
@@ -689,7 +709,13 @@ async function getNgoDashboard(req, res) {
         roomName: row.reportedMessage?.communityRoom?.roomName || 'General',
         snippet: row.reportedMessage?.publicMessageContent || row.reportReasonText,
         reportReasonText: row.reportReasonText,
-        status: row.moderationReviewStatus
+        status: row.moderationReviewStatus,
+        // senderUserId is the author of the reported message — used by the ban workflow
+        // in the NGO admin moderation desk to ban the offending community member.
+        senderUserId: row.reportedMessage?.senderUserId || null,
+        // senderAccountStatus tells the UI whether to show "Ban User" or "Lift Ban"
+        // for this queue row — avoids a separate per-row lookup.
+        senderAccountStatus: row.reportedMessage?.sender?.accountStatus || null
       })),
       notifications: urgentNotifications,
       recentCommunityMessages: communityMessages.map((item) => ({
@@ -1066,32 +1092,41 @@ async function setMaintenanceMode(req, res) {
     if (!actor) return res.status(401).json({ error: 'Authentication required.' });
     if (actor.role !== 'SYSTEM_ADMIN') return roleForbidden(res, ['SYSTEM_ADMIN']);
 
-    // Enables/disables global maintenance gate and optional user-facing metadata.
     const { enabled, reason, expectedUntil } = req.body || {};
-    maintenanceModeEnabled = Boolean(enabled);
-    maintenanceUpdatedAt = new Date().toISOString();
+    const updatedAt = new Date().toISOString();
 
-    if (maintenanceModeEnabled) {
-      const parsedReason = String(reason || '').trim();
-      maintenanceReason = parsedReason || 'Scheduled platform maintenance in progress.';
+    let parsedReason = null;
+    let parsedExpectedUntil = null;
 
-      const parsedExpectedUntil = expectedUntil ? new Date(String(expectedUntil)) : null;
-      maintenanceExpectedUntil = parsedExpectedUntil && !Number.isNaN(parsedExpectedUntil.getTime())
-        ? parsedExpectedUntil.toISOString()
+    if (Boolean(enabled)) {
+      const rawReason = String(reason || '').trim();
+      parsedReason = rawReason || 'Scheduled platform maintenance in progress.';
+
+      const rawExpected = expectedUntil ? new Date(String(expectedUntil)) : null;
+      parsedExpectedUntil = rawExpected && !Number.isNaN(rawExpected.getTime())
+        ? rawExpected.toISOString()
         : null;
-    } else {
-      maintenanceReason = null;
-      maintenanceExpectedUntil = null;
     }
 
+    // Write-through to DB so state survives process restarts.
+    const payload = {
+      enabled: Boolean(enabled),
+      updatedAt,
+      reason: parsedReason,
+      expectedUntil: parsedExpectedUntil
+    };
+
+    await SystemSetting.upsert({
+      settingKey: MAINTENANCE_SETTING_KEY,
+      settingValue: JSON.stringify(payload)
+    });
+
+    // Update in-process cache so the maintenance guard works without a DB hit.
+    _maintenanceCache = payload;
+
     return res.json({
-      message: `Maintenance mode ${maintenanceModeEnabled ? 'enabled' : 'disabled'}.`,
-      maintenanceMode: {
-        enabled: maintenanceModeEnabled,
-        updatedAt: maintenanceUpdatedAt,
-        reason: maintenanceReason,
-        expectedUntil: maintenanceExpectedUntil
-      }
+      message: `Maintenance mode ${payload.enabled ? 'enabled' : 'disabled'}.`,
+      maintenanceMode: payload
     });
   } catch (error) {
     console.error('Maintenance mode update error:', error);
@@ -1376,11 +1411,17 @@ async function updateStaffAccountStatus(req, res) {
 
     // Restricting status actions to frontline staff avoids cross-admin role tampering.
     if (!['COUNSELLOR', 'LEGAL_COUNSEL'].includes(targetUser.userRole)) {
-      return res.status(400).json({ error: 'Only counsellor and legal-counsel accounts can be suspended or reactivated.' });
+      return res.status(400).json({ error: 'Only counsellor and legal-counsel accounts can be set active or inactive.' });
+    }
+
+    // Banned accounts must be restored via the dedicated unban endpoint, not the
+    // active/inactive flip. This prevents silent bypass of ban reason/audit trail.
+    if (targetUser.accountStatus === 'BANNED') {
+      return res.status(400).json({ error: 'This account is banned. Use the unban action to restore access.' });
     }
 
     if (targetUser.userId === actor.userId && status === 'SUSPENDED') {
-      return res.status(400).json({ error: 'You cannot suspend your own active NGO admin account.' });
+      return res.status(400).json({ error: 'You cannot set your own NGO admin account to inactive.' });
     }
 
     // Save the account lifecycle transition first, then record immutable audit trail.
@@ -1408,14 +1449,267 @@ async function updateStaffAccountStatus(req, res) {
   }
 }
 
+/**
+ * banUser
+ * -------
+ * PATCH /api/admin/ngo/users/:userId/ban
+ *
+ * Applies a BANNED lifecycle state to a target user account. Intended for
+ * NGO admins acting on community members (survivors) or frontline staff
+ * (counsellors, legal counsel) who have violated platform policies.
+ *
+ * Policy guardrails enforced here:
+ *  - Only NGO_ADMIN callers may ban.
+ *  - Only SURVIVOR, COUNSELLOR, and LEGAL_COUNSEL accounts may be targeted.
+ *    Admin accounts (NGO_ADMIN, SYSTEM_ADMIN) are never bannable.
+ *  - Self-ban is explicitly rejected.
+ *  - A ban reason is mandatory (reason is surfaced in audit records).
+ *  - Optional banExpiresAt enables temporary bans; must be a future date.
+ *    Null banExpiresAt means the ban is permanent until manually lifted.
+ *
+ * A dual audit trail is written:
+ *  - ModerationActionLog (type: 'BAN') for moderation review workflows.
+ *  - AuditLog (type: 'ACCOUNT_BANNED') which surfaces in System Admin logs.
+ *
+ * Known limitation: banning a COUNSELLOR or LEGAL_COUNSEL does NOT
+ * automatically reassign their active survivor caseload. NGO admins should
+ * use the staff reassignment workflow after banning a staff member.
+ *
+ * @param {import('express').Request}  req
+ * @param {import('express').Response} res
+ */
+async function banUser(req, res) {
+  try {
+    const actor = await getActor(req);
+    if (!actor) return res.status(401).json({ error: 'Authentication required.' });
+    if (actor.role !== 'NGO_ADMIN') return roleForbidden(res, ['NGO_ADMIN']);
+
+    const userId = String(req.params.userId || '').trim();
+    const reason = String(req.body?.reason || '').trim();
+    const rawExpiresAt = req.body?.expiresAt || null;
+
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required.' });
+    }
+
+    // A reason is mandatory — this goes into both the ModerationActionLog and
+    // the UserAccount.banReason for later admin review and audit.
+    if (!reason) {
+      return res.status(400).json({ error: 'A ban reason is required.' });
+    }
+
+    // Validate optional expiry date: if provided it must be in the future.
+    // A past expiry date would instantly auto-lift the ban on next auth.
+    let banExpiresAt = null;
+    if (rawExpiresAt) {
+      const parsedExpiry = new Date(rawExpiresAt);
+      if (isNaN(parsedExpiry.getTime())) {
+        return res.status(400).json({ error: 'expiresAt must be a valid ISO date string.' });
+      }
+      if (parsedExpiry <= new Date()) {
+        return res.status(400).json({ error: 'expiresAt must be a future date.' });
+      }
+      banExpiresAt = parsedExpiry;
+    }
+
+    const targetUser = await UserAccount.findByPk(userId, {
+      attributes: ['userId', 'userRole', 'accountStatus']
+    });
+
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User account not found.' });
+    }
+
+    // Admin accounts are never bannable — banning admins requires a full
+    // deactivation workflow handled outside this endpoint.
+    if (!BANNABLE_ROLES.includes(targetUser.userRole)) {
+      return res.status(400).json({
+        error: 'Only survivor and frontline staff accounts can be banned via this endpoint.'
+      });
+    }
+
+    // Prevent self-ban — an NGO admin cannot lock themselves out.
+    if (targetUser.userId === actor.userId) {
+      return res.status(400).json({ error: 'You cannot ban your own account.' });
+    }
+
+    // Apply the ban — note that authMiddleware will enforce this on the very
+    // next request the target user makes, even with an active session token.
+    const now = new Date();
+    targetUser.accountStatus = 'BANNED';
+    targetUser.banReason = reason;
+    targetUser.bannedAt = now;
+    targetUser.banExpiresAt = banExpiresAt;
+    targetUser.bannedByUserId = actor.userId;
+    await targetUser.save();
+
+    // Dual audit trail: moderation log (community moderation flows) +
+    // AuditLog (surfaces in System Admin logs feed automatically).
+    await Promise.all([
+      ModerationActionLog.create({
+        moderationActionId: randomUUID(),
+        moderatorUserId: actor.userId,
+        targetUserId: targetUser.userId,
+        moderationActionType: 'BAN',
+        moderationActionReason: reason
+      }),
+      AuditLog.create({
+        auditId: randomUUID(),
+        actorUserId: actor.userId,
+        actionType: 'ACCOUNT_BANNED',
+        targetEntity: `${targetUser.userRole}:${targetUser.userId}`
+      })
+    ]);
+
+    // Force-revoke any live sockets immediately — banned users cannot continue
+    // sessions beyond the current request/message without waiting for expiry.
+    req.app.locals.io?.in(`user:${targetUser.userId}`).disconnectSockets(true);
+
+    // For staff bans, cascade-reassign their active survivors to ensure continuity.
+    if (['COUNSELLOR', 'LEGAL_COUNSEL'].includes(targetUser.userRole)) {
+      setImmediate(() =>
+        cascadeReassignOnStaffBan(targetUser.userId, targetUser.userRole, reason)
+          .catch((err) => console.error('[banUser] cascade error:', err))
+      );
+    }
+
+    return res.json({
+      message: `Account banned successfully.${banExpiresAt ? ` Ban expires at ${banExpiresAt.toISOString()}.` : ' Ban is permanent until lifted.'}`,
+      user: {
+        userId: targetUser.userId,
+        role: targetUser.userRole,
+        accountStatus: 'BANNED',
+        banReason: reason,
+        bannedAt: now,
+        banExpiresAt
+      }
+    });
+  } catch (error) {
+    console.error('banUser error:', error);
+    return res.status(500).json({ error: 'Failed to apply ban.' });
+  }
+}
+
+/**
+ * unbanUser
+ * ---------
+ * PATCH /api/admin/ngo/users/:userId/unban
+ *
+ * Lifts a BANNED lifecycle state and restores the account to ACTIVE.
+ * Clears all ban metadata fields and writes an audit trail.
+ *
+ * Can also be called on SUSPENDED accounts to restore them, but the
+ * primary intended use is lifting BANNED status.
+ *
+ * Policy guardrails:
+ *  - Only NGO_ADMIN callers may unban.
+ *  - Self-unban is permitted (e.g. system admin accidentally banned a peer;
+ *    the NGO admin cleans up their own mistake).
+ *  - Unbanning an already-ACTIVE account is a no-op (returns 200).
+ *
+ * @param {import('express').Request}  req
+ * @param {import('express').Response} res
+ */
+async function unbanUser(req, res) {
+  try {
+    const actor = await getActor(req);
+    if (!actor) return res.status(401).json({ error: 'Authentication required.' });
+    if (actor.role !== 'NGO_ADMIN') return roleForbidden(res, ['NGO_ADMIN']);
+
+    const userId = String(req.params.userId || '').trim();
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required.' });
+    }
+
+    const targetUser = await UserAccount.findByPk(userId, {
+      attributes: ['userId', 'userRole', 'accountStatus']
+    });
+
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User account not found.' });
+    }
+
+    // Idempotent: already active accounts require no change.
+    if (targetUser.accountStatus === 'ACTIVE') {
+      return res.json({
+        message: 'Account is already active.',
+        user: { userId: targetUser.userId, accountStatus: 'ACTIVE' }
+      });
+    }
+
+    // Restore the account and clear all ban metadata.
+    targetUser.accountStatus = 'ACTIVE';
+    targetUser.banReason = null;
+    targetUser.bannedAt = null;
+    targetUser.banExpiresAt = null;
+    targetUser.bannedByUserId = null;
+    await targetUser.save();
+
+    // Dual audit trail mirrors the ban action.
+    await Promise.all([
+      ModerationActionLog.create({
+        moderationActionId: randomUUID(),
+        moderatorUserId: actor.userId,
+        targetUserId: targetUser.userId,
+        moderationActionType: 'UNBAN',
+        moderationActionReason: 'Account ban lifted by NGO admin.'
+      }),
+      AuditLog.create({
+        auditId: randomUUID(),
+        actorUserId: actor.userId,
+        actionType: 'ACCOUNT_UNBANNED',
+        targetEntity: `${targetUser.userRole}:${targetUser.userId}`
+      })
+    ]);
+
+    return res.json({
+      message: 'Account ban lifted. Account is now active.',
+      user: {
+        userId: targetUser.userId,
+        role: targetUser.userRole,
+        accountStatus: 'ACTIVE'
+      }
+    });
+  } catch (error) {
+    console.error('unbanUser error:', error);
+    return res.status(500).json({ error: 'Failed to lift ban.' });
+  }
+}
+
+/**
+ * loadMaintenanceStateFromDb
+ * --------------------------
+ * Reads the persisted maintenance setting from DB into the in-process cache.
+ * Called once at server boot (after sequelize.sync) so maintenance mode
+ * that was enabled before a restart is immediately enforced on startup.
+ *
+ * @returns {Promise<void>}
+ */
+async function loadMaintenanceStateFromDb() {
+  try {
+    const row = await SystemSetting.findByPk(MAINTENANCE_SETTING_KEY);
+    if (row?.settingValue) {
+      const parsed = JSON.parse(row.settingValue);
+      _maintenanceCache = {
+        enabled: Boolean(parsed.enabled),
+        updatedAt: parsed.updatedAt || null,
+        reason: parsed.reason || null,
+        expectedUntil: parsed.expectedUntil || null
+      };
+      if (_maintenanceCache.enabled) {
+        console.log('[maintenance] Restored enabled maintenance mode from DB.');
+      }
+    }
+  } catch (err) {
+    // Non-fatal: if the read fails (e.g. table not yet created on first boot)
+    // the in-process default (disabled) is safe.
+    console.warn('[maintenance] Could not load maintenance state from DB:', err.message);
+  }
+}
+
 function getMaintenanceModeState() {
-  // Shared helper used by public-status endpoint and maintenance guard responses.
-  return {
-    enabled: maintenanceModeEnabled,
-    updatedAt: maintenanceUpdatedAt,
-    reason: maintenanceReason,
-    expectedUntil: maintenanceExpectedUntil
-  };
+  // Shared helper used by the public-status endpoint and maintenance guard responses.
+  return { ..._maintenanceCache };
 }
 
 /**
@@ -1429,7 +1723,7 @@ function getMaintenanceModeState() {
 function maintenanceGuard(req, res, next) {
   // Global request gate used by backend/index.js.
   // Allows health/admin/status endpoints so operators can recover the platform.
-  if (!maintenanceModeEnabled) return next();
+  if (!_maintenanceCache.enabled) return next();
 
   // Permit minimal auth recovery paths so operators can sign in to disable
   // maintenance mode after being signed out.
@@ -1459,6 +1753,161 @@ function maintenanceGuard(req, res, next) {
   });
 }
 
+/**
+ * cascadeReassignOnStaffBan
+ * -------------------------
+ * When a COUNSELLOR or LEGAL_COUNSEL is banned, auto-reassigns all of their
+ * active survivors to the next least-loaded available staff member.
+ *
+ * Uses the same `applySurvivorReassignment` primitive as the manual NGO-admin
+ * flow, so assignment history, chat channel resync, and workload recalculation
+ * all fire automatically.
+ *
+ * If no replacement candidate exists (only one staff member in that role) the
+ * survivor is left on the banned staff member's roster — the NGO admin will
+ * need to handle it manually. This is logged but does not crash the ban.
+ *
+ * @param {string} bannedUserId - UserAccount.userId of the banned staff member.
+ * @param {string} targetRole   - Canonical role string ('COUNSELLOR' or 'LEGAL_COUNSEL').
+ * @param {string} reason       - Reason text propagated to StaffAssignmentHistory.
+ * @returns {Promise<void>}
+ */
+async function cascadeReassignOnStaffBan(bannedUserId, targetRole, reason) {
+  try {
+    if (targetRole === 'COUNSELLOR') {
+      const bannedProfile = await CounsellorProfile.findOne({
+        where: { userId: bannedUserId },
+        attributes: ['counsellorId']
+      });
+      if (!bannedProfile) return;
+
+      const affectedSurvivors = await SurvivorProfile.findAll({
+        where: { assignedCounsellorId: bannedProfile.counsellorId },
+        attributes: ['survivorId', 'assignedCounsellorId']
+      });
+
+      if (affectedSurvivors.length === 0) return;
+
+      // Pick replacement: AVAILABLE counsellor with lowest workload, excluding the banned one.
+      const candidates = await CounsellorProfile.findAll({
+        attributes: ['counsellorId', 'currentWorkloadScore', 'availabilityStatus'],
+        order: [['currentWorkloadScore', 'ASC'], ['counsellorId', 'ASC']]
+      });
+      const available = candidates.filter((c) => c.availabilityStatus === 'AVAILABLE' && c.counsellorId !== bannedProfile.counsellorId);
+      const fallback = candidates.filter((c) => c.counsellorId !== bannedProfile.counsellorId);
+      const replacementId = (available[0] || fallback[0])?.counsellorId || null;
+
+      for (const survivor of affectedSurvivors) {
+        if (!replacementId) {
+          console.warn('[banCascade] No replacement counsellor found for survivor', survivor.survivorId);
+          continue;
+        }
+        await applySurvivorReassignment({
+          survivorId: survivor.survivorId,
+          counsellorId: replacementId,
+          legalCounselId: null,
+          reason: `Auto-reassigned: assigned counsellor was banned. ${reason}`
+        }).catch((err) =>
+          console.error('[banCascade] counsellor reassignment failed for survivor', survivor.survivorId, err)
+        );
+      }
+    } else if (targetRole === 'LEGAL_COUNSEL') {
+      const bannedProfile = await LegalCounselProfile.findOne({
+        where: { userId: bannedUserId },
+        attributes: ['legalCounselId']
+      });
+      if (!bannedProfile) return;
+
+      const affectedSurvivors = await SurvivorProfile.findAll({
+        where: { assignedLegalCounselId: bannedProfile.legalCounselId },
+        attributes: ['survivorId', 'assignedLegalCounselId']
+      });
+
+      if (affectedSurvivors.length === 0) return;
+
+      const candidates = await LegalCounselProfile.findAll({
+        attributes: ['legalCounselId', 'currentWorkloadScore', 'availabilityStatus'],
+        order: [['currentWorkloadScore', 'ASC'], ['legalCounselId', 'ASC']]
+      });
+      const available = candidates.filter((c) => c.availabilityStatus === 'AVAILABLE' && c.legalCounselId !== bannedProfile.legalCounselId);
+      const fallback = candidates.filter((c) => c.legalCounselId !== bannedProfile.legalCounselId);
+      const replacementId = (available[0] || fallback[0])?.legalCounselId || null;
+
+      for (const survivor of affectedSurvivors) {
+        if (!replacementId) {
+          console.warn('[banCascade] No replacement legal counsel found for survivor', survivor.survivorId);
+          continue;
+        }
+        await applySurvivorReassignment({
+          survivorId: survivor.survivorId,
+          counsellorId: null,
+          legalCounselId: replacementId,
+          reason: `Auto-reassigned: assigned legal counsel was banned. ${reason}`
+        }).catch((err) =>
+          console.error('[banCascade] legal counsel reassignment failed for survivor', survivor.survivorId, err)
+        );
+      }
+    }
+  } catch (err) {
+    // Cascade failure is logged but must not prevent the ban itself from completing.
+    console.error('[banCascade] cascadeReassignOnStaffBan error:', err);
+  }
+}
+
+/**
+ * listBannedUsers
+ * ---------------
+ * GET /api/admin/ngo/banned-users
+ *
+ * Returns all accounts currently in BANNED status, ordered by bannedAt DESC.
+ * NGO_ADMIN only. Optional `?role=SURVIVOR|COUNSELLOR|LEGAL_COUNSEL` filter.
+ *
+ * Covers the gap where permanently-banned survivors are not discoverable in
+ * the Staff Directory (which only shows staff) or Moderation Desk (which only
+ * shows rows for reported content). This endpoint makes all banned accounts
+ * available for review and one-click unban.
+ *
+ * @param {import('express').Request}  req
+ * @param {import('express').Response} res
+ */
+async function listBannedUsers(req, res) {
+  try {
+    const actor = await getActor(req);
+    if (!actor) return res.status(401).json({ error: 'Authentication required.' });
+    if (actor.role !== 'NGO_ADMIN') return roleForbidden(res, ['NGO_ADMIN']);
+
+    const roleFilter = req.query.role ? String(req.query.role).toUpperCase() : null;
+
+    const where = { accountStatus: 'BANNED' };
+    if (roleFilter && BANNABLE_ROLES.includes(roleFilter)) {
+      where.userRole = roleFilter;
+    }
+
+    const banned = await UserAccount.findAll({
+      where,
+      attributes: ['userId', 'userRole', 'phoneNumber', 'banReason', 'bannedAt', 'banExpiresAt', 'bannedByUserId', 'accountStatus'],
+      order: [['bannedAt', 'DESC']]
+    });
+
+    return res.json({
+      bannedUsers: banned.map((u) => ({
+        userId: u.userId,
+        role: u.userRole,
+        phoneNumber: u.phoneNumber,
+        banReason: u.banReason,
+        bannedAt: u.bannedAt,
+        banExpiresAt: u.banExpiresAt,
+        bannedByUserId: u.bannedByUserId,
+        isPermanent: !u.banExpiresAt
+      })),
+      total: banned.length
+    });
+  } catch (error) {
+    console.error('listBannedUsers error:', error);
+    return res.status(500).json({ error: 'Failed to fetch banned users.' });
+  }
+}
+
 module.exports = {
   getNgoDashboard,
   getSystemDashboard,
@@ -1471,7 +1920,11 @@ module.exports = {
   performRuntimeAction,
   createStaffAccount,
   updateStaffAccountStatus,
+  banUser,
+  unbanUser,
+  listBannedUsers,
   applySurvivorReassignment,
   getMaintenanceModeState,
+  loadMaintenanceStateFromDb,
   maintenanceGuard
 };

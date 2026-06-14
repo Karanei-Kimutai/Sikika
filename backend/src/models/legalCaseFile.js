@@ -51,13 +51,73 @@ const LegalCaseFile = sequelize.define('legalCaseFile', {
  
   /**
    * Path or URL reference to the generated legal documentation.
-   * Stored on Cloudinary like evidence files — access is restricted.
+   * Stored on Cloudinary (private/authenticated) like evidence files.
+   * Populated by POST /api/legal-cases/:legalCaseId/document after counsel drafts.
    */
   generatedDocumentPath: {
     type:    DataTypes.TEXT,
-    comment: 'Reference to generated legal case document — restricted access'
+    comment: 'Cloudinary public_id of the generated PDF — restricted authenticated access'
+  },
+
+  // ── Structured case authoring fields ───────────────────────────────────────
+  // These fields allow legal counsel to draft case documentation in-app.
+  // A generated PDF is compiled from these fields on demand and stored privately.
+
+  /**
+   * A concise narrative summary of the case, authored by legal counsel.
+   * Printed as the executive summary section of the generated PDF.
+   */
+  caseSummary: {
+    type:    DataTypes.TEXT,
+    comment: 'Narrative case summary authored by legal counsel'
+  },
+
+  /**
+   * The legal grounds or statutory basis being invoked.
+   * e.g. "Sexual Offences Act (2006), Section 3" or "Penal Code Cap. 63, S. 250".
+   */
+  legalGroundsText: {
+    type:    DataTypes.TEXT,
+    comment: 'Statutory or common-law grounds cited in the case'
+  },
+
+  /**
+   * The specific remedy, protection order, or relief being sought.
+   * e.g. "Temporary Protection Order", "Criminal prosecution referral".
+   */
+  requestedReliefText: {
+    type:    DataTypes.TEXT,
+    comment: 'Specific remedy or legal relief being sought'
+  },
+
+  /**
+   * Recommended next steps for external handover.
+   * e.g. "Refer to DPP", "Arrange safe-house relocation", "Medical examination".
+   * The system never contacts external parties — all handover is manual.
+   */
+  recommendedActionsText: {
+    type:    DataTypes.TEXT,
+    comment: 'Recommended next steps for manual external handover — system does not contact any party directly'
+  },
+
+  /**
+   * UTC timestamp of the last time legal counsel saved a draft.
+   * Updated by PATCH /api/legal-cases/:legalCaseId when any authoring field changes.
+   */
+  draftLastUpdatedAt: {
+    type:    DataTypes.DATE,
+    comment: 'UTC timestamp of the most recent draft save by legal counsel'
+  },
+
+  /**
+   * UTC timestamp of when the PDF document was last successfully generated.
+   * Set by POST /api/legal-cases/:legalCaseId/document after Cloudinary upload.
+   */
+  documentGeneratedAt: {
+    type:    DataTypes.DATE,
+    comment: 'UTC timestamp of the most recent successful PDF generation'
   }
- 
+
 }, {
   tableName: 'legalCaseFile',
   comment:   'Legal case record — created on report escalation with survivor consent'

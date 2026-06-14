@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
 const { RoomMembership, UserAccount } = require("../models");
+const { normalizeRole } = require("../utils/roles");
 
 /**
  * Community socket gateway
@@ -24,12 +25,6 @@ function getTokenFromHandshake(socket) {
 
 function resolveUserIdFromTokenClaims(claims) {
   return claims?.userId || claims?.id || null;
-}
-
-function normalizeRole(value) {
-  const role = String(value || "").trim().toUpperCase();
-  if (role === "NGOADMIN") return "NGO_ADMIN";
-  return role;
 }
 
 module.exports = (io) => {

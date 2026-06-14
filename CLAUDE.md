@@ -8,107 +8,172 @@ Gender-Based Violence (GBV) Support Platform for Kenya. Dual-channel (Web + USSD
 
 **Stack:** React 19 (frontend) · Node.js + Express 5 + Socket.io (backend) · MySQL + Sequelize · Africa's Talking (USSD + SMS OTP) · Cloudinary (file storage)
 
----
-
 ## Code Style
 
 All code in this project must include thorough inline documentation:
 - JSDoc blocks on every function (purpose, `@param`, `@returns`, notable side effects)
 - Inline comments on non-obvious logic, state transitions, and security-sensitive paths
-- This applies to both backend (Node.js/Express) and frontend (React/JSX)
+- Applies to both backend (Node.js/Express) and frontend (React/JSX)
 
----
+## Development Commands
 
-## Commands
-
-### Backend (run from `backend/`)
+### Backend (`cd backend`)
 
 ```bash
-npm run dev          # development with nodemon
-npm start            # production
-npm test             # all tests (Jest + Supertest, run serially)
-npm run test:auth    # auth controller tests only
-npm run test:watch   # watch mode
-node src/seeders/index.js  # reset + reseed local DB (destructive — local only)
+npm run dev          # nodemon hot-reload server on port 5000
+npm start            # production start
+npm test             # Jest (runs serially with --runInBand)
+npm run test:auth    # single file: tests/authController.test.js
+npm run test:watch   # Jest watch mode
+node src/seeders/index.js  # DESTRUCTIVE: drops + recreates all tables then seeds demo data
 ```
 
-### Frontend (run from `frontend/`)
+### Frontend (`cd frontend`)
 
 ```bash
-npm run dev    # Vite dev server (http://localhost:5173)
-npm run build  # production build
-npm run lint   # ESLint
+npm run dev      # Vite dev server on port 5173
+npm run build    # production build to dist/
+npm run preview  # serve dist/
+npm run lint     # ESLint
 ```
 
-### Environment setup
+## Environment Setup
 
-```bash
-cp backend/.env.example backend/.env   # then fill in values
+**Backend** — copy `backend/.env.example` to `backend/.env`:
+
+- Required: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `JWT_SECRET`, `AFRICASTALKING_API_KEY`, `AFRICASTALKING_USERNAME`
+- Optional but needed for uploads: `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`
+- Dev shortcuts: `SKIP_SMS_IN_DEV=true` (OTP is returned in the response body instead of sent via SMS), `DB_SYNC_ALTER=false` (stable schema), `ALLOW_ADMIN_RESTART=true`
+
+**Frontend** — create `frontend/.env`:
+```
+VITE_API_BASE_URL=http://localhost:5000
 ```
 
-Required env vars: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `JWT_SECRET`, `AFRICASTALKING_API_KEY`, `AFRICASTALKING_USERNAME`.  
-Set `SKIP_SMS_IN_DEV=true` to bypass Africa's Talking in local dev (OTP is returned in the response body instead).  
-Cloudinary vars are optional locally — upload endpoints return 503 without them, everything else works.
+## Backend Architecture
 
----
+### Bootstrap (`backend/index.js`)
 
-## Architecture
+Server startup sequence: load env → validate required vars → `CREATE DATABASE IF NOT EXISTS` → Sequelize authenticate → `sequelize.sync()` → mount REST routes → mount socket handlers → apply global maintenance middleware. Schema is auto-created from model definitions on every boot; no migration runner needed in development.
 
-### Backend
+### Data Model (`backend/src/models/`)
 
-**Entry point:** `backend/index.js` — bootstraps env validation, auto-creates the MySQL DB if missing, runs `sequelize.sync()`, mounts all route files and socket handlers, applies the global maintenance-mode gate.
+- `index.js` is the single registry + association hub — all controllers/services must import from here to get consistent association eager-loading
+- `userAccount.js` is the identity root; role-specific profile tables extend it (`survivorProfile`, `counsellorProfile`, `legalCounselProfile`, `ngoAdministratorProfile`, `systemAdministratorProfile`)
+- UUIDs are used as PKs across most domain entities
+- `SurvivorProfile` carries `assignedCounsellor` and `assignedLegalCounsel` FKs; assignment is done at signup by selecting the staff with the lowest `currentWorkloadScore`
 
-**Model registry:** `backend/src/models/index.js` — imports all 24+ Sequelize models, wires all associations (`hasOne`, `hasMany`, `belongsTo`), and re-exports them. All controllers must import from here to get consistent association eager-loading.
+### Request Flow
 
-**Key architectural patterns:**
-- Controllers are role-scoped: every route checks `req.user.role` and calls a `normalizeRole` helper (currently duplicated across files — a known code smell).
-- Auto-assignment on first survivor signup: `authController.js` creates `SurvivorProfile`, assigns the least-loaded counsellor and legal counsel by `currentWorkloadScore`, and provisions direct-chat channels — all in a single Sequelize transaction.
-- Status state machine for reports: 7 states (`SUBMITTED → UNDER_REVIEW → ACTIVE_SUPPORT → UNDER_INVESTIGATION → LEGAL_REVIEW → ESCALATED_TO_LEGAL_CASE / RESOLVED / WITHDRAWN`). Allowed transitions are role-scoped; legal case auto-creation fires on `LEGAL_REVIEW` and `ESCALATED_TO_LEGAL_CASE`.
-- Maintenance mode is **in-memory** in `adminController.js` — it resets on process restart. This is a known limitation.
-- OTPs are stored **plaintext** in the `otpHash` column (a known security gap; not yet hashed).
+```
+Route → authMiddleware (JWT verify) → controller → model (via models/index.js) → response
+```
 
-**Socket handlers:**
-- `src/sockets/chatSocket.js` — JWT-authenticated. Persists opaque encrypted payloads without server-side decryption. Events: `joinChannel`, `sendEncryptedMessage` (client); `receiveMessage`, `messageError` (server).
-- `src/sockets/communitySocket.js` — room join/leave, real-time message broadcast, moderation events.
+Maintenance mode middleware sits at the global level and blocks all non-admin traffic with HTTP 503 when enabled. Maintenance state is persisted to the `SystemSetting` table (key `'maintenance'`, JSON value) and loaded at boot via `loadMaintenanceStateFromDb()`, so it survives process restarts. An in-process cache (`_maintenanceCache`) keeps the guard fast (no DB round-trip per request).
 
-**Chat channel provisioning:** `src/services/chatAccessService.js` — `ensureAutoChannelsForSurvivor` idempotently creates one channel per assigned staff member. Called on channel list fetch and during signup.
+### Auth System (`backend/src/controllers/authController.js`)
 
-### Frontend
+- Dual auth paths: OTP (via Africa's Talking SMS) and password; both enforce lockout counters persisted on `UserAccount`
+- JWT payload carries both `id` and `userId` for compatibility
+- On first survivor signup: creates `SurvivorProfile`, assigns least-loaded counsellor and legal counsel by `currentWorkloadScore`, and provisions direct-chat channels — all in a single Sequelize transaction
+- `status=password_reset_required` triggers first-login forced reset; backend returns `authStage=PASSWORD_RESET_REQUIRED` and frontend must call `POST /api/auth/set-password` before normal navigation
+- OTPs are bcrypt-hashed (10 rounds) before storage in `otpHash`; both verify paths use `bcrypt.compare`. Dev mode returns the plaintext OTP in the response body via `developmentOtp` for local testing only.
+- `normalizeRole` and `BANNABLE_ROLES` are defined once in `backend/src/utils/roles.js` and imported by all controllers and services that need them.
 
-**Router:** `frontend/src/App.jsx` — custom SPA router using `window.history.pushState` (no React Router). Role-based route maps redirect NGO Admin and System Admin to their dashboards. No route parameters — all navigation is section-based within large page components.
+### Report Status State Machine
 
-**Auth guard:** Protected paths redirect to `/join` when `localStorage` token is absent. Maintenance mode is polled from `/api/system/public-status` every 15 seconds.
+7 states with role-scoped allowed transitions:
 
-**Quick Exit button:** Clears auth state and navigates to Google. Auto-collapses after 3 seconds of inactivity.
+```
+SUBMITTED → UNDER_REVIEW → ACTIVE_SUPPORT → UNDER_INVESTIGATION → LEGAL_REVIEW → ESCALATED_TO_LEGAL_CASE
+                                                                                → RESOLVED
+                                                                                → WITHDRAWN
+```
 
-**State management:** No shared state (no Context, no Zustand). All state is component-local with prop drilling. Data is re-fetched per component.
+Legal case auto-creation fires on `LEGAL_REVIEW` and `ESCALATED_TO_LEGAL_CASE` transitions.
 
-**E2EE:** `src/utils/cryptoUtils.js` — AES-GCM 256-bit via Web Crypto API. Key derived from `chatId` via PBKDF2 (demo-grade — not a full ECDH exchange; server could re-derive the key).
+### Sockets (`backend/src/sockets/`)
 
-**API services:** `src/services/` — `admin.js`, `reports.js`, `resources.js`. Most API calls are inline `fetch`/`axios` within page components rather than service modules.
+- `chatSocket.js` — JWT-authenticated; persists opaque encrypted payloads without server-side decryption. Events: `joinChannel`, `sendEncryptedMessage` (client); `receiveMessage`, `messageError` (server). **Presence integration:** on connect, joins `user:<userId>` personal room and calls `presenceRegistry.markOnline`; broadcasts `presence:update` to affected survivors; runs delivery catch-up (`deliveredAt` bulk-set for messages received offline, `message:delivered` emitted). On `sendEncryptedMessage`, sets `deliveredAt` immediately when recipient is online. On disconnect, `presenceRegistry.markOffline` then re-broadcasts OFFLINE if last socket.
+- `communitySocket.js` — room join/leave, real-time message broadcast, moderation events (`community:new-message`, `community:message-updated`, `community:message-deleted`)
+- **`presenceRegistry.js`** (`backend/src/services/`) — shared in-memory singleton tracking live socket connections. `getEffectivePresence(userId, manualStatus)` unifies real connectivity with the manual BUSY override.
 
-**Fallback data:** `src/data/fallbackResources.js` — static resources shown when the backend is unreachable.
+### Chat Channel Provisioning (`backend/src/services/chatAccessService.js`)
 
----
+`ensureAutoChannelsForSurvivor` idempotently creates one channel per assigned staff member (`findOrCreate`). Called on channel list fetch and during signup — no manual channel creation needed.
 
-## Incomplete Features (Roadmap)
+### USSD (`backend/src/controllers/ussdController.js`)
 
-Tracked in `docs/pending-roadmap-items.md`. Implementation guidance in `CSProject.md` (Section 5).
+Live endpoint: `POST /api/ussd/callback`. NGO admin USSD management endpoints and dashboard section are included.
+
+## Frontend Architecture
+
+### Routing & Auth Shell (`frontend/src/App.jsx`)
+
+Custom SPA router using `window.history.pushState` — **no React Router**. Navigation is section-based within large page components, not URL-parameter-based. Role-based route maps redirect NGO Admin and System Admin to their dashboards. Maintenance mode polled from `/api/system/public-status` every 15 seconds.
+
+Session: `authToken` + `userId` persisted in `localStorage`. Protected routes redirect to `/join` when session is absent.
+
+### State Management
+
+No shared state — no Context API, no Zustand. All state is component-local with prop drilling. Data is re-fetched per component mount.
+
+### Feature Pages (`frontend/src/pages/`)
+
+Each page owns its screen-level state (loading, errors, selected entities):
+
+| Page | Feature |
+|---|---|
+| `AuthPage.jsx` | OTP + password auth, signup, forgot password, forced reset |
+| `DirectChatPage.jsx` | E2EE chat, channel switching, privacy mask; Archive/Restore/Delete action menu per channel |
+| `CommunityPage.jsx` | Rooms, join gate, moderation actions |
+| `LibraryPage.jsx` | Public resource browsing + staff write actions |
+| `ReportingPage.jsx` | Incident report submission + evidence upload; emergency intercept screen for unauthenticated reporters (`/reports` is not a protected path) |
+| `NgoAdminDashboardPage.jsx` | NGO KPIs, case triage, staff management, moderation queue, USSD callback queue |
+| `SystemAdminDashboardPage.jsx` | Infrastructure, logs, maintenance control, staff lifecycle |
+
+### Service Layer (`frontend/src/services/`)
+
+- `admin.js` — dashboard, search, maintenance, runtime actions, staff lifecycle, moderation reviews
+- `resources.js` — CRUD + access tracking for support resources
+- `reports.js` — report submission and status
+
+Note: some API calls are inline `fetch`/`axios` within page components rather than service modules.
+
+### E2EE Chat (`frontend/src/utils/cryptoUtils.js`)
+
+AES-GCM 256-bit via Web Crypto API. Key derived from `chatId` via PBKDF2 (demo-grade — not a full ECDH exchange; the server could re-derive the key from the chatId). Server stores and relays only ciphertext; plaintext never leaves the client.
+
+### Quick Exit Button
+
+Clears auth state and navigates to Google. Auto-collapses after 3 seconds of inactivity.
+
+### Fallback Data (`frontend/src/data/fallbackResources.js`)
+
+Static resource list shown in the Library when the backend is unreachable.
+
+## Key Cross-Cutting Behaviors
+
+- **Cloudinary**: evidence files, support resources, and legal case PDFs all use Cloudinary. Evidence and legal docs use `type: authenticated` (private); resources use `type: upload` (public). Without env vars, upload endpoints return 503 but read endpoints still work.
+- **Community moderation enforcement**: the "block_user"/"suspend_user" path has been removed. Moderation now uses `action: "ban_user"` in `reviewReport` (`communityController.js`), which sets `accountStatus = BANNED` with full metadata (reason, expiry, bannedByUserId) and resolves the report atomically. `SUSPENDED` is reserved for the operational Active/Inactive staff toggle in the Team Capacity section of the NGO dashboard.
+- **`SUSPENDED` vs `BANNED`**: `SUSPENDED` = reversible staff operational pause (no metadata); `BANNED` = moderation/safety enforcement (reason + optional expiry + dual audit trail). Both block all authenticated access immediately via `authMiddleware` DB lookup.
+- **Survivor identity in community**: survivors appear by nickname only in room timelines.
+- **Resource access tracking**: `POST /api/resources/:id/track-access` is best-effort; frontend fires and ignores failures so it never blocks resource opens.
+
+## Incomplete Features
+
+Tracked in `docs/pending-roadmap-items.md`.
 
 | Feature | Status | Notes |
 |---|---|---|
-| USSD live endpoint | Done | `POST /api/ussd/callback` in `ussdController.js`; NGO admin endpoints + dashboard section included |
-| Emergency intercept for unauthenticated reporters | Done | Intercept screen in `ReportingPage.jsx`; `/reports` removed from `protectedPaths` in `App.jsx` |
-| In-app notification center | Partial | Model + fan-out writes exist; no list/read/dismiss API or UI |
-| Survivor chat archive/delete controls | Partial | `PATCH /api/chat/:chatId/status` exists; frontend UI controls missing |
-| Staff presence indicators | Partial | `availabilityStatus` exists; no Socket.io presence events or frontend dot |
-| User banning workflow | Partial | No `BANNED` status or ban/unban endpoints |
-| Legal case document drafting UI | Partial | Model exists; no authoring form or export |
+| In-app notification center | Done | `GET/PATCH /api/notifications/*` endpoints; `NotificationBell` in `SiteHeader` with real-time socket push (`notification:new` via `user:<userId>` room) + 30s-poll fallback; `notificationDismissedStatus` column keeps dismiss state separate from read state. `notificationService.js` is the single write path (used by reportController, chatSocket, communityController). |
+| Survivor chat archive/delete controls | Done | `PATCH /api/chat/:chatId/status` + Archive/Restore/Delete action menu in `DirectChatPage.jsx` |
+| Staff presence indicators | Done | `presenceRegistry.js` in-memory singleton (Map of userId→Set of socketIds); `chatSocket.js` joins per-user rooms and broadcasts `presence:update` on connect/disconnect; delivery catch-up marks pending `deliveredAt` on reconnect; `markChannelRead` sets `seenAt` and emits `message:seen`; `DirectChatPage.jsx` shows coloured presence dot + Sent/Delivered/Seen ticks; effective presence = real connectivity layered over manual BUSY status |
+| User banning workflow | Done | `BANNED` added to `accountStatus` ENUM + ban metadata columns; `PATCH /api/admin/ngo/users/:id/ban` and `.../unban`; `authMiddleware` does DB lookup on every authenticated request for immediate mid-session enforcement; `liftExpiredBan` auto-restores temporary bans at next auth check; `chatSocket.js` checks accountStatus on connect + per-send; NGO dashboard ban modal + Staff Directory status badges + Lift Ban in Moderation Desk + Banned Users registry section; banning from Moderation Desk resolves the underlying report atomically; dual audit trail (ModerationActionLog + AuditLog); ban immediately evicts active sockets via `disconnectSockets(true)`; banning a COUNSELLOR/LEGAL_COUNSEL triggers `cascadeReassignOnStaffBan` (auto-reassigns their survivors). Community `reviewReport ban_user` enforces the same `BANNABLE_ROLES` allow-list + self-ban rejection as the admin endpoint. `SUSPENDED` reframed as Active/Inactive staff toggle. |
+| Legal case document drafting UI | Done | Structured authoring fields added to `legalCaseFile` model; `legalDocumentService.js` renders pdfkit PDF in memory; PDF uploaded privately to Cloudinary; `PATCH/POST/GET /api/legal-cases/:id/*` endpoints; `ReportingPage.jsx` full drafting panel (4 fields, Save Draft, Generate Document, Open Document, status advance) for LEGAL_COUNSEL role; `frontend/src/services/legalCases.js` service layer |
 | Average response-time dashboard render | Done | Computed in `adminController.js`, rendered in `NgoAdminDashboardPage.jsx` |
 
----
-
-## Demo Accounts (Seeded)
+## Demo Credentials (seeded data)
 
 | Role | Phone | Password |
 |---|---|---|

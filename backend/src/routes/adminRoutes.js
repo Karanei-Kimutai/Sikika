@@ -11,7 +11,10 @@ const {
   getSystemLogs,
   performRuntimeAction,
   createStaffAccount,
-  updateStaffAccountStatus
+  updateStaffAccountStatus,
+  banUser,
+  unbanUser,
+  listBannedUsers
 } = require('../controllers/adminController');
 
 const router = express.Router();
@@ -35,6 +38,14 @@ router.patch('/ngo/resources/:resourceId', updateNgoResource);
 // operational ownership boundaries rather than infra ownership.
 router.post('/ngo/staff', createStaffAccount);
 router.patch('/ngo/staff/:userId/status', updateStaffAccountStatus);
+
+// User ban/unban — applies and lifts the BANNED lifecycle state.
+// Targets SURVIVOR, COUNSELLOR, LEGAL_COUNSEL; NGO_ADMIN/SYSTEM_ADMIN are not bannable.
+// Role enforcement is inside the controller (getActor + roleForbidden pattern).
+router.patch('/ngo/users/:userId/ban', banUser);
+router.patch('/ngo/users/:userId/unban', unbanUser);
+// Banned-user registry — returns all BANNED accounts with metadata for review.
+router.get('/ngo/banned-users', listBannedUsers);
 
 // System Admin operations
 router.get('/system/dashboard', getSystemDashboard);
