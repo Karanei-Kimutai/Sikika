@@ -7,6 +7,7 @@ require("dotenv").config();
 const authMiddleware = require("./src/middleware/authMiddleware");
 const { maintenanceGuard, getMaintenanceModeState, loadMaintenanceStateFromDb } = require("./src/controllers/adminController");
 const { setNotificationIo } = require("./src/services/notificationService");
+const { ensureSchemaCompatibility } = require("./src/utils/schemaCompatibility");
 
 /**
  * Backend bootstrap file.
@@ -70,6 +71,7 @@ app.use(cors({
 
 // Parse JSON request bodies before route handlers access req.body.
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 
 // Global maintenance enforcement is applied before business routes.
 app.use(maintenanceGuard);
@@ -231,6 +233,10 @@ async function startServer() {
     const enableAlterSync = process.env.DB_SYNC_ALTER === "true";
     await db.sequelize.sync(enableAlterSync ? { alter: true } : undefined);
     console.log("Database tables synced successfully!");
+
+    // Reconcile schema drift in legacy/local databases without a migration runner.
+    await ensureSchemaCompatibility(db.sequelize);
+    console.log("Schema compatibility checks completed.");
 
     // Restore durable settings (maintenance mode) from DB after tables exist.
     await loadMaintenanceStateFromDb();
