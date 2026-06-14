@@ -2877,15 +2877,16 @@ input:focus {
   stroke: var(--workspace-border);
 }
 
-/* Daily bar fill — soft accent colour, rounded top via rx on the <rect> element. */
+/* Daily bar — fill is set via SVG gradient attribute; only animate opacity here. */
 .chart-bar {
-  fill: var(--workspace-accent);
-  opacity: 0.55;
-  transition: opacity 0.15s ease;
+  opacity: 1;
+  transition: opacity 0.14s ease, filter 0.14s ease;
 }
 
 .chart-bar:hover {
-  opacity: 0.85;
+  opacity: 0.88;
+  filter: brightness(1.08);
+  cursor: pointer;
 }
 
 /* Legacy daily polyline — kept for any other chart that still uses it. */
@@ -2929,11 +2930,55 @@ input:focus {
   font-weight: 600;
 }
 
+/* ── Chart header — title + inline summary chips side-by-side ─────────── */
+.chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 0.85rem;
+}
+
+.chart-header h2 {
+  /* override the admin-panel h2 bottom margin for this layout */
+  margin: 0;
+}
+
+.chart-header-stats {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.chart-stat-chip {
+  border: 1px solid var(--workspace-border);
+  border-radius: 0.65rem;
+  background: rgba(255, 255, 255, 0.88);
+  padding: 0.38rem 0.72rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 120px;
+}
+
+.chart-stat-chip span {
+  color: var(--workspace-text);
+  font-size: 0.72rem;
+}
+
+.chart-stat-chip strong {
+  color: var(--workspace-title);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+/* ── Chart legend ─────────────────────────────────────────────────────── */
 .chart-legend {
-  margin-top: 0.45rem;
+  margin-top: 0.55rem;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.9rem;
+  gap: 1rem;
   color: var(--workspace-text);
   font-size: 0.78rem;
 }
@@ -2941,24 +2986,34 @@ input:focus {
 .chart-legend span {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.38rem;
 }
 
-.legend-dot {
-  width: 0.65rem;
-  height: 0.65rem;
-  border-radius: 999px;
+/* Square swatch that better represents bar-fill vs line-stroke */
+.legend-swatch {
+  width: 0.72rem;
+  height: 0.72rem;
+  border-radius: 2px;
   display: inline-block;
+  flex-shrink: 0;
 }
 
-.legend-dot.daily {
+.legend-swatch.swatch-bar {
   background: var(--workspace-accent);
+  opacity: 0.75;
 }
 
-.legend-dot.avg {
+.legend-swatch.swatch-avg {
   background: #2a7b50;
+  border-radius: 999px;
 }
 
+/* ── Legacy dot classes kept for any other chart still using them ──────── */
+.legend-dot { width: 0.65rem; height: 0.65rem; border-radius: 999px; display: inline-block; }
+.legend-dot.daily { background: var(--workspace-accent); }
+.legend-dot.avg   { background: #2a7b50; }
+
+/* ── Old summary-card kept as fallback (replaced by chart-stat-chip) ──── */
 .chart-summary-row {
   margin: 0.7rem 0;
   display: grid;
@@ -3167,7 +3222,129 @@ input:focus {
   color: #9f2d2d;
 }
 
-/* Banned Users section styles */
+/* ── Moderation Desk internal tab bar ─────────────────────────────────── */
+.moderation-tab-bar {
+  display: flex;
+  gap: 0.3rem;
+  padding: 0.3rem;
+  border: 1px solid var(--workspace-border);
+  border-radius: 0.85rem;
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(4px);
+  width: fit-content;
+  margin-bottom: 1.1rem;
+}
+
+.moderation-tab-btn {
+  border: 1px solid transparent;
+  border-radius: 0.6rem;
+  padding: 0.42rem 1.1rem;
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: var(--workspace-text);
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.moderation-tab-btn:hover {
+  background: var(--hover-overlay);
+  color: var(--workspace-title);
+}
+
+.moderation-tab-btn.active {
+  border-color: var(--workspace-accent);
+  background: var(--workspace-accent);
+  color: #ffffff;
+  font-weight: 800;
+  box-shadow: 0 2px 8px rgba(169, 82, 38, 0.25);
+}
+
+/* ── Admin table row hover ─────────────────────────────────────────────── */
+.admin-table tbody tr {
+  transition: background 0.12s ease;
+}
+
+.admin-table tbody tr:hover td {
+  background: rgba(169, 82, 38, 0.04);
+}
+
+/* ── Admin action button hover ─────────────────────────────────────────── */
+.admin-action-btn {
+  transition: background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.admin-action-btn:hover {
+  background: rgba(169, 82, 38, 0.06);
+  border-color: var(--workspace-accent);
+  box-shadow: 0 1px 4px rgba(169, 82, 38, 0.12);
+}
+
+.admin-action-btn.danger:hover {
+  background: rgba(159, 45, 45, 0.06);
+  border-color: #9f2d2d;
+  box-shadow: 0 1px 4px rgba(159, 45, 45, 0.14);
+}
+
+/* ── Banned Users section layout ──────────────────────────────────────── */
+.banned-users-section {
+  display: grid;
+  gap: 1rem;
+}
+
+.banned-users-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.banned-table td.ban-reason-cell {
+  max-width: 240px;
+  word-break: break-word;
+  font-size: 0.82rem;
+  color: var(--workspace-text);
+}
+
+.banned-table td.date-cell {
+  font-size: 0.80rem;
+  white-space: nowrap;
+  color: var(--workspace-text);
+}
+
+/* Role pills for banned users — colour-coded by role */
+.ban-role-pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.18rem 0.6rem;
+  font-size: 0.73rem;
+  font-weight: 800;
+}
+
+.ban-role-pill.ban-role-survivor {
+  background: #ede9fe;
+  color: #4c1d95;
+}
+
+.ban-role-pill.ban-role-counsellor {
+  background: #dbeafe;
+  color: #1e3a5f;
+}
+
+.ban-role-pill.ban-role-legal_counsel {
+  background: #fce7f3;
+  color: #831843;
+}
+
+/* Fallback for any other role */
+.ban-role-pill:not([class*="ban-role-survivor"]):not([class*="ban-role-counsellor"]):not([class*="ban-role-legal"]) {
+  background: var(--cream);
+  color: var(--muted);
+}
+
+/* ── Legacy admin-card kept for other sections that use it ────────────── */
 .admin-card {
   border: 1px solid var(--workspace-border);
   border-radius: 0.85rem;
@@ -3183,11 +3360,11 @@ input:focus {
 }
 
 .admin-card-subtitle {
-  margin: 0.35rem 0 0.8rem;
+  margin: 0.35rem 0 0.2rem;
   color: var(--workspace-text);
-  font-size: 0.85rem;
+  font-size: 0.84rem;
+  line-height: 1.45;
 }
-
 
 .pill-neutral {
   color: var(--muted);
@@ -3204,7 +3381,6 @@ input:focus {
   align-items: center;
   gap: 0.6rem;
   flex-wrap: wrap;
-  margin-bottom: 1rem;
 }
 
 .filter-label {
@@ -3227,8 +3403,10 @@ input:focus {
 }
 
 .action-cell {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.3rem;
+  align-items: center;
 }
 
 .admin-search {
