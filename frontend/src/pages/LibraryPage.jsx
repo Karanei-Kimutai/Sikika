@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { fallbackCategories, fallbackResources } from "../data/fallbackResources";
 import { createResource, deleteResource, getResources, trackResourceAccess, updateResource } from "../services/resources";
+import { getToken, getUserId } from "../utils/auth";
 
 const MANAGEMENT_ROLES = new Set(["COUNSELLOR", "LEGAL_COUNSEL", "NGO_ADMIN"]);
 
 function decodeRoleFromToken() {
-  const token = localStorage.getItem("authToken");
+  const token = getToken();
   if (!token) return "";
 
   try {
@@ -17,10 +18,10 @@ function decodeRoleFromToken() {
 }
 
 function getCurrentUserId() {
-  const explicitUserId = localStorage.getItem("userId");
+  const explicitUserId = getUserId();
   if (explicitUserId) return explicitUserId;
 
-  const token = localStorage.getItem("authToken");
+  const token = getToken();
   if (!token) return "";
 
   try {
@@ -373,7 +374,7 @@ function LibraryPage() {
         </section>
       )}
 
-      {!canManageResources && role && (
+      {!canManageResources && role && role !== "SURVIVOR" && (
         <p className="status-message">You can browse resources. Staff upload and editing controls are role-restricted.</p>
       )}
 

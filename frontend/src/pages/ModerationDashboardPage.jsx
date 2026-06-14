@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { io } from "socket.io-client";
+import { getToken } from "../utils/auth";
 
 /**
  * ModerationDashboardPage
@@ -17,7 +18,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000
 const moderationSocket = io(API_BASE_URL, { autoConnect: false });
 
 function getAuthHeaders() {
-  const token = localStorage.getItem("authToken");
+  const token = getToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -51,7 +52,7 @@ function ModerationDashboardPage() {
   }, []);
 
   useEffect(() => {
-    const token = localStorage.getItem("authToken");
+    const token = getToken();
     if (!token) return;
 
     // Keep queue fresh when new reports are filed or reviewed by another moderator.
