@@ -685,9 +685,18 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
 
   if (loading) {
     return (
-      <main className="admin-workspace ngo">
+      <main className="admin-workspace ngo" aria-busy="true" aria-label="Loading NGO operations workspace">
         <section className="admin-content-area">
-          <p className="admin-empty">Loading NGO operations workspace...</p>
+          <div className="skeleton-grid" style={{ padding: '1.5rem' }}>
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="skeleton skeleton-card" />
+            ))}
+          </div>
+          <div style={{ padding: '0 1.5rem' }}>
+            <div className="skeleton skeleton-title" />
+            <div className="skeleton skeleton-line" />
+            <div className="skeleton skeleton-line" style={{ width: '75%' }} />
+          </div>
         </section>
       </main>
     );

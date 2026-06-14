@@ -115,7 +115,7 @@ export default function CommandCenterSection({ overview, reportsOverTime, commun
             <strong>{peakPoint ? `${peakPoint.date} (${peakPoint.count})` : "-"}</strong>
           </div>
         </div>
-        <svg viewBox="0 0 620 220" role="img" aria-label="Line chart showing reports over time">
+        <svg viewBox="0 0 620 220" width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Line chart showing reports over time">
           <rect x="0" y="0" width="620" height="220" rx="14" className="chart-backdrop" />
           {yTicks.map((tick) => (
             <g key={`y-${tick}`}>
