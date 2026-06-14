@@ -2877,6 +2877,18 @@ input:focus {
   stroke: var(--workspace-border);
 }
 
+/* Daily bar fill — soft accent colour, rounded top via rx on the <rect> element. */
+.chart-bar {
+  fill: var(--workspace-accent);
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.chart-bar:hover {
+  opacity: 0.85;
+}
+
+/* Legacy daily polyline — kept for any other chart that still uses it. */
 .line-series {
   fill: none;
   stroke: var(--workspace-accent);
@@ -2885,12 +2897,14 @@ input:focus {
   stroke-linejoin: round;
 }
 
+/* 7-day rolling average trend line — thicker, solid, clearly the primary signal. */
 .line-series-average {
   fill: none;
   stroke: #2a7b50;
-  stroke-width: 2;
-  stroke-dasharray: 6 5;
-  opacity: 0.9;
+  stroke-width: 2.5;
+  stroke-dasharray: 8 5;
+  stroke-linecap: round;
+  opacity: 0.95;
 }
 
 .line-area {

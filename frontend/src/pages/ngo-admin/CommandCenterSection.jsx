@@ -7,10 +7,10 @@ import { formatNumber, prettifyLabel, buildLineChartPoints, buildMovingAverage }
  * KPI stat cards + 30-day report trend chart + community metrics +
  * report breakdown by category/status/county.
  *
- * Owns all chart-math derivations so the parent component doesn't need to
- * hold SVG-specific memos. Accepts a Lucide icon component as `statIcons`
- * for each card (Phase 5 extension point — currently unused, but the prop
- * seam is present so callers don't need to change later).
+ * Chart design: soft rounded **bars** show daily granularity; a single dashed
+ * **7-day average trend line** sits on top as the signal. Both share the same
+ * rounded Y-axis scale (chartMax) so gridlines, labels, bars, and the line
+ * are perfectly aligned.
  *
  * @param {object}  props
  * @param {object}  props.overview           - dashboard.overview aggregation object.
@@ -19,56 +19,79 @@ import { formatNumber, prettifyLabel, buildLineChartPoints, buildMovingAverage }
  * @param {object}  props.reportsBreakdown    - dashboard.reportsBreakdown object.
  */
 export default function CommandCenterSection({ overview, reportsOverTime, communityMetrics, reportsBreakdown }) {
-  // ── Chart derivations (self-contained; only used in this section) ─────────
-  const chartPoints = useMemo(
-    () => buildLineChartPoints(reportsOverTime || []),
-    [reportsOverTime]
-  );
-  const movingAveragePoints = useMemo(() => buildMovingAverage(chartPoints), [chartPoints]);
-  const polylinePoints = useMemo(
-    () => chartPoints.map((point) => `${point.x},${point.y}`).join(" "),
-    [chartPoints]
-  );
+  // ── Shared vertical scale (computed once; used by bars, gridlines, and avg line) ──
   const chartMax = useMemo(() => {
-    const rawMax = Math.max(...chartPoints.map((p) => Number(p.count || 0)), 1);
-    const step = rawMax <= 5 ? 1 : 2;
+    const rawMax = Math.max(...(reportsOverTime || []).map((p) => Number(p.count || 0)), 1);
+    // Choose a step that keeps Y-axis tick labels from crowding for any data range.
+    const step = rawMax <= 5 ? 1 : rawMax <= 20 ? 2 : rawMax <= 50 ? 5 : 10;
     return Math.ceil(rawMax / step) * step;
-  }, [chartPoints]);
+  }, [reportsOverTime]);
+
+  // buildLineChartPoints now receives chartMax so bar Y-coords use the same scale
+  // as the axis labels and gridlines — no more dual-scale mismatch.
+  const chartPoints = useMemo(
+    () => buildLineChartPoints(reportsOverTime || [], chartMax),
+    [reportsOverTime, chartMax]
+  );
+
+  // 7-day moving average, keyed by the same x positions as the bars.
+  const movingAveragePoints = useMemo(() => buildMovingAverage(chartPoints), [chartPoints]);
+
+  // Single trend polyline using the shared chartMax for Y — replacing the old
+  // "avgPolylinePoints" that had its own independent max computation.
   const avgPolylinePoints = useMemo(() => {
-    const max = Math.max(...movingAveragePoints.map((p) => Number(p.avg || 0)), 1);
-    const effectiveMax = Math.max(max, chartMax, 1);
+    if (!movingAveragePoints.length) return "";
     const height = 220;
     const padTop = 16;
     const padBottom = 34;
     return movingAveragePoints
       .map((point) => {
-        const y = height - padBottom - ((Number(point.avg || 0) / effectiveMax) * (height - padTop - padBottom));
+        const y =
+          height - padBottom -
+          (Number(point.avg || 0) / Math.max(chartMax, 1)) * (height - padTop - padBottom);
         return `${point.x},${y}`;
       })
       .join(" ");
   }, [movingAveragePoints, chartMax]);
+
   const hasTrendData = chartPoints.some((p) => p.count > 0);
   const trendTotal = chartPoints.reduce((sum, p) => sum + Number(p.count || 0), 0);
   const peakPoint = chartPoints.reduce((current, p) => {
     if (!current || p.count > current.count) return p;
     return current;
   }, null);
+
+  // Y-axis gridlines at 5 evenly-spaced values (0 → chartMax).
   const yTicks = useMemo(() => {
     const intervals = 4;
     return Array.from({ length: intervals + 1 }, (_, i) => Math.round((chartMax * i) / intervals));
   }, [chartMax]);
+
+  // X-axis: label every 7th day plus the last, formatted as "Jun 07".
   const xTicks = useMemo(() => {
     if (!chartPoints.length) return [];
     return chartPoints.filter((_, i) => i % 7 === 0 || i === chartPoints.length - 1);
   }, [chartPoints]);
 
-  /** Maps a y-axis value to an SVG y-coordinate using the local chartMax. */
+  /** Maps a y-axis value → SVG y-coordinate using the shared chartMax. */
   function yForValue(value) {
     const height = 220;
     const padTop = 16;
     const padBottom = 34;
     const normalized = chartMax > 0 ? Number(value || 0) / chartMax : 0;
     return height - padBottom - normalized * (height - padTop - padBottom);
+  }
+
+  /**
+   * Formats a "YYYY-MM-DD" date string as a short "Mon DD" label for X-axis ticks.
+   * @param {string} dateStr
+   * @returns {string}
+   */
+  function formatDayLabel(dateStr) {
+    if (!dateStr) return "";
+    const [, month, day] = dateStr.split("-");
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return `${months[Number(month) - 1] || ""} ${day}`;
   }
 
   return (
@@ -104,7 +127,7 @@ export default function CommandCenterSection({ overview, reportsOverTime, commun
 
       {/* ── 30-day trend chart ─────────────────────────────────────────── */}
       <article className="admin-panel full-span">
-        <h2>30 Day Case Trend</h2>
+        <h2>30-Day Case Trend</h2>
         <div className="chart-summary-row">
           <div className="chart-summary-card">
             <span>Reports in 30 days</span>
@@ -112,37 +135,91 @@ export default function CommandCenterSection({ overview, reportsOverTime, commun
           </div>
           <div className="chart-summary-card">
             <span>Peak day</span>
-            <strong>{peakPoint ? `${peakPoint.date} (${peakPoint.count})` : "-"}</strong>
+            <strong>
+              {peakPoint && peakPoint.count > 0
+                ? `${formatDayLabel(peakPoint.date)} (${peakPoint.count})`
+                : "-"}
+            </strong>
           </div>
         </div>
-        <svg viewBox="0 0 620 220" width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Line chart showing reports over time">
+
+        {/*
+          Design: bars = daily granularity (background context)
+                  dashed line = 7-day rolling average (primary trend signal)
+          Both share chartMax for the Y scale — gridlines, labels, bars, and
+          the average line are all aligned on the same coordinate system.
+        */}
+        <svg
+          viewBox="0 0 620 220"
+          width="100%"
+          preserveAspectRatio="xMidYMid meet"
+          role="img"
+          aria-label="Bar chart with 7-day trend line showing reports over the last 30 days"
+        >
           <rect x="0" y="0" width="620" height="220" rx="14" className="chart-backdrop" />
+
+          {/* Horizontal gridlines + Y-axis labels */}
           {yTicks.map((tick) => (
             <g key={`y-${tick}`}>
-              <line x1="44" y1={yForValue(tick)} x2="604" y2={yForValue(tick)} className="chart-grid-line" />
-              <text x="36" y={yForValue(tick) + 4} className="chart-axis-label" textAnchor="end">
+              <line
+                x1="44"
+                y1={yForValue(tick)}
+                x2="604"
+                y2={yForValue(tick)}
+                className="chart-grid-line"
+              />
+              <text x="38" y={yForValue(tick) + 4} className="chart-axis-label" textAnchor="end">
                 {tick}
               </text>
             </g>
           ))}
-          {polylinePoints ? <polyline points={polylinePoints} className="line-series" /> : null}
-          {avgPolylinePoints ? <polyline points={avgPolylinePoints} className="line-series-average" /> : null}
-          {chartPoints.map((point) => (
-            <circle key={point.date} cx={point.x} cy={point.y} r="3.4" className="line-point">
-              <title>{`${point.date}: ${point.count} reports`}</title>
-            </circle>
-          ))}
+
+          {/* Daily bars — each anchored to the bottom baseline (y=186) */}
+          {chartPoints.map((point) => {
+            const barW = Math.min(point.slotWidth * 0.55, 12);
+            return (
+              <rect
+                key={`bar-${point.date}`}
+                x={point.x - barW / 2}
+                y={point.y}
+                width={barW}
+                // Ensure a minimum 2 px pixel so zero-count days still show a
+                // hairline rather than disappearing entirely.
+                height={Math.max(point.barHeight, 2)}
+                rx="3"
+                className="chart-bar"
+              >
+                <title>{`${formatDayLabel(point.date)}: ${point.count} report${point.count === 1 ? "" : "s"}`}</title>
+              </rect>
+            );
+          })}
+
+          {/* 7-day average trend line — the primary signal layer */}
+          {avgPolylinePoints && (
+            <polyline points={avgPolylinePoints} className="line-series-average" />
+          )}
+
+          {/* X-axis date labels — weekly cadence, kept inside the viewBox bottom */}
           {xTicks.map((point) => (
-            <text key={`x-${point.date}`} x={point.x} y="205" className="chart-axis-label" textAnchor="middle">
-              {point.date.slice(5)}
+            <text
+              key={`x-${point.date}`}
+              x={point.x}
+              y="214"
+              className="chart-axis-label"
+              textAnchor="middle"
+            >
+              {formatDayLabel(point.date)}
             </text>
           ))}
         </svg>
+
         <div className="chart-legend">
           <span><i className="legend-dot daily" /> Daily reports</span>
-          <span><i className="legend-dot avg" /> 7-day average</span>
+          <span><i className="legend-dot avg" /> 7-day trend</span>
         </div>
-        {!hasTrendData && <p className="admin-empty">No report activity in the last 30 days yet.</p>}
+        {!hasTrendData && (
+          <p className="admin-empty">No report activity in the last 30 days yet.</p>
+        )}
       </article>
 
       {/* ── Community watch metrics ────────────────────────────────────── */}

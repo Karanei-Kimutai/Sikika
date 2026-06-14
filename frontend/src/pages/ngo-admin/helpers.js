@@ -52,13 +52,19 @@ export function availabilityClass(value) {
 }
 
 /**
- * Converts a 30-day report series from the backend into SVG (x, y) coordinate
- * objects for rendering the trend polyline.
+ * Converts a 30-day report series from the backend into SVG coordinate objects
+ * for rendering the trend chart.
+ *
+ * Each point carries the slot-centre x position plus bar geometry (y = top of
+ * bar, barHeight = pixel height) so bar and line renderers both share the same
+ * vertical scale without a separate internal max computation.
  *
  * @param {{ date: string, count: number }[]} series
- * @returns {{ x: number, y: number, count: number, date: string }[]}
+ * @param {number} chartMax - Pre-computed rounded maximum (from the caller) so
+ *   bars, gridlines, Y-axis labels, and the average line all use one scale.
+ * @returns {{ x: number, y: number, barHeight: number, slotWidth: number, count: number, date: string }[]}
  */
-export function buildLineChartPoints(series) {
+export function buildLineChartPoints(series, chartMax) {
   if (!series.length) return [];
 
   const width = 620;
@@ -67,12 +73,20 @@ export function buildLineChartPoints(series) {
   const padRight = 16;
   const padBottom = 34;
   const padLeft = 44;
-  const max = Math.max(...series.map((item) => Number(item.count || 0)), 1);
+  const plotWidth = width - padLeft - padRight;
+  const slotWidth = plotWidth / series.length;
+  // Fall back to the series max when the caller hasn't supplied chartMax yet.
+  const effectiveMax = chartMax || Math.max(...series.map((item) => Number(item.count || 0)), 1);
 
   return series.map((item, index) => {
-    const x = padLeft + (index * (width - padLeft - padRight)) / Math.max(series.length - 1, 1);
-    const y = height - padBottom - ((Number(item.count || 0) / max) * (height - padTop - padBottom));
-    return { x, y, count: Number(item.count || 0), date: item.date };
+    // Centre of each day's horizontal slot — shared by bars and the average line.
+    const x = padLeft + (index + 0.5) * slotWidth;
+    const count = Number(item.count || 0);
+    const barHeight =
+      effectiveMax > 0 ? (count / effectiveMax) * (height - padTop - padBottom) : 0;
+    // y is the top edge of the bar (SVG Y grows downward).
+    const y = height - padBottom - barHeight;
+    return { x, y, barHeight, slotWidth, count, date: item.date };
   });
 }
 
