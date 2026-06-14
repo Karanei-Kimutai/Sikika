@@ -1,14 +1,22 @@
+import { useState } from "react";
 import { Trash2, UserCheck, UserX } from "lucide-react";
 import { formatDate, prettifyLabel } from "./helpers";
+import BannedUsersSection from "./BannedUsersSection";
 
 /**
  * ModerationDeskSection
  * ---------------------
- * Renders the Community Moderation Queue table and the detail dialog.
+ * Renders the Community Moderation Desk with two internal tabs:
+ *   - "Reports Queue"  — flagged community-message review table (default)
+ *   - "Banned Users"   — full banned-accounts registry with unban actions
  *
- * Banning from here passes the contentReportId to the parent's
- * handleOpenBanModal so that handleSubmitBan resolves the report
- * atomically with the ban (via reviewModerationReport).
+ * Co-locating both surfaces under a single section removes the need for a
+ * separate sidebar entry for banned users, which was previously unreachable
+ * because AdminWorkspace is mounted with showSidebar={false}.
+ *
+ * Banning from the Reports Queue passes the contentReportId to the parent's
+ * handleOpenBanModal so that handleSubmitBan resolves the report atomically
+ * with the ban (via reviewModerationReport).
  *
  * @param {object}    props
  * @param {Array}     props.moderationQueue           - dashboard.moderationQueue rows.
@@ -17,6 +25,14 @@ import { formatDate, prettifyLabel } from "./helpers";
  * @param {Function}  props.onModerationAction        - (reportId, action) → void.
  * @param {Function}  props.onOpenBanModal            - (userId, label, reportId) → void.
  * @param {Function}  props.onUnban                   - (userId, label) → void.
+ * @param {Array}     props.bannedUsers               - Banned-accounts list for the registry tab.
+ * @param {boolean}   props.bannedUsersLoading        - Loading state for the registry.
+ * @param {string}    props.bannedUsersFilter         - Current role filter value.
+ * @param {Function}  props.setBannedUsersFilter      - Update the role filter.
+ * @param {string|null} props.liftingBanId            - userId currently being unbanned (for spinner).
+ * @param {Function}  props.onLiftBan                 - (userId, label) → void — triggers unban.
+ * @param {Function}  props.onBannedUsersTabOpen      - Called when the Banned Users tab is first
+ *                                                      opened so the parent can lazy-load the list.
  */
 export default function ModerationDeskSection({
   moderationQueue,
@@ -24,86 +40,151 @@ export default function ModerationDeskSection({
   setSelectedModerationRow,
   onModerationAction,
   onOpenBanModal,
-  onUnban
+  onUnban,
+  bannedUsers,
+  bannedUsersLoading,
+  bannedUsersFilter,
+  setBannedUsersFilter,
+  liftingBanId,
+  onLiftBan,
+  onBannedUsersTabOpen
 }) {
+  /**
+   * activeTab controls which sub-view is rendered inside this section.
+   * "reports" → community reports queue (default)
+   * "banned"  → banned users registry
+   */
+  const [activeTab, setActiveTab] = useState("reports");
+
+  /**
+   * Handle tab switch. When switching to the Banned Users tab for the first
+   * time, notify the parent so it can lazy-load the list without requiring a
+   * full section change.
+   *
+   * @param {"reports"|"banned"} tab
+   */
+  function handleTabSwitch(tab) {
+    if (tab === "banned" && activeTab !== "banned") {
+      onBannedUsersTabOpen?.();
+    }
+    setActiveTab(tab);
+  }
+
   return (
     <>
-      <section className="admin-module-grid" aria-label="Moderation desk">
-        <article className="admin-panel full-span">
-          <h2>Community Moderation Queue</h2>
-          <div className="admin-table-wrap">
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Room</th>
-                  <th>Message Snippet</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(moderationQueue || []).map((row) => (
-                  <tr key={row.reportId}>
-                    <td>{formatDate(row.submittedAt)}</td>
-                    <td>{row.roomName}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="secondary-btn"
-                        onClick={() => setSelectedModerationRow(row)}
-                      >
-                        View Message + Reason
-                      </button>
-                    </td>
-                    <td className="action-cell">
-                      <button
-                        type="button"
-                        className="admin-action-btn"
-                        onClick={() => onModerationAction(row.reportId, "remove_message")}
-                      >
-                        <Trash2 size={13} aria-hidden="true" /> Delete Message
-                      </button>
-                      <button
-                        type="button"
-                        className="admin-action-btn"
-                        onClick={() => onModerationAction(row.reportId, "issue_warning")}
-                      >
-                        Issue Warning
-                      </button>
-                      {/* Ban / Lift Ban — branches on whether the author is already banned.
-                          Banning from here resolves the report atomically (reportId is passed
-                          to the modal so handleSubmitBan uses reviewModerationReport). */}
-                      {row.senderUserId && (
-                        row.senderAccountStatus === "BANNED" ? (
-                          <button
-                            type="button"
-                            className="admin-action-btn"
-                            onClick={() => onUnban(row.senderUserId, `Community Member ${row.senderUserId.slice(0, 8)}`)}
-                          >
-                            <UserCheck size={13} aria-hidden="true" /> Lift Ban
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            className="admin-action-btn danger"
-                            onClick={() => onOpenBanModal(
-                              row.senderUserId,
-                              `Community Member ${row.senderUserId.slice(0, 8)}`,
-                              row.reportId
-                            )}
-                          >
-                            <UserX size={13} aria-hidden="true" /> Ban User
-                          </button>
-                        )
-                      )}
-                    </td>
+      {/* ── Internal tab bar ─────────────────────────────────────────────── */}
+      <div className="moderation-tab-bar" role="tablist" aria-label="Moderation sub-sections">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "reports"}
+          className={`moderation-tab-btn${activeTab === "reports" ? " active" : ""}`}
+          onClick={() => handleTabSwitch("reports")}
+        >
+          Reports Queue
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "banned"}
+          className={`moderation-tab-btn${activeTab === "banned" ? " active" : ""}`}
+          onClick={() => handleTabSwitch("banned")}
+        >
+          Banned Users
+        </button>
+      </div>
+
+      {/* ── Reports Queue tab ────────────────────────────────────────────── */}
+      {activeTab === "reports" && (
+        <section className="admin-module-grid" aria-label="Moderation desk">
+          <article className="admin-panel full-span">
+            <h2>Community Moderation Queue</h2>
+            <div className="admin-table-wrap">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Room</th>
+                    <th>Message Snippet</th>
+                    <th>Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </article>
-      </section>
+                </thead>
+                <tbody>
+                  {(moderationQueue || []).map((row) => (
+                    <tr key={row.reportId}>
+                      <td>{formatDate(row.submittedAt)}</td>
+                      <td>{row.roomName}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => setSelectedModerationRow(row)}
+                        >
+                          View Message + Reason
+                        </button>
+                      </td>
+                      <td className="action-cell">
+                        <button
+                          type="button"
+                          className="admin-action-btn"
+                          onClick={() => onModerationAction(row.reportId, "remove_message")}
+                        >
+                          <Trash2 size={13} aria-hidden="true" /> Delete Message
+                        </button>
+                        <button
+                          type="button"
+                          className="admin-action-btn"
+                          onClick={() => onModerationAction(row.reportId, "issue_warning")}
+                        >
+                          Issue Warning
+                        </button>
+                        {/* Ban / Lift Ban — branches on whether the author is already banned.
+                            Banning from here resolves the report atomically (reportId is passed
+                            to the modal so handleSubmitBan uses reviewModerationReport). */}
+                        {row.senderUserId && (
+                          row.senderAccountStatus === "BANNED" ? (
+                            <button
+                              type="button"
+                              className="admin-action-btn"
+                              onClick={() => onUnban(row.senderUserId, `Community Member ${row.senderUserId.slice(0, 8)}`)}
+                            >
+                              <UserCheck size={13} aria-hidden="true" /> Lift Ban
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="admin-action-btn danger"
+                              onClick={() => onOpenBanModal(
+                                row.senderUserId,
+                                `Community Member ${row.senderUserId.slice(0, 8)}`,
+                                row.reportId
+                              )}
+                            >
+                              <UserX size={13} aria-hidden="true" /> Ban User
+                            </button>
+                          )
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+      )}
+
+      {/* ── Banned Users tab ─────────────────────────────────────────────── */}
+      {activeTab === "banned" && (
+        <BannedUsersSection
+          bannedUsers={bannedUsers}
+          bannedUsersLoading={bannedUsersLoading}
+          bannedUsersFilter={bannedUsersFilter}
+          setBannedUsersFilter={setBannedUsersFilter}
+          liftingBanId={liftingBanId}
+          onLiftBan={onLiftBan}
+        />
+      )}
 
       {/* ── Moderation detail dialog (mounted here, visible on top of table) ── */}
       {selectedModerationRow && (

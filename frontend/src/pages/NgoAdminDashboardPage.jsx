@@ -23,8 +23,8 @@ import CommandCenterSection from "./ngo-admin/CommandCenterSection";
 import TeamCapacitySection from "./ngo-admin/TeamCapacitySection";
 import ModerationDeskSection from "./ngo-admin/ModerationDeskSection";
 import UssdCallbacksSection from "./ngo-admin/UssdCallbacksSection";
-import BannedUsersSection from "./ngo-admin/BannedUsersSection";
 import BanUserModal from "./ngo-admin/BanUserModal";
+// BannedUsersSection is imported and rendered inside ModerationDeskSection's Banned Users tab.
 
 /**
  * NGO Admin Dashboard
@@ -46,8 +46,10 @@ const ngoMenu = [
   { id: "team-capacity", label: "Team Capacity", description: "Counsellor and legal workload" },
   { id: "moderation-desk", label: "Moderation Desk", description: "Community safety decisions" },
   { id: "resources", label: "Resources", description: "Resource center and case intelligence" },
-  { id: "ussd-callbacks", label: "USSD Callbacks", description: "Callback requests from USSD callers" },
-  { id: "banned-users", label: "Banned Users", description: "Review and lift bans on survivor and staff accounts" }
+  { id: "ussd-callbacks", label: "USSD Callbacks", description: "Callback requests from USSD callers" }
+  // Note: Banned Users is accessible via the Moderation Desk → Banned Users tab.
+  // It is not listed here because the AdminWorkspace sidebar is disabled (showSidebar=false)
+  // and the top nav does not expose it as a standalone section.
 ];
 
 function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "command-center" }) {
@@ -320,23 +322,41 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     loadReassignmentRequests();
   }, [activeSection, reassignmentFilter]);
 
-  useEffect(() => {
-    if (activeSection !== "banned-users") return;
-
-    async function loadBannedUsers() {
-      setBannedUsersLoading(true);
-      try {
-        const data = await listBannedUsers(bannedUsersFilter || undefined);
-        setBannedUsers(data.bannedUsers || []);
-      } catch {
-        setBannedUsers([]);
-      } finally {
-        setBannedUsersLoading(false);
-      }
+  /**
+   * loadBannedUsersData
+   * -------------------
+   * Fetches the banned-users list and populates state. Extracted so it can be
+   * called both from the tab-open callback (first open) and from the filter
+   * change effect (subsequent filter selections).
+   */
+  async function loadBannedUsersData() {
+    setBannedUsersLoading(true);
+    try {
+      const data = await listBannedUsers(bannedUsersFilter || undefined);
+      setBannedUsers(data.bannedUsers || []);
+    } catch {
+      setBannedUsers([]);
+    } finally {
+      setBannedUsersLoading(false);
     }
+  }
 
-    loadBannedUsers();
-  }, [activeSection, bannedUsersFilter]);
+  /**
+   * Re-fetch the banned list whenever the filter changes while the Moderation
+   * Desk section is active. Wraps loadBannedUsersData in an inner async function
+   * per the ESLint react-hooks/set-state-in-effect convention (same pattern used
+   * by other data-loading effects in this file).
+   *
+   * The initial load on first tab-open is triggered separately via the
+   * onBannedUsersTabOpen callback passed to ModerationDeskSection.
+   */
+  useEffect(() => {
+    if (activeSection !== "moderation-desk") return;
+    async function doRefresh() {
+      await loadBannedUsersData();
+    }
+    doRefresh();
+  }, [bannedUsersFilter, activeSection]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // App route aliases map to section ids through initialSection prop.
@@ -783,6 +803,13 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
           onModerationAction={handleModerationAction}
           onOpenBanModal={handleOpenBanModal}
           onUnban={handleUnban}
+          bannedUsers={bannedUsers}
+          bannedUsersLoading={bannedUsersLoading}
+          bannedUsersFilter={bannedUsersFilter}
+          setBannedUsersFilter={setBannedUsersFilter}
+          liftingBanId={liftingBanId}
+          onLiftBan={handleUnbanFromRegistry}
+          onBannedUsersTabOpen={loadBannedUsersData}
         />
       )}
 
@@ -791,17 +818,6 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
           ussdCallbacks={ussdCallbacks}
           updatingCallbackId={updatingCallbackId}
           onUpdateCallback={handleUpdateCallback}
-        />
-      )}
-
-      {activeSection === "banned-users" && (
-        <BannedUsersSection
-          bannedUsers={bannedUsers}
-          bannedUsersLoading={bannedUsersLoading}
-          bannedUsersFilter={bannedUsersFilter}
-          setBannedUsersFilter={setBannedUsersFilter}
-          liftingBanId={liftingBanId}
-          onLiftBan={handleUnbanFromRegistry}
         />
       )}
 

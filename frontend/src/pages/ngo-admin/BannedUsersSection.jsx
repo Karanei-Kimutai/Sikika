@@ -25,16 +25,16 @@ export default function BannedUsersSection({
   onLiftBan
 }) {
   return (
-    <section className="dashboard-section" aria-label="Banned Users">
-      <article className="admin-card">
-        <h3 className="admin-card-title">Banned Users Registry</h3>
-        <p className="admin-card-subtitle">
-          All accounts currently banned — survivors, counsellors, and legal counsel.
-          Use Lift Ban to restore ACTIVE status.
-        </p>
-
-        <div className="filter-row" style={{ marginBottom: "1rem" }}>
-          <label htmlFor="banned-role-filter" className="filter-label">Filter by role:</label>
+    <section className="banned-users-section" aria-label="Banned Users">
+      <div className="banned-users-header">
+        <div>
+          <h3 className="admin-card-title">Banned Users Registry</h3>
+          <p className="admin-card-subtitle">
+            All accounts currently banned — survivors, counsellors, and legal counsel.
+          </p>
+        </div>
+        <div className="filter-row">
+          <label htmlFor="banned-role-filter" className="filter-label">Filter:</label>
           <select
             id="banned-role-filter"
             className="filter-select"
@@ -47,59 +47,62 @@ export default function BannedUsersSection({
             <option value="LEGAL_COUNSEL">Legal Counsel</option>
           </select>
         </div>
+      </div>
 
-        {bannedUsersLoading && <p className="admin-empty">Loading banned accounts…</p>}
+      {bannedUsersLoading && (
+        <p className="admin-empty">Loading banned accounts…</p>
+      )}
 
-        {!bannedUsersLoading && bannedUsers.length === 0 && (
-          <p className="admin-empty">No accounts are currently banned.</p>
-        )}
+      {!bannedUsersLoading && bannedUsers.length === 0 && (
+        <p className="admin-empty">No accounts are currently banned.</p>
+      )}
 
-        {!bannedUsersLoading && bannedUsers.length > 0 && (
-          <div className="table-wrap">
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  <th>Phone</th>
-                  <th>Role</th>
-                  <th>Reason</th>
-                  <th>Banned At</th>
-                  <th>Expires</th>
-                  <th>Actions</th>
+      {!bannedUsersLoading && bannedUsers.length > 0 && (
+        <div className="admin-table-wrap">
+          <table className="admin-table banned-table">
+            <thead>
+              <tr>
+                <th>Identifier</th>
+                <th>Role</th>
+                <th>Reason</th>
+                <th>Banned</th>
+                <th>Expires</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bannedUsers.map((u) => (
+                <tr key={u.userId}>
+                  <td className="mono">{u.phoneNumber || u.userId.slice(0, 12)}</td>
+                  <td>
+                    <span className={`ban-role-pill ban-role-${String(u.role || "").toLowerCase()}`}>
+                      {prettifyLabel(u.role)}
+                    </span>
+                  </td>
+                  <td className="ban-reason-cell">{u.banReason || "—"}</td>
+                  <td className="date-cell">{formatDate(u.bannedAt)}</td>
+                  <td>
+                    {u.isPermanent
+                      ? <span className="pill priority-high">Permanent</span>
+                      : <span className="date-cell">{formatDate(u.banExpiresAt)}</span>}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-secondary"
+                      disabled={liftingBanId === u.userId}
+                      onClick={() => onLiftBan(u.userId, u.phoneNumber || u.role)}
+                    >
+                      <UserCheck size={13} aria-hidden="true" />
+                      {liftingBanId === u.userId ? "Lifting…" : "Lift Ban"}
+                    </button>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {bannedUsers.map((u) => (
-                  <tr key={u.userId}>
-                    <td className="mono">{u.phoneNumber || u.userId}</td>
-                    <td>
-                      <span className="pill pill-neutral">{prettifyLabel(u.role)}</span>
-                    </td>
-                    <td style={{ maxWidth: "260px", wordBreak: "break-word" }}>
-                      {u.banReason || "-"}
-                    </td>
-                    <td>{formatDate(u.bannedAt)}</td>
-                    <td>
-                      {u.isPermanent
-                        ? <span className="pill priority-high">Permanent</span>
-                        : formatDate(u.banExpiresAt)}
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className="btn-sm btn-secondary"
-                        disabled={liftingBanId === u.userId}
-                        onClick={() => onLiftBan(u.userId, u.phoneNumber || u.role)}
-                      >
-                        {liftingBanId === u.userId ? "Lifting…" : <><UserCheck size={13} aria-hidden="true" /> Lift Ban</>}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </article>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }
