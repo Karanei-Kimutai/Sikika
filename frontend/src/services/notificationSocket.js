@@ -51,7 +51,7 @@ const notificationSocket = {
    * Connect (or reconnect) using the given JWT.
    * Safe to call multiple times — socket.io is idempotent on connect if already open.
    *
-   * @param {string} token - Auth JWT from localStorage.
+   * @param {string} token - Auth JWT from sessionStorage.
    */
   connect(token) {
     socket.auth = { token };
