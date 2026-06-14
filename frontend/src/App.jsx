@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
-import { getToken, setToken, removeToken, getUserId, setUserId, removeUserId } from "./utils/auth";
+import { getToken, removeToken, removeUserId } from "./utils/auth";
 import SiteHeader from "./components/SiteHeader";
 import AuthPage from "./pages/AuthPage";
 import LandingPage from "./pages/LandingPage";

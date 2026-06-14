@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { io } from "socket.io-client";
 import { Send } from "lucide-react";
-import { getToken, getUserId } from "../utils/auth";
+import { getToken } from "../utils/auth";
 import ConfirmDialog from "../components/ConfirmDialog";
 
 /**
