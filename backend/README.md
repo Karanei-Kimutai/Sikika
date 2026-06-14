@@ -72,8 +72,11 @@ Association highlights:
 - creates the database if missing (`CREATE DATABASE IF NOT EXISTS`)
 - authenticates Sequelize
 - runs `db.sequelize.sync(...)` to create/update tables from model definitions
+- runs `ensureSchemaCompatibility(sequelize)` (see `src/utils/schemaCompatibility.js`) — idempotent DDL guards applied after sync; currently ensures the `userAccount.accountStatus` ENUM includes `BANNED`; gated by `ENABLE_SCHEMA_COMPAT` env flag (default `true`)
 
 This keeps local development bootstrapping simple because schema setup is automatic once env is valid.
+
+> **Schema changes:** Do NOT run manual `ALTER TABLE` commands. Add reconciliation steps to `schemaCompatibility.js` instead — it runs on every boot, is safe to re-run, and emits a structured one-line log summarising what was checked/applied/skipped.
 
 ### How Seeding Works
 
@@ -122,6 +125,7 @@ Recommended:
 - SKIP_SMS_IN_DEV=true (dev-only OTP bypass)
 - DB_SYNC_ALTER=false (leave false for stable local DB)
 - ALLOW_ADMIN_RESTART=true enables admin-triggered process exit for supervised restart
+- ENABLE_SCHEMA_COMPAT=true (default) runs boot-time ENUM reconciliation; set to `false` for emergency rollback without a code revert
 
 Optional:
 
@@ -169,6 +173,12 @@ Run auth-focused tests:
 npm run test:auth
 ```
 
+Run backend system route smoke tests:
+
+```bash
+npm run test:system
+```
+
 Watch mode:
 
 ```bash
@@ -185,8 +195,11 @@ node src/seeders/index.js
 
 Seeder warning:
 
-- the seeder resets/syncs tables for demo data generation
+- the seeder uses `sync({ force: true })` which **drops and recreates all tables** — never run in production
+- a hard guard at the top of `seed()` aborts with `process.exit(1)` when `NODE_ENV === 'production'`
 - use in local or disposable environments only
+- after seeding, an integrity check asserts every survivor has exactly one counsellor channel and one
+  legal-counsel channel pointing to their currently assigned staff; seeding fails loudly on any mismatch
 
 ## API Index
 
@@ -205,7 +218,6 @@ Seeder warning:
 - POST /api/auth/forgot-password/request
 - POST /api/auth/forgot-password/reset
 - POST /api/auth/set-password (auth required)
-- GET /api/auth/session (auth required)
 
 Authentication behavior highlights:
 
@@ -332,8 +344,8 @@ Community and moderation:
 Moderation action behavior:
 
 - `remove_message` replaces message content with a moderation-safe placeholder.
-- `block_user` (alias of `suspend_user`) sets the target account status to `SUSPENDED`.
-- `issue_warning` writes a moderation log entry without account suspension.
+- `ban_user` sets the target account status to `BANNED` with reason, optional expiry, and a dual audit trail (ModerationActionLog + AuditLog). Also resolves the underlying content report atomically. The legacy `block_user`/`suspend_user` paths have been removed.
+- `issue_warning` writes a moderation log entry without account status changes.
 - All approved moderation actions write an audit-style moderation action record.
 
 Community access model:
@@ -400,16 +412,16 @@ POST /api/admin/system/runtime-action supports:
 
 Create staff:
 
-- POST /api/admin/system/staff
-- roles supported: COUNSELLOR, LEGAL_COUNSEL, NGO_ADMIN, SYSTEM_ADMIN
+- POST /api/admin/ngo/staff
+- roles supported: COUNSELLOR, LEGAL_COUNSEL, NGO_ADMIN
 - automatically creates role-specific profile rows
 - marks account for forced first-login password reset
 - writes STAFF_ACCOUNT_CREATED audit entry
 
 Update staff status:
 
-- PATCH /api/admin/system/staff/:userId/status
-- statuses supported: ACTIVE, SUSPENDED
+- PATCH /api/admin/ngo/staff/:userId/status
+- statuses supported: ACTIVE, SUSPENDED (staff operational toggle; use ban endpoints for punitive enforcement)
 - blocks suspending own active system admin account
 - writes STAFF_ACCOUNT_SUSPENDED or STAFF_ACCOUNT_REACTIVATED audit entry
 

@@ -180,8 +180,7 @@ What exists now:
 - Frontend service: `banUser()` and `unbanUser()` in `frontend/src/services/admin.js`.
 - Tests: `backend/tests/banEnforcement.test.js` covers liftExpiredBan, authMiddleware enforcement,
   banUser guards (reason required, past expiry, admin target, self-ban), and unbanUser.
-- Known limitation: banning a COUNSELLOR or LEGAL_COUNSEL does NOT auto-reassign their existing
-  survivor caseload — NGO admins should use the reassignment workflow after banning staff.
+- ~~Known limitation: banning a COUNSELLOR or LEGAL_COUNSEL does NOT auto-reassign their existing survivor caseload~~. **Resolved:** `cascadeReassignOnStaffBan` is implemented and called (via `setImmediate`) whenever a COUNSELLOR or LEGAL_COUNSEL is banned, automatically reassigning their survivors to the next least-loaded staff member. Covered by `backend/tests/banCascade.test.js`.
 
 ## 9) Suspend / Ban Overlap Resolution
 Status: Done

@@ -54,6 +54,19 @@ Preview build:
 npm run preview
 ```
 
+Browser E2E smoke tests (Playwright):
+
+```bash
+npx playwright install chromium
+npm run test:e2e
+```
+
+Run E2E tests in headed mode:
+
+```bash
+npm run test:e2e:headed
+```
+
 ## Routing and Role Resolution
 
 Main route shell: src/App.jsx
@@ -90,13 +103,13 @@ Role decoding:
 
 ### Auth Session Lifecycle
 
-- On successful authentication, `authToken` and `userId` are persisted to `localStorage`.
+- On successful authentication, `authToken` and `userId` are persisted to `sessionStorage` (tab-scoped; cleared on tab close).
 - Protected views derive session context from the token and redirect when session is missing/expired.
 - First-login forced password reset is treated as an explicit intermediate auth stage before final navigation.
 
 ## Session and Safety Controls
 
-- authToken and userId are stored in localStorage after successful login
+- authToken and userId are stored in sessionStorage after successful login (tab-scoped, not shared across tabs)
 - quick exit button clears local auth state and redirects immediately
 - quick exit auto-collapses during idle periods to reduce accidental taps
 
@@ -149,10 +162,15 @@ Documented sections:
 
 Key capabilities:
 
-- 30-day trend chart with daily values and moving average
+- 30-day trend chart: gradient-filled bars (daily count) with a smooth bezier area + line overlay
+  for the 7-day rolling average; peak day bar highlighted; shared Y-scale across bars, gridlines,
+  and the trend path; all chart geometry produced by `buildLineChartPoints` in `helpers.js`
+- Moderation Desk has two internal tabs (Reports Queue / Banned Users) managed by
+  `ModerationDeskSection.jsx`; the Banned Users registry is co-located here rather than a
+  standalone nav entry (see `BannedUsersSection.jsx`)
 - report filtering and status tabs
 - manual survivor reassignment form
-- moderation queue actions
+- moderation queue actions (delete message, issue warning, ban user, lift ban)
 - create/edit resource catalog entries
 - resource analytics cards for top accessed resources and usage by category
 
@@ -222,7 +240,12 @@ Key behavior:
 - Encrypts outbound messages before socket emit.
 - Sends best-effort read acknowledgements without interrupting chat flow on failure.
 - Privacy mask auto-hides screen after inactivity and reopens on interaction.
-- Survivor channel list is assignment-driven from backend auto-provisioned channels, so each survivor should see one counsellor channel and one legal-counsel channel when both assignments exist.
+- Survivor channel list is assignment-driven from backend auto-provisioned channels, so each survivor
+  should see one counsellor channel and one legal-counsel channel when both assignments exist.
+- Survivors can Archive, Restore, or Move to Trash any channel via the action menu (⋯) on each row.
+  The Trash view (`includeDeleted=true` param) is toggled by the "Trash" button in the sidebar header
+  and is survivor-only; staff never see deleted channels. Restoring from Trash transitions the channel
+  back to `active` via `PATCH /api/chat/:chatId/status`.
 
 Development note:
 
@@ -244,12 +267,17 @@ Behavior:
 - moderation/report actions remain available in-room
 - room list is ordered by latest activity (newest message first)
 - chat view auto-scrolls to the latest message when entering a room
-- moderation actions support rejecting reports, removing messages, and blocking users (implemented as account suspension in backend).
+- moderation actions support rejecting reports, removing messages, issuing warnings, and banning users.
 
-## Moderation Blocking Semantics
+## Moderation Banning Semantics
 
-- "Block User" in moderation maps to backend account suspension (`accountStatus = SUSPENDED`).
-- Suspended users are denied subsequent authenticated access until reactivated by admin workflows.
+- The `ban_user` action in `reviewModerationReport` sets `accountStatus = BANNED` with a reason,
+  optional expiry, and a dual audit trail (ModerationActionLog + AuditLog). It also resolves the
+  underlying content report atomically in the same transaction.
+- The legacy `block_user`/`suspend_user` paths have been removed. `SUSPENDED` is now exclusively
+  the operational Active/Inactive staff toggle in the Team Capacity section.
+- Banned users are immediately evicted from active sockets; subsequent auth checks block access until
+  the ban is lifted by an NGO admin via the Moderation Desk → Banned Users tab or the ban expires.
 - Moderation actions are written to moderation logs for audit tracking.
 
 ## Direct Chat Resume Behavior
