@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Menu, X } from "lucide-react";
+import { LogOut, Menu, X } from "lucide-react";
 import NotificationBell from "./NotificationBell";
 
 /**
@@ -150,8 +150,9 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
             Encapsulates its own polling and panel state. */}
         <NotificationBell isAuthenticated={isAuthenticated} />
         {isAuthenticated && (
-          <button type="button" className="header-signout" onClick={onSignOut}>
-            Sign Out
+          <button type="button" className="header-signout" onClick={onSignOut} aria-label="Sign out">
+            <LogOut size={16} aria-hidden="true" />
+            <span className="header-signout-label">Sign Out</span>
           </button>
         )}
       </div>
