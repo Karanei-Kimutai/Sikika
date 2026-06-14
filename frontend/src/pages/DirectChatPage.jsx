@@ -8,8 +8,10 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { Archive, ArchiveRestore, MoreHorizontal, Send, Lock, Trash2 } from 'lucide-react';
 import axios from 'axios';
 import { io } from 'socket.io-client';
+import { getToken } from '../utils/auth';
 import { getSharedKey, encryptMessage, decryptMessage } from '../utils/cryptoUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
@@ -171,7 +173,7 @@ function decodeJwtPayload(token) {
 }
 
 const DirectChatPage = () => {
-  const initialToken = localStorage.getItem('authToken');
+  const initialToken = getToken();
   const initialPayload = initialToken ? decodeJwtPayload(initialToken) : null;
   const [channels, setChannels] = useState([]);
   const [activeChannelId, setActiveChannelId] = useState(null);
@@ -220,7 +222,7 @@ const DirectChatPage = () => {
    */
   useEffect(() => {
     // Session bootstrap comes from the same auth token written during login.
-    const token = localStorage.getItem('authToken');
+    const token = getToken();
     if (!token) {
       const timerId = window.setTimeout(() => {
         setErrorMessage('You need to log in first to access direct chat.');
@@ -277,7 +279,7 @@ const DirectChatPage = () => {
   const updateChannelStatus = async (chatId, status) => {
     if (!chatId) return;
 
-    const token = localStorage.getItem('authToken');
+    const token = getToken();
     if (!token) return;
 
     try {
@@ -316,7 +318,7 @@ const DirectChatPage = () => {
     persistPreferredChannel(activeChannelId);
 
     const setupSecureChannel = async () => {
-      const token = localStorage.getItem('authToken');
+      const token = getToken();
       if (!token) {
         setErrorMessage('Session expired. Please log in again.');
         return;
@@ -350,7 +352,8 @@ const DirectChatPage = () => {
                 : peerRoleLabelFromSession(currentUserRole),
             // Carry delivery/seen timestamps so ticks render correctly on history load.
             deliveredAt: dbMessage.deliveredAt || null,
-            seenAt: dbMessage.seenAt || null
+            seenAt: dbMessage.seenAt || null,
+            sentAt: dbMessage.messageDispatchTimestamp || null
           }))
         );
 
@@ -397,7 +400,8 @@ const DirectChatPage = () => {
             : peerRoleLabelFromSession(currentUserRole),
         // Delivery/seen ticks — pre-populated if the counterpart was already online.
         deliveredAt: dbMessage.deliveredAt || null,
-        seenAt: dbMessage.seenAt || null
+        seenAt: dbMessage.seenAt || null,
+        sentAt: dbMessage.messageDispatchTimestamp || null
       };
 
       setMessages((prev) => [...prev, decryptedMsg]);
@@ -459,7 +463,7 @@ const DirectChatPage = () => {
 
   useEffect(() => {
     const markRead = async () => {
-      const token = localStorage.getItem('authToken');
+      const token = getToken();
       if (!token || !activeChannelId) return;
 
       try {
@@ -603,7 +607,7 @@ const DirectChatPage = () => {
                         setMenuChannelId((value) => (value === channel.chatId ? null : channel.chatId));
                       }}
                     >
-                      ⋯
+                      <MoreHorizontal size={16} aria-hidden="true" focusable="false" />
                     </button>
                   </div>
                 )}
@@ -624,7 +628,7 @@ const DirectChatPage = () => {
                   <span className="wa-avatar muted">{currentUserRole === 'survivor' ? 'S' : 'U'}</span>
                   <div>
                     <strong>{currentUserRole === 'survivor' ? 'Secure Staff Channel' : 'Secure Survivor Channel'}</strong>
-                    <small>end-to-end encrypted</small>
+                    <small className="wa-e2ee-label"><Lock size={10} aria-hidden="true" /> End-to-end encrypted</small>
                     {activeChannel?.counterpartAvailability && (
                       <small className="wa-presence-row">
                         <span className={presenceDotClass(activeChannel.counterpartAvailability)} aria-hidden="true" />
@@ -636,7 +640,7 @@ const DirectChatPage = () => {
                 {noticeMessage && <p className="wa-notice">{noticeMessage}</p>}
               </header>
 
-              {activeChannel?.asyncDeliveryHint && <p className="status-message warning">{activeChannel.asyncDeliveryHint}</p>}
+              {activeChannel?.asyncDeliveryHint && <p role="alert" className="status-message warning">{activeChannel.asyncDeliveryHint}</p>}
 
               <div className="wa-messages">
                 {messages.length === 0 ? (
@@ -648,6 +652,11 @@ const DirectChatPage = () => {
                       <div className={`wa-bubble ${msg.isMine ? 'mine' : 'theirs'}`}>
                         <small className="wa-msg-role">{msg.senderLabel || (msg.isMine ? 'You' : 'Peer')}</small>
                         <p>{msg.plaintext}</p>
+                        {msg.sentAt && (
+                          <time className="wa-msg-time" dateTime={msg.sentAt}>
+                            {new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </time>
+                        )}
                         {/* Delivery/seen ticks — only rendered on sender's own bubbles */}
                         <MessageTicks msg={msg} />
                       </div>
@@ -665,8 +674,8 @@ const DirectChatPage = () => {
                   onChange={(e) => setNewMessage(e.target.value)}
                   disabled={!cryptoKey}
                 />
-                <button type="submit" disabled={!cryptoKey || !newMessage.trim()}>
-                  Send
+                <button type="submit" className="wa-send-btn" aria-label="Send message" disabled={!cryptoKey || !newMessage.trim()}>
+                  <Send size={14} aria-hidden="true" />
                 </button>
               </form>
             </>
@@ -680,15 +689,15 @@ const DirectChatPage = () => {
         <div className="wa-chat-options-menu" style={{ top: menuPosition.top, left: menuPosition.left }}>
           {actionMenuChannel.chatChannelStatus === 'archived' ? (
             <button type="button" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'active')}>
-              Restore Chat
+              <ArchiveRestore size={14} aria-hidden="true" /> Restore Chat
             </button>
           ) : (
             <button type="button" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'archived')}>
-              Archive Chat
+              <Archive size={14} aria-hidden="true" /> Archive Chat
             </button>
           )}
           <button type="button" className="danger" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'deleted')}>
-            Delete Chat
+            <Trash2 size={14} aria-hidden="true" /> Delete Chat
           </button>
         </div>,
         document.body

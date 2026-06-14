@@ -1,4 +1,5 @@
 import axios from "axios";
+import { getToken } from "../utils/auth";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
@@ -6,7 +7,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000
  * Returns Authorization headers for endpoints that require staff authentication.
  */
 function getAuthHeaders() {
-  const token = localStorage.getItem("authToken");
+  const token = getToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -87,7 +88,7 @@ export async function deleteResource(resourceId) {
  * Auth header is optional so anonymous visitors can still be counted.
  */
 export async function trackResourceAccess(resourceId) {
-  const token = localStorage.getItem("authToken");
+  const token = getToken();
   const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
 
   await axios.post(`${API_BASE_URL}/api/resources/${resourceId}/track-access`, {}, { headers });

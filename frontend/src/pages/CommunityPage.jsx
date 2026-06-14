@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { io } from "socket.io-client";
+import { Send } from "lucide-react";
+import { getToken, getUserId } from "../utils/auth";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 /**
  * CommunityPage
@@ -19,7 +22,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000
 const socket = io(API_BASE_URL, { autoConnect: false });
 
 function getAuthHeaders() {
-  const token = localStorage.getItem("authToken");
+  const token = getToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -27,7 +30,7 @@ function getAuthHeaders() {
 // Actual authorization remains enforced by backend endpoints.
 function readRoleFromToken() {
   try {
-    const token = localStorage.getItem("authToken") || "";
+    const token = getToken() || "";
     const [, payload] = token.split(".");
     if (!payload) return "";
     const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
@@ -76,6 +79,7 @@ function CommunityPage() {
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportTargetMessageId, setReportTargetMessageId] = useState("");
   const [reportReasonText, setReportReasonText] = useState("");
+  const [deleteMessageConfirmId, setDeleteMessageConfirmId] = useState("");
   const [submittingReport, setSubmittingReport] = useState(false);
   const [submittingRoom, setSubmittingRoom] = useState(false);
   const [joiningRoom, setJoiningRoom] = useState(false);
@@ -83,7 +87,7 @@ function CommunityPage() {
   const activeRoomIdRef = useRef("");
   const messagesViewportRef = useRef(null);
 
-  const currentUserId = localStorage.getItem("userId");
+  const currentUserId = getUserId();
   const isNgoAdmin = currentUserRole === "NGO_ADMIN";
   const activeRoom = rooms.find((room) => room.roomId === activeRoomId) || null;
   // Membership gate: only joined rooms can load/render message history.
@@ -164,7 +168,7 @@ function CommunityPage() {
   }, [activeRoomId]);
 
   useEffect(() => {
-    const token = localStorage.getItem("authToken");
+    const token = getToken();
     if (!token) return;
 
     socket.auth = { token };
@@ -393,10 +397,13 @@ function CommunityPage() {
     }
   }
 
-  async function handleDeleteMessage(messageId) {
-    const confirmed = window.confirm("Delete this message?");
-    if (!confirmed) return;
+  function handleDeleteMessageClick(messageId) {
+    setDeleteMessageConfirmId(messageId);
+  }
 
+  async function handleDeleteMessageConfirm() {
+    const messageId = deleteMessageConfirmId;
+    setDeleteMessageConfirmId("");
     setErrorMessage("");
     setSuccessMessage("");
 
@@ -410,6 +417,10 @@ function CommunityPage() {
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Could not delete message.");
     }
+  }
+
+  function handleDeleteMessageCancel() {
+    setDeleteMessageConfirmId("");
   }
 
   return (
@@ -473,7 +484,7 @@ function CommunityPage() {
             )}
           </header>
 
-          {errorMessage && <p className="status-message warning">{errorMessage}</p>}
+          {errorMessage && <p role="alert" className="status-message warning">{errorMessage}</p>}
           {successMessage && <p className="status-message">{successMessage}</p>}
 
           <div className="community-messages" ref={messagesViewportRef}>
@@ -502,6 +513,12 @@ function CommunityPage() {
 
                   <p>{message.publicMessageContent}</p>
 
+                  {message.messageDispatchTimestamp && (
+                    <time className="community-msg-time" dateTime={message.messageDispatchTimestamp}>
+                      {new Date(message.messageDispatchTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </time>
+                  )}
+
                   {activeMessageMenuId === message.communityMessageId && (
                     <div className="message-actions-menu">
                       {message.senderUserId !== currentUserId && (
@@ -511,7 +528,7 @@ function CommunityPage() {
                       )}
 
                       {message.senderUserId === currentUserId && (
-                        <button type="button" onClick={() => handleDeleteMessage(message.communityMessageId)}>
+                        <button type="button" onClick={() => handleDeleteMessageClick(message.communityMessageId)}>
                           Delete My Message
                         </button>
                       )}
@@ -544,8 +561,8 @@ function CommunityPage() {
               onChange={(event) => setNewMessage(event.target.value)}
               disabled={!canAccessActiveRoom}
             />
-            <button type="submit" className="primary-btn" disabled={!newMessage.trim() || !canAccessActiveRoom}>
-              Post
+            <button type="submit" className="wa-send-btn" aria-label="Post message" disabled={!newMessage.trim() || !canAccessActiveRoom}>
+              <Send size={14} aria-hidden="true" />
             </button>
           </form>
         </section>
@@ -634,6 +651,17 @@ function CommunityPage() {
           </form>
         </div>
       )}
+
+      <ConfirmDialog
+        isOpen={!!deleteMessageConfirmId}
+        title="Delete Message"
+        message="This message will be permanently deleted. You cannot undo this action."
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        onConfirm={handleDeleteMessageConfirm}
+        onCancel={handleDeleteMessageCancel}
+        variant="danger"
+      />
     </main>
   );
 }

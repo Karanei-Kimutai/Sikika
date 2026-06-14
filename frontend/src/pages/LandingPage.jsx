@@ -1,3 +1,4 @@
+import { ArrowRight, CheckCircle2 } from "lucide-react";
 import heroArtwork from "../assets/hero.png";
 
 /**
@@ -40,7 +41,7 @@ function LandingPage({ onNavigate }) {
           </p>
           <div className="hero-actions">
             <button type="button" className="primary-btn" onClick={() => onNavigate("/library")}>
-              Browse Resources
+              Browse Resources <ArrowRight size={16} aria-hidden="true" />
             </button>
             <button type="button" className="secondary-btn" onClick={() => onNavigate("/join")}>
               Join Community
@@ -80,7 +81,8 @@ function LandingPage({ onNavigate }) {
         <ol className="steps-list">
           {steps.map((step, index) => (
             <li key={step}>
-              <span>{index + 1}</span>
+              <CheckCircle2 size={22} aria-hidden="true" className="step-check-icon" />
+              <span className="step-number" aria-hidden="true">{index + 1}</span>
               <p>{step}</p>
             </li>
           ))}
@@ -90,7 +92,7 @@ function LandingPage({ onNavigate }) {
       <footer className="site-footer">
         <div>
           <strong>Emergency Contacts</strong>
-          <p>Police emergency: 999 / 112. Childline Kenya: 116. National GBV Hotline: 1195.</p>
+          <p>Police emergency: <a href="tel:999">999</a> / <a href="tel:112">112</a>. Childline Kenya: <a href="tel:116">116</a>. National GBV Hotline: <a href="tel:1195">1195</a>.</p>
         </div>
         <button type="button" className="footer-link" onClick={() => onNavigate("/library")}>
           View all resources

@@ -1029,10 +1029,10 @@ async function getSystemDashboard(req, res) {
     return res.json({
       statusBadge: databaseStatus === 'UP' ? 'ALL_SYSTEMS_OPERATIONAL' : 'DEGRADED_PERFORMANCE',
       maintenanceMode: {
-        enabled: maintenanceModeEnabled,
-        updatedAt: maintenanceUpdatedAt,
-        reason: maintenanceReason,
-        expectedUntil: maintenanceExpectedUntil
+        enabled: _maintenanceCache.enabled,
+        updatedAt: _maintenanceCache.updatedAt,
+        reason: _maintenanceCache.reason,
+        expectedUntil: _maintenanceCache.expectedUntil
       },
       runtimeActions: {
         lastCacheClearAt,

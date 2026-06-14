@@ -1,3 +1,5 @@
+import { useState, useEffect, useRef } from "react";
+import { LogOut, Menu, X } from "lucide-react";
 import NotificationBell from "./NotificationBell";
 
 /**
@@ -11,8 +13,13 @@ import NotificationBell from "./NotificationBell";
  * - sign-out is always available for authenticated sessions
  * - notification bell is shown for all authenticated users; polling and
  *   panel state are encapsulated inside NotificationBell
+ * - hamburger drawer activates on narrow viewports (≤ 680px)
  */
 function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut }) {
+  const [navOpen, setNavOpen] = useState(false);
+  const navRef = useRef(null);
+  const toggleRef = useRef(null);
+
   const navItems = (() => {
     if (!isAuthenticated) {
       return [
@@ -56,6 +63,36 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
     ];
   })();
 
+  /** Close drawer on click outside nav or toggle button */
+  useEffect(() => {
+    if (!navOpen) return;
+
+    const handleOutsideClick = (e) => {
+      if (
+        navRef.current && !navRef.current.contains(e.target) &&
+        toggleRef.current && !toggleRef.current.contains(e.target)
+      ) {
+        setNavOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [navOpen]);
+
+  /** Close drawer on Escape key */
+  useEffect(() => {
+    if (!navOpen) return;
+    const handleKeyDown = (e) => { if (e.key === "Escape") setNavOpen(false); };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [navOpen]);
+
+  const handleNavClick = (path) => {
+    setNavOpen(false);
+    onNavigate(path);
+  };
+
   return (
     <header className="site-header">
       <button type="button" className="brand-mark" onClick={() => onNavigate("/")}>
@@ -66,17 +103,41 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
         </span>
       </button>
 
-      <nav className="site-nav" aria-label="Primary navigation">
-        {navItems.map((item) => (
-          <button
-            key={item.path}
-            type="button"
-            className={currentPath === item.path || (item.path === "/" && currentPath === "/home") ? "active" : ""}
-            onClick={() => onNavigate(item.path)}
-          >
-            {item.label}
-          </button>
-        ))}
+      <button
+        ref={toggleRef}
+        type="button"
+        className="site-nav-toggle"
+        aria-expanded={navOpen}
+        aria-controls="primary-nav"
+        aria-label="Toggle navigation"
+        onClick={() => setNavOpen((open) => !open)}
+      >
+        {navOpen ? <X size={20} aria-hidden="true" /> : <Menu size={20} aria-hidden="true" />}
+      </button>
+
+      <nav
+        ref={navRef}
+        id="primary-nav"
+        className={`site-nav${navOpen ? " site-nav--open" : ""}`}
+        aria-label="Primary navigation"
+      >
+        {navItems.map((item) => {
+          const isActive = currentPath === item.path || (item.path === "/" && currentPath === "/home");
+          return (
+            <a
+              key={item.path}
+              href={item.path}
+              className={`site-nav-link ${isActive ? "active" : ""}`}
+              aria-current={isActive ? "page" : undefined}
+              onClick={(e) => {
+                e.preventDefault();
+                handleNavClick(item.path);
+              }}
+            >
+              {item.label}
+            </a>
+          );
+        })}
       </nav>
 
       <div className="header-actions">
@@ -89,8 +150,9 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
             Encapsulates its own polling and panel state. */}
         <NotificationBell isAuthenticated={isAuthenticated} />
         {isAuthenticated && (
-          <button type="button" className="header-signout" onClick={onSignOut}>
-            Sign Out
+          <button type="button" className="header-signout" onClick={onSignOut} aria-label="Sign out">
+            <LogOut size={16} aria-hidden="true" />
+            <span className="header-signout-label">Sign Out</span>
           </button>
         )}
       </div>

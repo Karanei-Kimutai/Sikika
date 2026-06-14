@@ -1,4 +1,5 @@
 import axios from "axios";
+import { getToken } from "../utils/auth";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
@@ -6,13 +7,13 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000
  * reports.js
  *
  * Thin API client for /api/reports endpoints.
- * - Authorization is always derived from localStorage authToken.
+ * - Authorization is always derived from sessionStorage authToken via getToken().
  * - Functions return raw response.data to keep page-level composition flexible.
  * - Upload/download flows use multipart + short-lived signed URLs.
  */
 
 function getAuthHeaders() {
-  const token = localStorage.getItem("authToken");
+  const token = getToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
