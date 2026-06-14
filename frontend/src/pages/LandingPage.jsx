@@ -1,4 +1,4 @@
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, CheckCircle2 } from "lucide-react";
 import heroArtwork from "../assets/hero.png";
 
 /**
@@ -81,7 +81,8 @@ function LandingPage({ onNavigate }) {
         <ol className="steps-list">
           {steps.map((step, index) => (
             <li key={step}>
-              <span>{index + 1}</span>
+              <CheckCircle2 size={22} aria-hidden="true" className="step-check-icon" />
+              <span className="step-number" aria-hidden="true">{index + 1}</span>
               <p>{step}</p>
             </li>
           ))}

@@ -1,3 +1,4 @@
+import { UserCheck } from "lucide-react";
 import { formatDate, prettifyLabel } from "./helpers";
 
 /**
@@ -89,7 +90,7 @@ export default function BannedUsersSection({
                         disabled={liftingBanId === u.userId}
                         onClick={() => onLiftBan(u.userId, u.phoneNumber || u.role)}
                       >
-                        {liftingBanId === u.userId ? "Lifting…" : "Lift Ban"}
+                        {liftingBanId === u.userId ? "Lifting…" : <><UserCheck size={13} aria-hidden="true" /> Lift Ban</>}
                       </button>
                     </td>
                   </tr>

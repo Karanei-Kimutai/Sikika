@@ -1,3 +1,4 @@
+import { UserCheck, UserX } from "lucide-react";
 import { formatNumber, formatDate, prettifyLabel, availabilityClass } from "./helpers";
 
 /**
@@ -165,7 +166,7 @@ export default function TeamCapacitySection({
                           className="admin-action-btn"
                           onClick={() => onUnban(staff.userId, staff.label)}
                         >
-                          Lift Ban
+                          <UserCheck size={13} aria-hidden="true" /> Lift Ban
                         </button>
                       ) : staff.userId && status !== "DEACTIVATED" && (
                         <>
@@ -194,7 +195,7 @@ export default function TeamCapacitySection({
                             className="admin-action-btn danger"
                             onClick={() => onOpenBanModal(staff.userId, staff.label)}
                           >
-                            Ban Account
+                            <UserX size={13} aria-hidden="true" /> Ban Account
                           </button>
                         </>
                       )}

@@ -1,3 +1,4 @@
+import { Trash2, UserCheck, UserX } from "lucide-react";
 import { formatDate, prettifyLabel } from "./helpers";
 
 /**
@@ -60,7 +61,7 @@ export default function ModerationDeskSection({
                         className="admin-action-btn"
                         onClick={() => onModerationAction(row.reportId, "remove_message")}
                       >
-                        Delete Message
+                        <Trash2 size={13} aria-hidden="true" /> Delete Message
                       </button>
                       <button
                         type="button"
@@ -79,7 +80,7 @@ export default function ModerationDeskSection({
                             className="admin-action-btn"
                             onClick={() => onUnban(row.senderUserId, `Community Member ${row.senderUserId.slice(0, 8)}`)}
                           >
-                            Lift Ban
+                            <UserCheck size={13} aria-hidden="true" /> Lift Ban
                           </button>
                         ) : (
                           <button
@@ -91,7 +92,7 @@ export default function ModerationDeskSection({
                               row.reportId
                             )}
                           >
-                            Ban User
+                            <UserX size={13} aria-hidden="true" /> Ban User
                           </button>
                         )
                       )}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ShieldCheck, CheckCircle2, AlertTriangle } from "lucide-react";
 import { getToken, setToken, setUserId } from "../utils/auth";
 import SignInFlow from "./auth/SignInFlow";
 import SignUpFlow from "./auth/SignUpFlow";
@@ -92,6 +93,7 @@ function AuthPage({ onNavigate }) {
     <main className="auth-page">
       <section className="auth-layout" aria-label="Community login panel">
         <div className="auth-context">
+          <ShieldCheck className="auth-context-watermark" size={120} strokeWidth={1} aria-hidden="true" />
           <p className="eyebrow">Private community access</p>
           <h1>Join when you are ready</h1>
           <p>
@@ -111,7 +113,7 @@ function AuthPage({ onNavigate }) {
             Sign in with password or OTP, or sign up by verifying an OTP then creating your password.
           </p>
 
-          <div className="auth-mode-tabs" role="tablist" aria-label="Authentication mode">
+          <div className="auth-mode-tabs" role="tablist" aria-label="Authentication mode" style={{ "--tab-offset": authMode === "signup" ? 1 : 0 }}>
             <button
               id="tab-signin"
               role="tab"
@@ -140,8 +142,18 @@ function AuthPage({ onNavigate }) {
             </button>
           </div>
 
-          {errorMessage && <p className="feedback feedback-error" role="alert">{errorMessage}</p>}
-          {successMessage && <p className="feedback feedback-success" role="status">{successMessage}</p>}
+          {errorMessage && (
+            <p className="feedback feedback-error" role="alert">
+              <AlertTriangle size={15} aria-hidden="true" />
+              {errorMessage}
+            </p>
+          )}
+          {successMessage && (
+            <p className="feedback feedback-success" role="status">
+              <CheckCircle2 size={15} aria-hidden="true" />
+              {successMessage}
+            </p>
+          )}
 
           {authMode === "signin" ? (
             <SignInFlow

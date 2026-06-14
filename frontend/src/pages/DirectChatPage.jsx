@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { MoreHorizontal, Send, Lock } from 'lucide-react';
+import { Archive, ArchiveRestore, MoreHorizontal, Send, Lock, Trash2 } from 'lucide-react';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import { getToken } from '../utils/auth';
@@ -689,15 +689,15 @@ const DirectChatPage = () => {
         <div className="wa-chat-options-menu" style={{ top: menuPosition.top, left: menuPosition.left }}>
           {actionMenuChannel.chatChannelStatus === 'archived' ? (
             <button type="button" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'active')}>
-              Restore Chat
+              <ArchiveRestore size={14} aria-hidden="true" /> Restore Chat
             </button>
           ) : (
             <button type="button" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'archived')}>
-              Archive Chat
+              <Archive size={14} aria-hidden="true" /> Archive Chat
             </button>
           )}
           <button type="button" className="danger" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'deleted')}>
-            Delete Chat
+            <Trash2 size={14} aria-hidden="true" /> Delete Chat
           </button>
         </div>,
         document.body
