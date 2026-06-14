@@ -67,12 +67,12 @@ export function availabilityClass(value) {
 export function buildLineChartPoints(series, chartMax) {
   if (!series.length) return [];
 
-  const width = 620;
-  const height = 220;
-  const padTop = 16;
-  const padRight = 16;
-  const padBottom = 34;
-  const padLeft = 44;
+  const width     = 660;
+  const height    = 260;
+  const padTop    = 22;
+  const padRight  = 12;
+  const padBottom = 44;
+  const padLeft   = 52;
   const plotWidth = width - padLeft - padRight;
   const slotWidth = plotWidth / series.length;
   // Fall back to the series max when the caller hasn't supplied chartMax yet.
