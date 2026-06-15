@@ -14,7 +14,7 @@
  *   PATCH  /api/legal-cases/:legalCaseId           saveDraft
  *   PATCH  /api/legal-cases/:legalCaseId/status    updateCaseStatus
  *   POST   /api/legal-cases/:legalCaseId/document  generateDocument
- *   GET    /api/legal-cases/:legalCaseId/document/access-url  getDocumentAccessUrl
+ *   GET    /api/legal-cases/:legalCaseId/document  streamDocument
  *
  * Manual handover note:
  * - This platform never contacts law enforcement, courts, or any external party.
@@ -30,7 +30,7 @@ const {
 const {
   isCloudinaryConfigured,
   uploadLegalDocumentBuffer,
-  generateLegalDocumentSignedUrl
+  fetchPrivateAssetStream
 } = require('../config/cloudinary');
 const { buildLegalCasePdfBuffer } = require('../services/legalDocumentService');
 const { normalizeRole } = require('../utils/roles');
@@ -288,24 +288,26 @@ const generateDocument = async (req, res) => {
 };
 
 /**
- * getDocumentAccessUrl
- * --------------------
- * Returns a short-lived signed URL for the privately stored legal case PDF.
+ * streamDocument
+ * --------------
+ * Streams the generated legal-case PDF directly to the client via the backend.
  *
- * Uses the same pattern as getEvidenceAccessUrl in reportController:
- * the public_id stored in `generatedDocumentPath` is signed with a 5-minute TTL.
+ * The PDF is stored as a private Cloudinary asset (`type: authenticated`).
+ * Signed delivery URLs are blocked by account-level restrictions, so we fetch
+ * the file server-side using API credentials and pipe the bytes to the response.
+ * The client fetches this endpoint with the Bearer token (responseType: blob)
+ * and creates a local object URL — Cloudinary URLs never reach the browser.
  *
- * @route GET /api/legal-cases/:legalCaseId/document/access-url
+ * All response headers (Content-Type, Content-Disposition, Content-Length) are
+ * set before piping so no chunk is flushed before headers are sent.
+ *
+ * @route GET /api/legal-cases/:legalCaseId/document
  */
-const getDocumentAccessUrl = async (req, res) => {
+const streamDocument = async (req, res) => {
   try {
     const actor = await getLegalCounselActor(req);
     if (!actor) {
       return res.status(403).json({ error: 'This action requires a Legal Counsel account.' });
-    }
-
-    if (!isCloudinaryConfigured()) {
-      return res.status(503).json({ error: 'Document access is not available — Cloudinary is not configured.' });
     }
 
     const { legalCaseId } = req.params;
@@ -320,12 +322,34 @@ const getDocumentAccessUrl = async (req, res) => {
       });
     }
 
-    const signedUrl = generateLegalDocumentSignedUrl({ publicId: legalCase.generatedDocumentPath });
+    if (!isCloudinaryConfigured()) {
+      return res.status(503).json({ error: 'Document streaming is not available — Cloudinary is not configured.' });
+    }
 
-    return res.json({ signedUrl, expiresInSeconds: 300 });
+    const { stream, contentLength } = await fetchPrivateAssetStream({
+      publicId: legalCase.generatedDocumentPath,
+      resourceType: 'raw'
+    });
+
+    // Set all headers before piping so they are guaranteed to reach the client.
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="legal-case-${legalCaseId}.pdf"`);
+    if (contentLength) {
+      res.setHeader('Content-Length', contentLength);
+    }
+
+    // Propagate mid-stream Cloudinary errors so the socket is cleaned up.
+    stream.on('error', (streamErr) => {
+      console.error('[legal-case] Cloudinary stream error:', streamErr.message);
+      res.destroy(streamErr);
+    });
+
+    stream.pipe(res);
   } catch (err) {
-    console.error('getDocumentAccessUrl error:', err);
-    return res.status(500).json({ error: 'Failed to generate document access URL.' });
+    console.error('streamDocument error:', err);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: 'Failed to stream legal case document.' });
+    }
   }
 };
 
@@ -333,5 +357,5 @@ module.exports = {
   saveDraft,
   updateCaseStatus,
   generateDocument,
-  getDocumentAccessUrl
+  streamDocument
 };

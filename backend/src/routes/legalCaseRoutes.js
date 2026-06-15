@@ -12,7 +12,7 @@
  *  PATCH  /api/legal-cases/:legalCaseId               → saveDraft
  *  PATCH  /api/legal-cases/:legalCaseId/status        → updateCaseStatus
  *  POST   /api/legal-cases/:legalCaseId/document      → generateDocument
- *  GET    /api/legal-cases/:legalCaseId/document/access-url → getDocumentAccessUrl
+ *  GET    /api/legal-cases/:legalCaseId/document      → streamDocument
  */
 
 const express = require('express');
@@ -22,7 +22,7 @@ const {
   saveDraft,
   updateCaseStatus,
   generateDocument,
-  getDocumentAccessUrl
+  streamDocument
 } = require('../controllers/legalCaseController');
 
 // All legal-case endpoints require a verified session.
@@ -47,9 +47,10 @@ router.patch('/:legalCaseId/status', updateCaseStatus);
 router.post('/:legalCaseId/document', generateDocument);
 
 /**
- * Return a short-lived (5-minute) signed URL for the private PDF.
- * The client should open the URL immediately — it expires quickly.
+ * Stream the generated PDF directly to the client via the backend proxy.
+ * The client fetches this with the Bearer token (responseType: blob) and
+ * creates a local object URL — Cloudinary URLs never reach the browser.
  */
-router.get('/:legalCaseId/document/access-url', getDocumentAccessUrl);
+router.get('/:legalCaseId/document', streamDocument);
 
 module.exports = router;

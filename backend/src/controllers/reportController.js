@@ -13,7 +13,8 @@ const {
 const {
   isCloudinaryConfigured,
   uploadEvidenceBuffer,
-  generateEvidenceSignedUrl
+  getResourceTypeForEvidence,
+  fetchPrivateAssetStream
 } = require("../config/cloudinary");
 const { createNotification, createNotificationsBulk } = require("../services/notificationService");
 
@@ -126,8 +127,8 @@ function toApiLegalCase(legalCase) {
     reportId: legalCase.reportId,
     escalationDate: legalCase.escalationTimestamp,
     caseStatus: legalCase.currentCaseStatus,
-    // generatedDocumentPath is a Cloudinary public_id — access requires a signed URL
-    // obtained via GET /api/legal-cases/:legalCaseId/document/access-url.
+    // generatedDocumentPath is a Cloudinary public_id — access is via the streaming
+    // proxy: GET /api/legal-cases/:legalCaseId/document (JWT required, returns bytes).
     generatedDocumentPath: legalCase.generatedDocumentPath,
     // Authoring fields — written by legal counsel via PATCH /api/legal-cases/:legalCaseId
     caseSummary: legalCase.caseSummary || null,
@@ -331,24 +332,6 @@ async function fetchReportById(reportId) {
   });
 }
 
-async function attachFreshEvidenceUrls(report) {
-  if (!isCloudinaryConfigured()) {
-    return report;
-  }
-
-  await Promise.all((report.evidenceFiles || []).map(async (evidence) => {
-    const signedUrl = generateEvidenceSignedUrl({
-      publicId: evidence.cloudinaryPublicIdentifier,
-      evidenceType: evidence.evidenceFileType
-    });
-
-    evidence.dynamicallySignedUrl = signedUrl;
-    await evidence.save();
-  }));
-
-  return report;
-}
-
 async function ensureLegalCaseForWorkflow({ report, nextStatus, generatedDocumentPath }) {
   if (nextStatus !== REPORT_STATUS.LEGAL_REVIEW && nextStatus !== REPORT_STATUS.ESCALATED_TO_LEGAL_CASE) {
     return null;
@@ -511,8 +494,6 @@ async function getReport(req, res) {
   if (!allowed) {
     return res.status(403).json({ error: "You do not have access to this report." });
   }
-
-  await attachFreshEvidenceUrls(report);
 
   return res.json({ report: toApiReport(report) });
 }
@@ -776,16 +757,12 @@ async function uploadEvidence(req, res) {
     });
   }
 
-  // Upload once to cloud storage and persist only metadata + signed access URL.
+  // Upload once to cloud storage; delivery is via the backend proxy (/file endpoint)
+  // so no signed URL is generated here — Cloudinary URLs never reach the browser.
   const uploadResult = await uploadEvidenceBuffer({
     buffer: req.file.buffer,
     reportId: report.reportId,
     mimeType: req.file.mimetype
-  });
-
-  const signedUrl = generateEvidenceSignedUrl({
-    publicId: uploadResult.public_id,
-    evidenceType: evidenceFileType
   });
 
   const evidence = await EvidenceFile.create({
@@ -796,7 +773,8 @@ async function uploadEvidence(req, res) {
     fileSize: req.file.size,
     mimeType: req.file.mimetype,
     cloudinaryPublicIdentifier: uploadResult.public_id,
-    dynamicallySignedUrl: signedUrl,
+    // Column kept for schema compatibility; delivery is via proxy, not this URL.
+    dynamicallySignedUrl: "",
     fileUploadTimestamp: new Date()
   });
 
@@ -933,7 +911,20 @@ async function getReportAnalytics(req, res) {
   });
 }
 
-async function getEvidenceAccessUrl(req, res) {
+/**
+ * Streams an evidence file directly to the client via the backend.
+ *
+ * Evidence files are stored as private Cloudinary assets (`type: authenticated`).
+ * Signed delivery URLs are blocked by account-level restrictions, so we fetch the
+ * file server-side using API credentials and pipe the bytes to the response.
+ * The client fetches this endpoint with the Bearer token (responseType: blob) and
+ * creates a local object URL — Cloudinary URLs never reach the browser.
+ *
+ * All response headers are set before piping so no chunk is flushed early.
+ *
+ * @route GET /api/reports/:reportId/evidence/:evidenceId/file
+ */
+async function streamEvidenceFile(req, res) {
   const actor = await getActorContext(req);
 
   if (!actor) {
@@ -963,22 +954,41 @@ async function getEvidenceAccessUrl(req, res) {
 
   if (!isCloudinaryConfigured()) {
     return res.status(503).json({
-      error: "Evidence access URLs are unavailable because Cloudinary is not configured."
+      error: "Evidence streaming is unavailable because Cloudinary is not configured."
     });
   }
 
-  // URL is refreshed on access to keep evidence links short-lived and revocable.
-  evidence.dynamicallySignedUrl = generateEvidenceSignedUrl({
-    publicId: evidence.cloudinaryPublicIdentifier,
-    evidenceType: evidence.evidenceFileType
-  });
-  await evidence.save();
+  try {
+    const resourceType = getResourceTypeForEvidence(evidence.evidenceFileType);
+    const { stream, contentType, contentLength } = await fetchPrivateAssetStream({
+      publicId: evidence.cloudinaryPublicIdentifier,
+      resourceType
+    });
 
-  return res.json({
-    evidenceId: evidence.evidenceFileId,
-    signedUrl: evidence.dynamicallySignedUrl,
-    expiresInSeconds: 300
-  });
+    // Set all headers before piping so they are guaranteed to reach the client.
+    const safeName = encodeURIComponent(evidence.originalFileName || "evidence");
+    res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
+    res.setHeader("Content-Type", evidence.mimeType || contentType);
+    if (contentLength) {
+      res.setHeader("Content-Length", contentLength);
+    }
+
+    // Propagate mid-stream Cloudinary errors so the socket is cleaned up.
+    stream.on("error", (streamErr) => {
+      console.error("[evidence] Cloudinary stream error:", streamErr.message);
+      res.destroy(streamErr);
+    });
+
+    stream.pipe(res);
+  } catch (error) {
+    console.error("[evidence] streamEvidenceFile error:", error.message);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        error: "Could not stream evidence file.",
+        details: process.env.NODE_ENV === "production" ? undefined : error.message
+      });
+    }
+  }
 }
 
 module.exports = {
@@ -991,5 +1001,5 @@ module.exports = {
   updateReportStatus,
   getReportAnalytics,
   uploadEvidence,
-  getEvidenceAccessUrl
+  streamEvidenceFile
 };

@@ -9,7 +9,7 @@
  *   PATCH  /api/legal-cases/:legalCaseId               — saveLegalCaseDraft
  *   PATCH  /api/legal-cases/:legalCaseId/status        — updateLegalCaseStatus
  *   POST   /api/legal-cases/:legalCaseId/document      — generateLegalCaseDocument
- *   GET    /api/legal-cases/:legalCaseId/document/access-url — getLegalCaseDocumentUrl
+ *   GET    /api/legal-cases/:legalCaseId/document      — getLegalCaseDocumentUrl (blob stream)
  */
 
 import axios from 'axios';
@@ -90,16 +90,30 @@ export async function generateLegalCaseDocument(legalCaseId) {
 /**
  * getLegalCaseDocumentUrl
  * -----------------------
- * Fetches a short-lived (5-minute) signed URL for the private PDF.
- * The caller should open the URL immediately after receiving it.
+ * Streams the generated legal-case PDF through the backend proxy and returns
+ * a local object URL that callers can pass to window.open.
+ *
+ * The PDF is stored as a private Cloudinary asset. The backend fetches it with
+ * API credentials and streams the bytes; this function downloads them as a
+ * Blob (with the Bearer auth header), creates an object URL, and schedules
+ * revocation after 60 seconds so the opened tab has time to load.
+ *
+ * Returns the same { signedUrl } shape as before so all call sites are
+ * unchanged.
  *
  * @param {string} legalCaseId
- * @returns {Promise<{ signedUrl: string, expiresInSeconds: number }>}
+ * @returns {Promise<{ signedUrl: string }>}
  */
 export async function getLegalCaseDocumentUrl(legalCaseId) {
   const response = await axios.get(
-    `${API_BASE_URL}/api/legal-cases/${legalCaseId}/document/access-url`,
-    { headers: authHeaders() }
+    `${API_BASE_URL}/api/legal-cases/${legalCaseId}/document`,
+    { headers: authHeaders(), responseType: "blob" }
   );
-  return response.data;
+
+  const objectUrl = URL.createObjectURL(response.data);
+
+  // Revoke the object URL after the tab has had time to load the PDF.
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+
+  return { signedUrl: objectUrl };
 }

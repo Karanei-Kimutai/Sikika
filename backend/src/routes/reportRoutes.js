@@ -11,7 +11,7 @@ const {
   updateReportStatus,
   getReportAnalytics,
   uploadEvidence,
-  getEvidenceAccessUrl
+  streamEvidenceFile
 } = require("../controllers/reportController");
 
 const router = express.Router();
@@ -42,6 +42,6 @@ router.delete("/:reportId", deleteOwnReport);
 
 router.patch("/:reportId/status", updateReportStatus);
 router.post("/:reportId/evidence", upload.single("file"), uploadEvidence);
-router.get("/:reportId/evidence/:evidenceId/access-url", getEvidenceAccessUrl);
+router.get("/:reportId/evidence/:evidenceId/file", streamEvidenceFile);
 
 module.exports = router;

@@ -35,21 +35,28 @@ function assertCloudinaryConfigured() {
 /**
  * Uploads survivor report evidence as a private Cloudinary asset.
  *
- * We keep evidence private using `type: authenticated` and later expose
- * short-lived signed URLs via `generateEvidenceSignedUrl`.
+ * We keep evidence private using `type: authenticated` and stream files to
+ * the client via the backend proxy (`streamEvidenceFile`), so Cloudinary
+ * delivery URLs never reach the browser.
+ *
+ * Explicit resource_type mapping (via resolveCloudinaryResourceType) is used
+ * instead of "auto" to prevent Cloudinary from misclassifying PDFs as "image",
+ * which would cause a resource_type mismatch and break the proxy download.
  */
 function uploadEvidenceBuffer({ buffer, reportId, mimeType }) {
   assertCloudinaryConfigured();
 
   const publicId = `incident-reports/${reportId}/${randomUUID()}`;
-  void mimeType;
+
+  // Explicit mapping prevents auto-detect from misclassifying PDFs as "image".
+  const resourceType = resolveCloudinaryResourceType(mimeType);
 
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       {
         public_id: publicId,
         overwrite: false,
-        resource_type: "auto",
+        resource_type: resourceType,
         type: "authenticated"
       },
       (error, result) => {
@@ -169,8 +176,8 @@ async function deleteSupportResourceAsset({ publicId, resourceType }) {
  * Uploads a generated legal case PDF as a private Cloudinary asset.
  *
  * Legal documents are stored with the same access model as incident evidence —
- * `type: authenticated` ensures direct public access is blocked. A short-lived
- * signed URL must be generated via `generateLegalDocumentSignedUrl` to open them.
+ * `type: authenticated` ensures direct public access is blocked. Files are
+ * delivered via the backend streaming proxy (GET /api/legal-cases/:id/document).
  *
  * Folder structure: legal-cases/<legalCaseId>/<uuid>
  *
@@ -253,13 +260,16 @@ function generateEvidenceSignedUrl({ publicId, evidenceType, expiresInSeconds = 
 }
 
 /**
- * Fetches a Cloudinary authenticated asset and returns a readable stream plus
+ * Fetches a private Cloudinary asset and returns a readable stream plus
  * response metadata so the caller can set all HTTP headers before piping.
  *
  * The caller MUST pipe the returned `stream` to the Express response after
  * setting Content-Disposition, Content-Type, and Content-Length. Keeping
  * header writes in the controller and piping last ensures no chunk is flushed
  * before headers are sent.
+ *
+ * Used by all three private asset classes: support resources, report evidence,
+ * and legal-case PDFs. All are stored as `type: authenticated`.
  *
  * Uses Cloudinary's private_download_url to generate an API-credential-signed
  * download URL, then fetches it server-side. This bypasses all Cloudinary
@@ -271,7 +281,7 @@ function generateEvidenceSignedUrl({ publicId, evidenceType, expiresInSeconds = 
  * @param {{ publicId: string, resourceType: string }} options
  * @returns {Promise<{ stream: import('http').IncomingMessage, contentType: string, contentLength: string|null }>}
  */
-function streamResourceToResponse({ publicId, resourceType }) {
+function fetchPrivateAssetStream({ publicId, resourceType }) {
   assertCloudinaryConfigured();
 
   const downloadUrl = cloudinary.utils.private_download_url(publicId, "", {
@@ -313,9 +323,10 @@ module.exports = {
   isCloudinaryConfigured,
   uploadEvidenceBuffer,
   generateEvidenceSignedUrl,
+  getResourceTypeForEvidence,
   uploadLegalDocumentBuffer,
   generateLegalDocumentSignedUrl,
   uploadSupportResourceBuffer,
   deleteSupportResourceAsset,
-  streamResourceToResponse
+  fetchPrivateAssetStream
 };

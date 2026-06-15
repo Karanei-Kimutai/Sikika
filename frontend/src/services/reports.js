@@ -98,14 +98,37 @@ export async function deleteOwnReport(reportId) {
   return response.data;
 }
 
+/**
+ * getEvidenceAccessUrl
+ * --------------------
+ * Streams the evidence file through the backend proxy and returns a local
+ * object URL that callers can pass to window.open.
+ *
+ * Evidence files are stored as private Cloudinary assets. The backend fetches
+ * them with API credentials and streams the bytes; this function downloads
+ * them as a Blob (with the Bearer auth header), creates an object URL, and
+ * schedules revocation after 60 seconds so the opened tab has time to load.
+ *
+ * Returns the same { signedUrl } shape as before so all call sites are
+ * unchanged.
+ *
+ * @param {string} reportId
+ * @param {string} evidenceId
+ * @returns {Promise<{ signedUrl: string }>}
+ */
 export async function getEvidenceAccessUrl(reportId, evidenceId) {
-  // Backend rotates signed URLs; callers should open the returned URL immediately.
   const response = await axios.get(
-    `${API_BASE_URL}/api/reports/${reportId}/evidence/${evidenceId}/access-url`,
+    `${API_BASE_URL}/api/reports/${reportId}/evidence/${evidenceId}/file`,
     {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      responseType: "blob"
     }
   );
 
-  return response.data;
+  const objectUrl = URL.createObjectURL(response.data);
+
+  // Revoke the object URL after the tab has had time to load the file.
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+
+  return { signedUrl: objectUrl };
 }

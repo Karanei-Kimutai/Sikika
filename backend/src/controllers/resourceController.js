@@ -5,7 +5,7 @@ const {
   isCloudinaryConfigured,
   uploadSupportResourceBuffer,
   deleteSupportResourceAsset,
-  streamResourceToResponse
+  fetchPrivateAssetStream
 } = require("../config/cloudinary");
 
 /**
@@ -407,10 +407,10 @@ async function streamResourceFile(req, res) {
       return res.status(503).json({ error: "File storage is not configured." });
     }
 
-    // Fetch the Cloudinary stream + headers first. streamResourceToResponse no
-    // longer pipes — it resolves with the readable stream so we can write all
-    // response headers before the first byte reaches the client.
-    const { stream, contentType, contentLength } = await streamResourceToResponse({
+    // Fetch the Cloudinary stream + headers first. fetchPrivateAssetStream
+    // resolves with the readable stream so we can write all response headers
+    // before the first byte reaches the client.
+    const { stream, contentType, contentLength } = await fetchPrivateAssetStream({
       publicId: resource.cloudinaryPublicId,
       resourceType: resource.cloudinaryResourceType || "raw"
     });
