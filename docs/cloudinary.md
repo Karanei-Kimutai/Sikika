@@ -12,9 +12,9 @@ The platform uses Cloudinary for three categories of file storage:
 
 | Asset type | Upload type | Access model |
 |------------|-------------|--------------|
-| Incident evidence | `authenticated` | Private — backend generates short-lived signed URLs |
+| Incident evidence | `authenticated` | Private — backend streams file bytes to client |
 | Support resources | `authenticated` | Private — backend proxies file to client |
-| Legal case PDFs | `authenticated` | Private — backend generates short-lived signed URLs |
+| Legal case PDFs | `authenticated` | Private — backend streams file bytes to client |
 
 All three use `type: authenticated`, meaning Cloudinary blocks all direct public access. Nothing stored on this platform is reachable via an unauthenticated URL.
 
@@ -92,15 +92,15 @@ The file extension is included in the `public_id` for support resources. Without
 
 **Upload function:** `uploadEvidenceBuffer({ buffer, reportId, mimeType })`
 
-- Uses `resource_type: "auto"` — evidence can be images, audio, video, or documents, and auto-detection works reliably here because the evidence controller stores the detected type.
+- Uses `resolveCloudinaryResourceType(mimeType)` for explicit `resource_type` mapping — avoids PDF misclassification as `image`.
 - Uses `type: "authenticated"` — evidence is private to the survivor and their assigned staff.
 - `public_id` format: `incident-reports/<reportId>/<uuid>`
 
-**Retrieval:** `generateEvidenceSignedUrl({ publicId, evidenceType, expiresInSeconds })`
+**Retrieval:** `fetchPrivateAssetStream({ publicId, resourceType })` via report controller proxy route.
 
-Generates a short-lived signed Cloudinary URL (default 5 minutes). The frontend opens this URL directly in the browser. The `resource_type` at URL generation must match the `resource_type` used at upload — stored in the `evidenceFile.evidenceType` field and mapped by `getResourceTypeForEvidence()`.
+The backend fetches evidence server-side using API credentials and streams the bytes to the client. The frontend calls the report endpoint with `responseType: blob`, builds an object URL, and opens it in a new tab. Cloudinary URLs never reach the browser.
 
-**Route:** `GET /api/reports/:reportId/evidence/:evidenceId/access-url`
+**Route:** `GET /api/reports/:reportId/evidence/:evidenceId/file`
 
 ---
 
@@ -112,7 +112,7 @@ Generates a short-lived signed Cloudinary URL (default 5 minutes). The frontend 
 - Uses `type: "authenticated"` — even though resources are meant to be accessible to all authenticated users, the authenticated type is used because `type: upload` raw files were returning 401 due to account-level Cloudinary security settings.
 - `public_id` format: `support-resources/<category>/<resourceId>/<safeName>-<uuid>.<ext>` — extension is preserved.
 
-**Retrieval:** `streamResourceToResponse({ publicId, resourceType }, destination)`
+**Retrieval:** `fetchPrivateAssetStream({ publicId, resourceType })`
 
 Support resources are **not** delivered via a redirect to a Cloudinary URL. Instead, the backend proxies the file:
 
@@ -139,9 +139,9 @@ The frontend opens `<apiBase>/api/resources/<id>/file` in a new tab. The backend
 - Uses `type: "authenticated"` — legal documents are private to the case.
 - `public_id` format: `legal-cases/<legalCaseId>/<uuid>`
 
-**Retrieval:** `generateLegalDocumentSignedUrl({ publicId, expiresInSeconds })`
+**Retrieval:** `fetchPrivateAssetStream({ publicId, resourceType: "raw" })` via legal-case controller proxy route.
 
-Generates a short-lived signed URL (default 5 minutes). Legal counsel opens the PDF via this URL in a new tab.
+The backend fetches the PDF server-side and streams it to the client with `Content-Type: application/pdf` and `Content-Disposition: inline`.
 
 **Route:** `GET /api/legal-cases/:id/document`
 
@@ -153,8 +153,10 @@ The three asset types use different delivery strategies:
 
 ```
 Evidence
-  Upload → Cloudinary (authenticated, resource_type: auto)
-  Access → Backend generates signed URL → Frontend opens URL in browser
+  Upload → Cloudinary (authenticated, resource_type: explicit from MIME)
+  Access → Frontend calls /api/reports/:reportId/evidence/:evidenceId/file
+         → Backend fetches from Cloudinary with API credentials
+         → Backend streams file bytes to browser
 
 Support Resources
   Upload → Cloudinary (authenticated, resource_type: explicit from MIME)
@@ -164,7 +166,9 @@ Support Resources
 
 Legal Case PDFs
   Upload → Cloudinary (authenticated, resource_type: raw)
-  Access → Backend generates signed URL → Frontend opens URL in browser
+  Access → Frontend calls /api/legal-cases/:id/document
+         → Backend fetches from Cloudinary with API credentials
+         → Backend streams PDF bytes to browser
 ```
 
 Support resources use backend proxying rather than signed URL redirect because:

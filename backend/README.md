@@ -260,7 +260,7 @@ Resource files are stored in Cloudinary as `type: authenticated` and are never e
 | PATCH | `/api/reports/:reportId/withdraw` | JWT | Survivor withdraws their report |
 | DELETE | `/api/reports/:reportId` | JWT | Delete a report |
 | POST | `/api/reports/:reportId/evidence` | JWT | Upload evidence file |
-| GET | `/api/reports/:reportId/evidence/:evidenceId/access-url` | JWT | Get signed Cloudinary URL for private evidence |
+| GET | `/api/reports/:reportId/evidence/:evidenceId/file` | JWT | Stream private evidence bytes via backend proxy |
 | GET | `/api/reports/analytics/summary` | JWT | Report analytics summary |
 
 Report status state machine: `SUBMITTED → UNDER_REVIEW → ACTIVE_SUPPORT → UNDER_INVESTIGATION → LEGAL_REVIEW → ESCALATED_TO_LEGAL_CASE / RESOLVED / WITHDRAWN`. Legal case auto-creation fires on `LEGAL_REVIEW` and `ESCALATED_TO_LEGAL_CASE` transitions.
@@ -271,8 +271,8 @@ Report status state machine: `SUBMITTED → UNDER_REVIEW → ACTIVE_SUPPORT → 
 |--------|----------|------|-------------|
 | GET | `/api/legal-cases/:id` | JWT | Get a legal case |
 | PATCH | `/api/legal-cases/:id` | JWT (LEGAL_COUNSEL) | Update case fields / save draft |
-| POST | `/api/legal-cases/:id/generate-document` | JWT (LEGAL_COUNSEL) | Generate PDF and upload to Cloudinary |
-| GET | `/api/legal-cases/:id/document` | JWT | Get signed URL for the case PDF |
+| POST | `/api/legal-cases/:id/document` | JWT (LEGAL_COUNSEL) | Generate PDF and upload to Cloudinary |
+| GET | `/api/legal-cases/:id/document` | JWT | Stream case PDF bytes via backend proxy |
 
 ### Chat
 

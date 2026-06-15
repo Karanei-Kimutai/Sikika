@@ -30,20 +30,20 @@ What exists now:
   `requestedReliefText`, `recommendedActionsText`, `draftLastUpdatedAt`, `documentGeneratedAt`.
 - `pdfkit`-based `legalDocumentService.js` renders authored fields into a PDF in memory.
 - PDF uploaded privately to Cloudinary (`type: authenticated`, folder `legal-cases/<id>/`) via
-  `uploadLegalDocumentBuffer` in `cloudinary.js`; accessed via `generateLegalDocumentSignedUrl`.
+  `uploadLegalDocumentBuffer` in `cloudinary.js`; delivered via backend streaming proxy (`GET /api/legal-cases/:legalCaseId/document`).
 - New `legalCaseController.js` + `legalCaseRoutes.js` with four endpoints:
     - `PATCH /api/legal-cases/:legalCaseId` — save draft (any subset of four authoring fields)
     - `PATCH /api/legal-cases/:legalCaseId/status` — advance case lifecycle status
       (OPEN→UNDER_INVESTIGATION→READY_FOR_SUBMISSION→SUBMITTED→CLOSED)
     - `POST /api/legal-cases/:legalCaseId/document` — generate PDF + upload to Cloudinary
-    - `GET /api/legal-cases/:legalCaseId/document/access-url` — short-lived signed URL
+    - `GET /api/legal-cases/:legalCaseId/document` — stream generated PDF bytes via backend proxy
   All endpoints scoped to the assigned legal counsel via survivor assignment check.
 - `fetchReportById` and `toApiLegalCase` in `reportController.js` now return all new fields
   so the drafting panel pre-loads without an extra API call.
 - Frontend `legalCases.js` service: `saveLegalCaseDraft`, `updateLegalCaseStatus`,
   `generateLegalCaseDocument`, `getLegalCaseDocumentUrl`.
 - `ReportingPage.jsx` drafting panel (LEGAL_COUNSEL role only): four textarea fields,
-  Save Draft, Generate Document, Open Document (signed URL), and case status advance control.
+  Save Draft, Generate Document, Open Document (blob/object URL from proxy stream), and case status advance control.
   Non-legal roles see the existing read-only one-line case summary.
 - Tests: `backend/tests/legalCaseController.test.js` — 20 cases covering access control,
   field validation, status-transition rules, Cloudinary-not-configured guard (503), and
