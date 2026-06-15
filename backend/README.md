@@ -108,9 +108,11 @@ All default to safe values. Can be tightened without a code change.
 |----------|-------------|
 | `CLOUDINARY_CLOUD_NAME` | Cloudinary cloud name |
 | `CLOUDINARY_API_KEY` | Cloudinary API key |
-| `CLOUDINARY_API_SECRET` | Cloudinary API secret |
+| `CLOUDINARY_API_SECRET` | API secret — used to sign URLs and authenticate server-side requests |
 
 Without Cloudinary config, evidence upload endpoints, support-resource write endpoints, and legal case PDF generation return 503 — read endpoints still work.
+
+Full documentation: [`docs/cloudinary.md`](../docs/cloudinary.md)
 
 ---
 
@@ -243,6 +245,8 @@ Real-time push via `notification:new` socket event on the user's personal `user:
 | DELETE | `/api/resources/:id` | JWT (staff) | Delete a resource |
 
 Upload constraints: multipart field `file`, max 20MB, allowed types: PDF, DOC, DOCX, TXT, JPG, PNG, WEBP, MP3, WAV, MP4. Write access restricted to COUNSELLOR, LEGAL_COUNSEL, NGO_ADMIN.
+
+Resource files are stored in Cloudinary as `type: authenticated` and are never exposed as direct Cloudinary URLs. `GET /api/resources/:id/file` proxies the file through the backend using API credentials and streams it to the client — this bypasses account-level Cloudinary delivery restrictions that blocked direct URL access for raw files.
 
 ### Reports
 

@@ -222,8 +222,9 @@ Key behavior:
 - Resource browsing is public and works without authentication.
 - Search and category filtering are handled via /api/resources query params.
 - Staff write actions (create/update/delete) are available through authenticated service methods and are enforced by backend RBAC.
-- Resource write calls use multipart form-data with file field name file.
-- Backend stores files in Cloudinary and returns stable resource metadata + delivery URL for listing.
+- Resource write calls use multipart form-data with file field name `file`.
+- Backend stores files in Cloudinary. Files are **never** accessed via direct Cloudinary URLs — the View/Download button opens `GET /api/resources/:id/file`, which proxies the file through the backend and streams it to the browser. This is necessary because Cloudinary account-level security settings block direct delivery of raw authenticated assets.
+- Resource opens also fire a best-effort `POST /api/resources/:id/track-access` call for analytics. This never blocks file access on failure.
 
 ## Direct Chat UI
 
@@ -336,3 +337,4 @@ Seeded users:
 - maintenance screen always visible: verify backend maintenance mode status
 - empty API lists: verify VITE_API_BASE_URL and backend process state
 - missing live logs: confirm system admin token and /api/admin/system/logs reachability
+- resource View/Download fails: backend proxies the file — confirm backend is running and Cloudinary env vars are set; see [docs/cloudinary.md](../docs/cloudinary.md)
