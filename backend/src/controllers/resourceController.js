@@ -407,24 +407,30 @@ async function streamResourceFile(req, res) {
       return res.status(503).json({ error: "File storage is not configured." });
     }
 
+    // Fetch the Cloudinary stream + headers first. streamResourceToResponse no
+    // longer pipes — it resolves with the readable stream so we can write all
+    // response headers before the first byte reaches the client.
+    const { stream, contentType, contentLength } = await streamResourceToResponse({
+      publicId: resource.cloudinaryPublicId,
+      resourceType: resource.cloudinaryResourceType || "raw"
+    });
+
+    // Set all headers before piping so they are guaranteed to reach the client.
     const safeName = encodeURIComponent(resource.originalFileName || "resource");
     res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
-
-    if (resource.mimeType) {
-      res.setHeader("Content-Type", resource.mimeType);
-    }
-
-    const { contentLength } = await streamResourceToResponse(
-      {
-        publicId: resource.cloudinaryPublicId,
-        resourceType: resource.cloudinaryResourceType || "raw"
-      },
-      res
-    );
-
+    res.setHeader("Content-Type", resource.mimeType || contentType);
     if (contentLength) {
       res.setHeader("Content-Length", contentLength);
     }
+
+    // Propagate mid-stream Cloudinary errors so the socket is cleaned up and
+    // the client sees a connection reset rather than a hanging download.
+    stream.on("error", (streamErr) => {
+      console.error("[resource] Cloudinary stream error:", streamErr.message);
+      res.destroy(streamErr);
+    });
+
+    stream.pipe(res);
   } catch (error) {
     console.error("[resource] streamResourceFile error:", error.message);
     if (!res.headersSent) {

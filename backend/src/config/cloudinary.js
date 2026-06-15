@@ -142,6 +142,10 @@ function uploadSupportResourceBuffer({ buffer, resourceId, category, originalFil
 /**
  * Deletes a previously uploaded support-resource asset from Cloudinary.
  *
+ * Support resources are stored with `type: "authenticated"`, so the destroy
+ * call must use the same type. Using `type: "upload"` would cause Cloudinary
+ * to return `"not found"` even when the asset exists, silently leaking it.
+ *
  * We accept `not found` as a successful cleanup outcome because records can
  * be deleted out-of-band in Cloudinary during operational maintenance.
  */
@@ -152,7 +156,7 @@ async function deleteSupportResourceAsset({ publicId, resourceType }) {
 
   const result = await cloudinary.uploader.destroy(publicId, {
     resource_type: resourceType || "raw",
-    type: "upload",
+    type: "authenticated",
     invalidate: true
   });
 
@@ -249,8 +253,13 @@ function generateEvidenceSignedUrl({ publicId, evidenceType, expiresInSeconds = 
 }
 
 /**
- * Fetches a Cloudinary authenticated asset and pipes it into a Node.js
- * writable stream (typically an Express response).
+ * Fetches a Cloudinary authenticated asset and returns a readable stream plus
+ * response metadata so the caller can set all HTTP headers before piping.
+ *
+ * The caller MUST pipe the returned `stream` to the Express response after
+ * setting Content-Disposition, Content-Type, and Content-Length. Keeping
+ * header writes in the controller and piping last ensures no chunk is flushed
+ * before headers are sent.
  *
  * Uses Cloudinary's private_download_url to generate an API-credential-signed
  * download URL, then fetches it server-side. This bypasses all Cloudinary
@@ -260,10 +269,9 @@ function generateEvidenceSignedUrl({ publicId, evidenceType, expiresInSeconds = 
  * Follows up to one redirect (Cloudinary occasionally returns 302 on downloads).
  *
  * @param {{ publicId: string, resourceType: string }} options
- * @param {import('http').ServerResponse} destination - Express res object to pipe into.
- * @returns {Promise<{ contentType: string, contentLength: string|null }>}
+ * @returns {Promise<{ stream: import('http').IncomingMessage, contentType: string, contentLength: string|null }>}
  */
-function streamResourceToResponse({ publicId, resourceType }, destination) {
+function streamResourceToResponse({ publicId, resourceType }) {
   assertCloudinaryConfigured();
 
   const downloadUrl = cloudinary.utils.private_download_url(publicId, "", {
@@ -287,12 +295,13 @@ function streamResourceToResponse({ publicId, resourceType }, destination) {
           return;
         }
 
+        // Resolve with the stream and metadata. The caller sets all headers
+        // first, then pipes — guaranteeing headers are written before data.
         resolve({
+          stream: cloudinaryRes,
           contentType: cloudinaryRes.headers["content-type"] || "application/octet-stream",
           contentLength: cloudinaryRes.headers["content-length"] || null
         });
-
-        cloudinaryRes.pipe(destination);
       }).on("error", reject);
     }
 

@@ -85,6 +85,12 @@ function LibraryPage() {
   const [updating, setUpdating] = useState(false);
   const [deletingId, setDeletingId] = useState("");
 
+  // True when the backend is unreachable and we are showing local fallback data.
+  // In fallback mode, resource.fileUrl is a valid external URL; the backend proxy
+  // endpoint is unavailable and the fallback IDs don't exist in the DB, so we
+  // must open fileUrl directly instead of going through the proxy.
+  const [usingFallback, setUsingFallback] = useState(false);
+
   async function handleResourceOpen(resource) {
     try {
       if (resource?.id) {
@@ -94,8 +100,15 @@ function LibraryPage() {
       // Analytics should never block resource access.
     }
 
-    const apiBase = import.meta.env.VITE_API_BASE_URL || "";
-    window.open(`${apiBase}/api/resources/${resource.id}/file`, "_blank", "noreferrer");
+    if (usingFallback || !resource?.id) {
+      // Fallback mode: backend is unreachable, open the static fileUrl directly.
+      window.open(resource.fileUrl, "_blank", "noreferrer");
+    } else {
+      // Normal mode: stream through the backend proxy so authenticated Cloudinary
+      // assets are delivered without exposing signed delivery URLs to the browser.
+      const apiBase = import.meta.env.VITE_API_BASE_URL || "";
+      window.open(`${apiBase}/api/resources/${resource.id}/file`, "_blank", "noreferrer");
+    }
   }
 
   useEffect(() => {
@@ -116,12 +129,16 @@ function LibraryPage() {
         // Backend returns already-filtered resources and the complete category list.
         setResources(data.resources || []);
         setCategories(data.categories || []);
+        setUsingFallback(false);
       } catch {
         if (!isMounted) return;
 
         // Local fallback mirrors the backend filters for development previews.
+        // Mark usingFallback so handleResourceOpen opens fileUrl directly instead
+        // of routing through the backend proxy (which is also unavailable here).
         setResources(fallbackResources.filter((resource) => matchesResource(resource, searchQuery, selectedCategory)));
         setCategories(fallbackCategories);
+        setUsingFallback(true);
         setErrorMessage("Showing sample resources because the backend resource API is not available.");
       } finally {
         if (isMounted) {
@@ -161,6 +178,8 @@ function LibraryPage() {
 
     setResources(data.resources || []);
     setCategories(data.categories || []);
+    // Backend is reachable, so proxy-based delivery is available.
+    setUsingFallback(false);
   }
 
   function clearManagementNotices() {
