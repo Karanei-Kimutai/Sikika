@@ -1,153 +1,50 @@
 # Backend
 
-Express + Sequelize (MySQL) backend for authentication, support resources, incident reporting, direct chat, community rooms, moderation, notifications, and websocket relay.
+Express + Sequelize (MySQL) backend for the GBV Support Platform. Handles authentication, incident reporting, direct chat, community rooms, USSD, moderation, notifications, legal case management, and websocket relay.
 
-- authentication and password reset flows
-- role-aware admin operations for NGO admins and system admins
-- incident reporting, evidence uploads, chat, community moderation
-- operational controls such as maintenance mode, runtime actions, and audit logs
+- OTP and password authentication with lockout, ban enforcement, and forced-reset flows
+- Role-aware operations for Survivors, Counsellors, Legal Counsel, NGO Admins, and System Admins
+- USSD channel via Africa's Talking for low-tech access (no internet required)
+- E2EE direct chat relay, community rooms, and real-time presence via Socket.io
+- Incident reporting with Cloudinary-backed evidence uploads
+- Legal case file drafting and PDF generation
+- Maintenance mode, runtime actions, and full audit logging
+
+For deep-dives see:
+- [`docs/authentication.md`](../docs/authentication.md) — auth flows, OTP lifecycle, JWT, security rules
+- [`docs/server-bootup.md`](../docs/server-bootup.md) — full server startup sequence
+- [`docs/ussd.md`](../docs/ussd.md) — USSD menu tree, AT integration, local dev setup
+
+---
 
 ## Core Stack
 
 - Node.js 18+
-- Express
+- Express 5
 - Sequelize + MySQL
 - Socket.io
 - bcrypt
 - JWT
+- Africa's Talking (USSD + SMS OTP)
 - Multer (multipart evidence uploads)
-- Cloudinary (evidence storage and signed URLs, plus support resource storage)
+- Cloudinary (evidence storage, support resource storage, legal case PDFs)
+- pdfkit (in-memory legal document generation)
 
-## Startup Responsibilities
-
-Main bootstrap file: backend/index.js
-
-On startup the server:
-
-1. Loads environment config
-2. Validates required env vars
-3. Ensures DB exists
-4. Authenticates Sequelize
-5. Syncs models
-6. Mounts REST routes and socket handlers
-7. Applies global maintenance gate middleware
-
-## Data Model Architecture
-
-### How Models Are Defined
-
-- Every table is defined as a Sequelize model in `backend/src/models/*.js`.
-- Each model file defines:
-- table columns and data types
-- primary key strategy (UUID strings across most domain entities)
-- nullability/defaults
-- table-level comments and field-level comments used as schema documentation
-
-Common examples:
-
-- `userAccount.js` is the identity root for auth and role-based access.
-- `survivorProfile.js`, `counsellorProfile.js`, `legalCounselProfile.js` extend user identity with role-specific domain fields.
-- `incidentReport.js`, `evidenceFile.js`, `legalCaseFile.js` model the reporting and legal escalation flow.
-- `directChatChannel.js` and `directChatMessage.js` model survivor-to-staff private chat.
-
-### How Models Are Brought Together
-
-- `backend/src/models/index.js` is the registry and association hub.
-- It imports all model definitions, wires relationships (`hasOne`, `hasMany`, `belongsTo`), then exports both the models and `sequelize` instance.
-- All controllers/services import models from this single hub to keep associations consistent.
-
-Association highlights:
-
-- `UserAccount` has one role profile (survivor/counsellor/legal/ngo admin/system admin).
-- `SurvivorProfile` belongs to assigned counsellor and legal counsel.
-- `IncidentReport` belongs to a survivor and has many evidence files.
-- `DirectChatChannel` belongs to a survivor and a staff counterpart user account.
-- `CommunityRoom` has memberships and messages; moderation/reporting tables reference those messages.
-
-### How Tables Are Created
-
-- Table creation happens at backend startup in `backend/index.js`.
-- Boot flow:
-- validates env
-- creates the database if missing (`CREATE DATABASE IF NOT EXISTS`)
-- authenticates Sequelize
-- runs `db.sequelize.sync(...)` to create/update tables from model definitions
-- runs `ensureSchemaCompatibility(sequelize)` (see `src/utils/schemaCompatibility.js`) — idempotent DDL guards applied after sync; currently ensures the `userAccount.accountStatus` ENUM includes `BANNED`; gated by `ENABLE_SCHEMA_COMPAT` env flag (default `true`)
-
-This keeps local development bootstrapping simple because schema setup is automatic once env is valid.
-
-> **Schema changes:** Do NOT run manual `ALTER TABLE` commands. Add reconciliation steps to `schemaCompatibility.js` instead — it runs on every boot, is safe to re-run, and emits a structured one-line log summarising what was checked/applied/skipped.
-
-### How Seeding Works
-
-- Seeder entrypoint: `backend/src/seeders/index.js`.
-- Command: `node src/seeders/index.js`.
-- Seeder uses `sequelize.sync({ force: true })`, which drops and recreates tables before inserting demo data.
-- It seeds a full working graph:
-- system + NGO admins
-- counsellors + legal counsel
-- survivors and assignment history
-- reports/evidence/legal cases
-- direct chat + community data
-- notifications/resources/moderation/audit rows
-
-Because force sync is destructive, use seeding only for local/disposable environments.
-
-### Authentication-Specific Data Flow
-
-- OTP/password auth state is persisted on `UserAccount` (OTP value/purpose/expiry, failure counters, lockout fields, password hash).
-- On first-time survivor signup completion, auth flow can create missing survivor profile and auto-assignment records.
-- That signup completion path can also auto-provision direct-chat channels, which is why auth and chat model consistency must stay aligned.
-
-## Environment Variables
-
-Copy env template first:
-
-```bash
-cp .env.example .env
-```
-
-Required:
-
-- DB_HOST
-- DB_PORT
-- DB_NAME
-- DB_USER
-- JWT_SECRET
-- AFRICASTALKING_API_KEY
-- AFRICASTALKING_USERNAME
-
-Recommended:
-
-- PORT (default 5000)
-- FRONTEND_ORIGIN (default http://localhost:5173)
-- NODE_ENV (development or production)
-- SKIP_SMS_IN_DEV=true (dev-only OTP bypass)
-- DB_SYNC_ALTER=false (leave false for stable local DB)
-- ALLOW_ADMIN_RESTART=true enables admin-triggered process exit for supervised restart
-- ENABLE_SCHEMA_COMPAT=true (default) runs boot-time ENUM reconciliation; set to `false` for emergency rollback without a code revert
-
-Optional:
-
-- DB_PASSWORD (omit only if your local MySQL user has no password)
-
-Required for Cloudinary-backed uploads (evidence and support resources):
-
-- CLOUDINARY_CLOUD_NAME
-- CLOUDINARY_API_KEY
-- CLOUDINARY_API_SECRET
-
-Without Cloudinary config, reporting APIs still work but evidence upload endpoints and support-resource write endpoints return service-unavailable responses.
+---
 
 ## Local Setup
-
-Install dependencies:
 
 ```bash
 npm install
 ```
 
-Run in development:
+Copy the env template and fill in your values:
+
+```bash
+cp .env.example .env
+```
+
+Run in development (hot-reload via nodemon):
 
 ```bash
 npm run dev
@@ -159,312 +56,364 @@ Run in production mode:
 npm start
 ```
 
-## Testing
+---
 
-Run full backend tests:
+## Environment Variables
 
-```bash
-npm test
-```
+### Required
 
-Run auth-focused tests:
+| Variable | Description |
+|----------|-------------|
+| `DB_HOST` | MySQL host |
+| `DB_PORT` | MySQL port |
+| `DB_NAME` | Database name (created automatically on boot if missing) |
+| `DB_USER` | MySQL user |
+| `JWT_SECRET` | Secret used to sign and verify all JWTs |
+| `AFRICASTALKING_API_KEY` | Africa's Talking API key |
+| `AFRICASTALKING_USERNAME` | AT account username — set to `"sandbox"` for sandbox mode |
 
-```bash
-npm run test:auth
-```
+### Recommended
 
-Run backend system route smoke tests:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `5000` | Port the HTTP server listens on |
+| `FRONTEND_ORIGIN` | `http://localhost:5173` | Browser origin allowed by CORS and Socket.io |
+| `NODE_ENV` | — | `"development"` or `"production"`. Production enforces AT sandbox and SMS bypass rules. |
+| `SKIP_SMS_IN_DEV` | `false` | Set `"true"` (non-production only) to skip SMS and return OTP in response body |
+| `DB_PASSWORD` | — | MySQL password (omit only if your local MySQL user has no password) |
+| `DB_SYNC_ALTER` | `false` | Set `"true"` once to run `sequelize.sync({ alter: true })` on this boot |
+| `ALLOW_ADMIN_RESTART` | `true` | Permits the System Admin server-restart action from the dashboard |
+| `ENABLE_SCHEMA_COMPAT` | `true` | Set `"false"` to skip boot-time schema reconciliation (emergency rollback only) |
 
-```bash
-npm run test:system
-```
+### Africa's Talking (optional)
 
-Watch mode:
+| Variable | Description |
+|----------|-------------|
+| `AFRICASTALKING_SENDER_ID` | Approved SMS sender ID shown instead of a shared shortcode. Leave blank to use the default shortcode. |
 
-```bash
-npm run test:watch
-```
+### Auth security knobs (optional)
 
-## Seed Data
+All default to safe values. Can be tightened without a code change.
 
-Seeder command:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AUTH_OTP_TTL_MS` | `600000` | OTP validity window in milliseconds (10 min) |
+| `AUTH_OTP_MAX_ATTEMPTS` | `5` | Max OTP verification attempts before lockout |
+| `AUTH_LOGIN_MAX_ATTEMPTS` | `5` | Max password failures before lockout |
+| `AUTH_LOCKOUT_MS` | `900000` | Lockout duration in milliseconds (15 min) |
+
+### Cloudinary (required for file uploads)
+
+| Variable | Description |
+|----------|-------------|
+| `CLOUDINARY_CLOUD_NAME` | Cloudinary cloud name |
+| `CLOUDINARY_API_KEY` | Cloudinary API key |
+| `CLOUDINARY_API_SECRET` | API secret — used to sign URLs and authenticate server-side requests |
+
+Without Cloudinary config, evidence upload endpoints, support-resource write endpoints, and legal case PDF generation return 503 — read endpoints still work.
+
+Full documentation: [`docs/cloudinary.md`](../docs/cloudinary.md)
+
+---
+
+## Startup Sequence
+
+Main bootstrap file: `backend/index.js`. Full documentation: [`docs/server-bootup.md`](../docs/server-bootup.md).
+
+1. **Proxy cleanup** — removes dead proxy env vars that break the AT SDK in WSL/IDE environments
+2. **Express + Socket.io init** — wraps Express in an HTTP server so REST and WebSockets share port 5000; mounts `chatSocket` and `communitySocket`
+3. **Middleware + routes** — CORS, JSON parsing, global `maintenanceGuard`, all route modules
+4. **`validateEnv()`** — fail-fast on missing required vars; enforces production safety rules (no sandbox username, no dev SMS bypass)
+5. **`ensureDatabaseExists()`** — `CREATE DATABASE IF NOT EXISTS` so developers never need to create the DB manually
+6. **`sequelize.authenticate()`** — verifies DB connection
+7. **`sequelize.sync()`** — creates missing tables from model definitions; alter mode optional via `DB_SYNC_ALTER`
+8. **`ensureSchemaCompatibility()`** — idempotent DDL guards for schema drift (ENUM evolution, missing columns); gated by `ENABLE_SCHEMA_COMPAT`
+9. **`loadMaintenanceStateFromDb()`** — restores durable maintenance mode state from the `SystemSetting` table
+10. **`server.listen()`** — begins accepting HTTP and WebSocket connections
+
+Any failure in steps 4–9 exits the process with a descriptive error before the port is opened.
+
+---
+
+## Data Model Architecture
+
+### Model definitions
+
+Every table is a Sequelize model in `backend/src/models/*.js`. Models define columns, types, UUIDs as PKs (across most domain entities), nullability, and defaults.
+
+Key models:
+
+- `userAccount.js` — identity root for auth and role-based access
+- `survivorProfile.js`, `counsellorProfile.js`, `legalCounselProfile.js` — role-specific domain extensions
+- `incidentReport.js`, `evidenceFile.js`, `legalCaseFile.js` — reporting and legal escalation
+- `directChatChannel.js`, `directChatMessage.js` — survivor-to-staff private chat
+- `ussdCallbackRequest.js` — USSD callback queue entries
+
+### Model registry
+
+`backend/src/models/index.js` is the single registry and association hub. All controllers and services import models from here to get consistent eager-loading.
+
+Association highlights:
+
+- `UserAccount` has one role profile (survivor / counsellor / legal / NGO admin / system admin)
+- `SurvivorProfile` belongs to assigned counsellor and assigned legal counsel
+- `IncidentReport` belongs to a survivor and has many evidence files
+- `DirectChatChannel` belongs to a survivor and a staff counterpart
+- `CommunityRoom` has memberships, messages, and moderation references
+
+### Schema changes
+
+Do **not** run manual `ALTER TABLE` commands. Add reconciliation steps to `backend/src/utils/schemaCompatibility.js` instead — it runs on every boot, is idempotent, and emits a structured one-line log showing what was checked/applied/skipped.
+
+### Seeding
 
 ```bash
 node src/seeders/index.js
 ```
 
-Seeder warning:
+The seeder runs `sync({ force: true })` — **drops and recreates all tables** before inserting demo data. A hard guard aborts with `process.exit(1)` when `NODE_ENV === 'production'`. Use only in local/disposable environments.
 
-- the seeder uses `sync({ force: true })` which **drops and recreates all tables** — never run in production
-- a hard guard at the top of `seed()` aborts with `process.exit(1)` when `NODE_ENV === 'production'`
-- use in local or disposable environments only
-- after seeding, an integrity check asserts every survivor has exactly one counsellor channel and one
-  legal-counsel channel pointing to their currently assigned staff; seeding fails loudly on any mismatch
+Seeds a full working graph: admins, counsellors, legal counsel, survivors, assignment history, reports, evidence, legal cases, direct chat, community data, notifications, resources, moderation, and audit rows.
+
+After seeding, an integrity check asserts every survivor has exactly one counsellor channel and one legal-counsel channel — seeding fails loudly on any mismatch.
+
+---
 
 ## API Index
 
 ### Health and Status
 
-- GET /api/hello
-- GET /api/health
-- GET /api/health/db
-- GET /api/system/public-status
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/hello` | None | Smoke test |
+| GET | `/api/health` | None | Express health check |
+| GET | `/api/health/db` | None | Database connectivity check |
+| GET | `/api/system/public-status` | None | Maintenance mode state (polled by frontend every 15s) |
 
 ### Authentication
 
-- POST /api/auth/request-otp
-- POST /api/auth/verify-otp
-- POST /api/auth/login-password
-- POST /api/auth/forgot-password/request
-- POST /api/auth/forgot-password/reset
-- POST /api/auth/set-password (auth required)
+Full documentation: [`docs/authentication.md`](../docs/authentication.md)
 
-Authentication behavior highlights:
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/api/auth/request-otp` | None | Request signup or signin OTP |
+| POST | `/api/auth/verify-otp` | None | Verify OTP; completes signup or issues signin token |
+| POST | `/api/auth/login-password` | None | Password-based signin |
+| POST | `/api/auth/forgot-password/request` | None | Request password-reset OTP |
+| POST | `/api/auth/forgot-password/reset` | None | Submit reset OTP and new password |
+| POST | `/api/auth/set-password` | JWT | Set or change password for the authenticated user |
+| GET | `/api/auth/session` | JWT | Returns decoded session payload |
 
-- phone numbers are normalized before lookup
-- OTP and password flows both support lockout protections
-- JWT payload includes id and userId compatibility claims
-- suspended/deactivated accounts are blocked from login
-- staff created by NGO admin are flagged for forced password change on first login
+Key behaviours:
 
-First-login forced reset behavior:
+- Phone numbers are normalized to E.164 before lookup
+- OTPs are bcrypt-hashed before storage; purpose-bound to prevent cross-flow replay
+- Both OTP and password paths share the same 5-attempt lockout (15 min)
+- BANNED accounts are rejected with ban reason and expiry; expired temporary bans are auto-lifted on every auth check
+- Staff provisioned by NGO admin arrive with `status=password_reset_required`; first login returns `authStage=PASSWORD_RESET_REQUIRED` and the frontend must call `/set-password` before normal navigation
 
-- newly created staff accounts are marked with status=password_reset_required
-- login still returns a token but authStage=PASSWORD_RESET_REQUIRED
-- frontend must call POST /api/auth/set-password before entering the app
-- set-password clears the first-login reset requirement
+### USSD
 
-Operational intent:
+Full documentation: [`docs/ussd.md`](../docs/ussd.md)
 
-- NGO admins can safely share temporary credentials during onboarding
-- staff identity is verified at first login, then password ownership moves to the staff member
-- this removes long-term shared-password risk while preserving rapid onboarding
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/api/ussd/callback` | None | Africa's Talking USSD webhook — handles all session interactions |
+| GET | `/api/ussd/callback-requests` | JWT (NGO_ADMIN) | List all USSD callback requests, newest first |
+| PATCH | `/api/ussd/callback-requests/:requestId` | JWT (NGO_ADMIN) | Update callback request status (COMPLETED / CANCELLED) |
 
-### Admin Routes
+Menu tree: Welcome → 1) Request callback (with confirmation step) → 2) Emergency contacts. See `docs/ussd.md` for full tree and local dev setup with ngrok.
 
-All admin routes require auth token.
+### Notifications
 
-NGO admin endpoints:
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/notifications` | JWT | List notifications for the authenticated user |
+| PATCH | `/api/notifications/:id/read` | JWT | Mark a notification as read |
+| PATCH | `/api/notifications/:id/dismiss` | JWT | Dismiss a notification |
 
-- GET /api/admin/ngo/dashboard
-- PATCH /api/admin/ngo/reassignments
-- POST /api/admin/ngo/resources
-- PATCH /api/admin/ngo/resources/:resourceId
-
-System admin endpoints:
-
-- GET /api/admin/system/dashboard
-- GET /api/admin/system/logs
-- POST /api/admin/system/runtime-action
-- POST /api/admin/system/maintenance-mode
-
-NGO staff lifecycle endpoints:
-
-- POST /api/admin/ngo/staff
-- PATCH /api/admin/ngo/staff/:userId/status
-
-NGO staff lifecycle rules:
-
-- endpoint caller must be an authenticated NGO_ADMIN account
-- role creation is limited to COUNSELLOR and LEGAL_COUNSEL
-- created staff are initialized with status=password_reset_required
-- status transitions are limited to ACTIVE and SUSPENDED
-- status endpoint only targets COUNSELLOR and LEGAL_COUNSEL accounts
-
-Shared admin utility:
-
-- GET /api/admin/search?q=...
+Real-time push via `notification:new` socket event on the user's personal `user:<userId>` room; 30-second poll fallback on the frontend.
 
 ### Resources
 
-- GET /api/resources
-- POST /api/resources/:resourceId/track-access
-- POST /api/resources (bearer token, multipart file upload)
-- PATCH /api/resources/:resourceId (bearer token, optional multipart file replacement)
-- DELETE /api/resources/:resourceId (bearer token)
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/resources` | None | List all resources (public) |
+| POST | `/api/resources/:id/track-access` | None | Fire-and-forget access tracking |
+| POST | `/api/resources` | JWT (staff) | Upload a new resource |
+| PATCH | `/api/resources/:id` | JWT (staff) | Update resource metadata or replace file |
+| DELETE | `/api/resources/:id` | JWT (staff) | Delete a resource |
 
-Resource access model:
+Upload constraints: multipart field `file`, max 20MB, allowed types: PDF, DOC, DOCX, TXT, JPG, PNG, WEBP, MP3, WAV, MP4. Write access restricted to COUNSELLOR, LEGAL_COUNSEL, NGO_ADMIN.
 
-- Read access is public: authenticated users and unregistered visitors can browse resources.
-- Create, update, and delete are restricted to COUNSELLOR, LEGAL_COUNSEL, and NGO_ADMIN.
-- Resource uploads are stored in Cloudinary and persisted with metadata for replacement/deletion cleanup.
-- Update supports metadata-only edits or metadata + file replacement in one request.
-
-Resource upload constraints:
-
-- Multipart field name: file
-- Max upload size: 20MB
-- Allowed MIME types: PDF, DOC, DOCX, TXT, JPG, PNG, WEBP, MP3, WAV, MP4
-
-Resource analytics behavior:
-
-- each resource open can create a ResourceAccessEvent
-- NGO dashboard returns top-accessed resources and usage by category
+Resource files are stored in Cloudinary as `type: authenticated` and are never exposed as direct Cloudinary URLs. `GET /api/resources/:id/file` proxies the file through the backend using API credentials and streams it to the client — this bypasses account-level Cloudinary delivery restrictions that blocked direct URL access for raw files.
 
 ### Reports
 
-- POST /api/reports
-- GET /api/reports
-- GET /api/reports/:reportId
-- PATCH /api/reports/:reportId
-- PATCH /api/reports/:reportId/withdraw
-- DELETE /api/reports/:reportId
-- PATCH /api/reports/:reportId/status
-- POST /api/reports/:reportId/evidence
-- GET /api/reports/:reportId/evidence/:evidenceId/access-url
-- GET /api/reports/analytics/summary
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/api/reports` | None | Submit an incident report (unauthenticated allowed) |
+| GET | `/api/reports` | JWT | List reports for the authenticated user |
+| GET | `/api/reports/:reportId` | JWT | Get a single report |
+| PATCH | `/api/reports/:reportId` | JWT | Update report fields |
+| PATCH | `/api/reports/:reportId/status` | JWT | Advance report through the status state machine |
+| PATCH | `/api/reports/:reportId/withdraw` | JWT | Survivor withdraws their report |
+| DELETE | `/api/reports/:reportId` | JWT | Delete a report |
+| POST | `/api/reports/:reportId/evidence` | JWT | Upload evidence file |
+| GET | `/api/reports/:reportId/evidence/:evidenceId/file` | JWT | Stream private evidence bytes via backend proxy |
+| GET | `/api/reports/analytics/summary` | JWT | Report analytics summary |
 
-### Chat and Community
+Report status state machine: `SUBMITTED → UNDER_REVIEW → ACTIVE_SUPPORT → UNDER_INVESTIGATION → LEGAL_REVIEW → ESCALATED_TO_LEGAL_CASE / RESOLVED / WITHDRAWN`. Legal case auto-creation fires on `LEGAL_REVIEW` and `ESCALATED_TO_LEGAL_CASE` transitions.
 
-Direct chat:
+### Legal Cases
 
-- GET /api/chat/channels
-- GET /api/chat/:chatId/messages
-- PATCH /api/chat/:chatId/read
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/legal-cases/:id` | JWT | Get a legal case |
+| PATCH | `/api/legal-cases/:id` | JWT (LEGAL_COUNSEL) | Update case fields / save draft |
+| POST | `/api/legal-cases/:id/document` | JWT (LEGAL_COUNSEL) | Generate PDF and upload to Cloudinary |
+| GET | `/api/legal-cases/:id/document` | JWT | Stream case PDF bytes via backend proxy |
 
-Direct chat assignment behavior:
+### Chat
 
-- Survivor channels are assignment-driven, not global.
-- On survivor access (and during signup completion), backend ensures channels exist for assigned counsellor and assigned legal counsel.
-- Channel creation is idempotent (`findOrCreate`) so repeated logins do not duplicate channels.
-- Channel membership is enforced by survivorId/supportStaffCounterpartId access checks.
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/chat/channels` | JWT | List direct chat channels for the authenticated user |
+| GET | `/api/chat/:chatId/messages` | JWT | Get messages for a channel |
+| PATCH | `/api/chat/:chatId/read` | JWT | Mark channel as read (sets `seenAt`) |
+| PATCH | `/api/chat/:chatId/status` | JWT | Archive, restore, or delete a channel (`active ↔ archived`, `active/archived → deleted`, `deleted → active`) |
 
-Community and moderation:
+Channel assignment is survivor-driven — channels are auto-provisioned to assigned counsellor and legal counsel on signup and on first channel list fetch. `findOrCreate` makes this idempotent.
 
-- GET /api/community/rooms
-- POST /api/community/rooms (NGO_ADMIN only)
-- POST /api/community/rooms/:roomId/join
-- GET /api/community/rooms/:roomId/messages
-- POST /api/community/rooms/:roomId/messages
-- POST /api/community/messages/:messageId/report
-- DELETE /api/community/messages/:messageId
-- GET /api/community/moderation/reports
-- PATCH /api/community/moderation/reports/:reportId
+### Community
 
-Moderation action behavior:
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/community/rooms` | JWT | List rooms (sorted by latest activity) |
+| POST | `/api/community/rooms` | JWT (NGO_ADMIN) | Create a room |
+| POST | `/api/community/rooms/:roomId/join` | JWT | Join a room |
+| GET | `/api/community/rooms/:roomId/messages` | JWT | Get room messages |
+| POST | `/api/community/rooms/:roomId/messages` | JWT | Post a message |
+| POST | `/api/community/messages/:messageId/report` | JWT | Report a message |
+| DELETE | `/api/community/messages/:messageId` | JWT | Delete a message |
+| GET | `/api/community/moderation/reports` | JWT (NGO_ADMIN) | List moderation reports |
+| PATCH | `/api/community/moderation/reports/:reportId` | JWT (NGO_ADMIN) | Review a report (remove_message / ban_user / issue_warning) |
 
-- `remove_message` replaces message content with a moderation-safe placeholder.
-- `ban_user` sets the target account status to `BANNED` with reason, optional expiry, and a dual audit trail (ModerationActionLog + AuditLog). Also resolves the underlying content report atomically. The legacy `block_user`/`suspend_user` paths have been removed.
-- `issue_warning` writes a moderation log entry without account status changes.
-- All approved moderation actions write an audit-style moderation action record.
+Survivors appear by nickname only in room timelines. `ban_user` sets `accountStatus=BANNED` with full metadata and resolves the underlying report atomically.
 
-Community access model:
+### Admin
 
-- only authenticated users can list rooms
-- only NGO admins can create rooms
-- users must explicitly join a room before reading messages
-- survivors are rendered with nickname-only identities in room timelines
-- room list responses include latestMessageDispatchTimestamp per room
-- room list is sorted by latest activity (newest message first)
+All admin routes require a JWT.
 
-## Admin Feature Documentation
+#### NGO Admin
 
-### NGO Admin Dashboard
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/ngo/dashboard` | KPIs, case triage, staff workload, resource analytics |
+| PATCH | `/api/admin/ngo/reassignments` | Reassign a survivor's staff |
+| POST | `/api/admin/ngo/resources` | Create a support resource |
+| PATCH | `/api/admin/ngo/resources/:resourceId` | Update a support resource |
+| POST | `/api/admin/ngo/staff` | Provision a new staff account (COUNSELLOR / LEGAL_COUNSEL / NGO_ADMIN) |
+| PATCH | `/api/admin/ngo/staff/:userId/status` | Toggle staff ACTIVE / SUSPENDED |
+| PATCH | `/api/admin/ngo/users/:id/ban` | Ban a user account |
+| PATCH | `/api/admin/ngo/users/:id/unban` | Lift a ban |
+| GET | `/api/admin/search` | Search users/staff |
 
-Returned by GET /api/admin/ngo/dashboard:
+#### System Admin
 
-- overview KPIs and trend percentage
-- full 30-day report series (including zero-filled days)
-- report breakdowns by category, status, and county
-- urgent case list and moderation queue
-- community room/message metrics
-- staff workload and reassignment data
-- posted resources and resource usage analytics
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/system/dashboard` | Infrastructure status, uptime, DB latency, audit logs, staff directory |
+| GET | `/api/admin/system/logs` | Audit log entries |
+| POST | `/api/admin/system/runtime-action` | CLEAR_CACHE or RESTART_SERVER |
+| POST | `/api/admin/system/maintenance-mode` | Enable / disable maintenance mode |
 
-### System Admin Dashboard
+### Profile and Reassignment Requests
 
-Returned by GET /api/admin/system/dashboard:
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/profile` | JWT | Get authenticated user's profile |
+| PATCH | `/api/profile` | JWT | Update profile fields |
+| POST | `/api/reassignment-requests` | JWT | Submit a staff reassignment request |
+| GET | `/api/reassignment-requests` | JWT | List reassignment requests |
+| PATCH | `/api/reassignment-requests/:id` | JWT (NGO_ADMIN) | Approve or reject a request |
 
-- infrastructure status badge
-- uptime and DB latency
-- OTP gateway configuration status
-- live audit-derived logs
-- maintenance state (enabled, updatedAt, reason, expectedUntil)
-- runtime action timestamps (last cache clear/restart request)
-- system admin directory
-- all staff directory with password-reset-required indicator
-
-### Maintenance Mode
-
-Controlled by POST /api/admin/system/maintenance-mode.
-
-State fields:
-
-- enabled
-- updatedAt
-- reason
-- expectedUntil
-
-Runtime behavior:
-
-- middleware denies non-admin business traffic with HTTP 503
-- /api/system/public-status remains accessible
-- system admin routes remain accessible
-
-### Runtime Actions
-
-POST /api/admin/system/runtime-action supports:
-
-- CLEAR_CACHE: records timestamp and audit entry
-- RESTART_SERVER: records restart request, optionally exits process when ALLOW_ADMIN_RESTART=true
-
-### Staff Lifecycle Management
-
-Create staff:
-
-- POST /api/admin/ngo/staff
-- roles supported: COUNSELLOR, LEGAL_COUNSEL, NGO_ADMIN
-- automatically creates role-specific profile rows
-- marks account for forced first-login password reset
-- writes STAFF_ACCOUNT_CREATED audit entry
-
-Update staff status:
-
-- PATCH /api/admin/ngo/staff/:userId/status
-- statuses supported: ACTIVE, SUSPENDED (staff operational toggle; use ban endpoints for punitive enforcement)
-- blocks suspending own active system admin account
-- writes STAFF_ACCOUNT_SUSPENDED or STAFF_ACCOUNT_REACTIVATED audit entry
+---
 
 ## Socket Events
 
-Direct chat socket:
+### Direct Chat (`chatSocket`)
+
+JWT-authenticated. Server stores and relays only encrypted payloads — plaintext never leaves the client.
 
 Client emits:
 
-- joinChannel(chatId)
-- sendEncryptedMessage({ chatId, encryptedPayload })
+| Event | Payload |
+|-------|---------|
+| `joinChannel` | `chatId` |
+| `sendEncryptedMessage` | `{ chatId, encryptedPayload }` |
 
 Server emits:
 
-- receiveMessage(savedMessage)
-- messageError({ error })
+| Event | Payload |
+|-------|---------|
+| `receiveMessage` | Saved message object |
+| `messageError` | `{ error }` |
+| `presence:update` | `{ userId, status }` |
+| `message:delivered` | `{ messageId, deliveredAt }` |
+| `message:seen` | `{ chatId, seenAt }` |
 
-Community socket:
+On connect: joins `user:<userId>` personal room, marks presence online, runs delivery catch-up (bulk-sets `deliveredAt` for messages received while offline). On disconnect: marks presence offline.
 
-Client emits:
+### Community (`communitySocket`)
 
-- joinCommunityRoom(roomId)
-- joinModerationFeed()
+| Event | Direction | Description |
+|-------|-----------|-------------|
+| `joinCommunityRoom` | Client → Server | Join a room's broadcast group |
+| `joinModerationFeed` | Client → Server | Subscribe to moderation events |
+| `community:new-message` | Server → Client | New message broadcast |
+| `community:message-updated` | Server → Client | Message edited or moderated |
+| `community:message-deleted` | Server → Client | Message deleted |
+| `community:report-created` | Server → Client | New moderation report |
+| `community:report-reviewed` | Server → Client | Report actioned |
+| `community:error` | Server → Client | Error feedback |
 
-Server emits:
+### Notifications
 
-- community:new-message
-- community:message-updated
-- community:message-deleted
-- community:report-created
-- community:report-reviewed
-- community:error
+Real-time notifications are pushed to the user's personal `user:<userId>` room via the `notification:new` event. The frontend also polls every 30 seconds as a fallback.
+
+---
+
+## Testing
+
+```bash
+npm test               # Full test suite (runs serially with --runInBand)
+npm run test:auth      # Auth controller tests only
+npm run test:system    # System route smoke tests
+npm run test:watch     # Jest watch mode
+```
+
+---
 
 ## Demo Accounts (Seeded)
 
-- Survivor: +254711000001 / Survivor@2026!
-- Counsellor: +254700000020 / Counsellor@2026!
+| Role | Phone | Password |
+|------|-------|----------|
+| Survivor | +254711000001 | Survivor@2026! |
+| Counsellor | +254700000020 | Counsellor@2026! |
+
+---
 
 ## Troubleshooting
 
-- Port conflict on 5000: stop existing backend process using that port
-- 503 maintenance responses: check /api/system/public-status for active maintenance state
-- login denied with suspension error: verify accountStatus is ACTIVE
-- repeated auth failures: wait for lockout window or reset password
-- evidence URL issues: verify Cloudinary env vars
-- CORS failures: align FRONTEND_ORIGIN with active frontend URL
+| Symptom | Likely cause |
+|---------|-------------|
+| Port conflict on 5000 | Kill the existing process: `fuser -k 5000/tcp` |
+| 503 on all requests | Maintenance mode is active — check `/api/system/public-status` |
+| Login denied with suspension error | `accountStatus` is not `ACTIVE` |
+| Repeated auth failures / locked out | Wait for lockout window (default 15 min) or reset password |
+| "Data too long for column 'otpHash'" | `otpHash` column is narrower than 60 chars — run `ALTER TABLE userAccount MODIFY COLUMN otpHash VARCHAR(255)` or set `DB_SYNC_ALTER=true` for one boot |
+| Evidence URL errors | Verify `CLOUDINARY_*` env vars |
+| CORS failures | Align `FRONTEND_ORIGIN` with the active frontend URL |
+| USSD shows AT default message | ngrok has disconnected or the AT callback URL is wrong — see `docs/ussd.md` |
+| SMS OTP never arrives | Check `AFRICASTALKING_USERNAME` (`"sandbox"` routes to AT simulator, not real phones); set `SKIP_SMS_IN_DEV=true` to bypass SMS in dev |

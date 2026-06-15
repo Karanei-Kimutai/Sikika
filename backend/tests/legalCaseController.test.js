@@ -7,7 +7,7 @@
  * 1. saveDraft — access control, field validation, partial update
  * 2. updateCaseStatus — valid and invalid transitions
  * 3. generateDocument — Cloudinary-not-configured guard (returns 503)
- * 4. getDocumentAccessUrl — missing document guard (returns 404)
+ * 4. streamDocument — missing document guard (returns 404), streams PDF when document exists
  *
  * All DB interactions are mocked so no live database is required.
  */
@@ -67,10 +67,17 @@ jest.mock('../src/models', () => ({
 
 // ── Cloudinary mock ─────────────────────────────────────────────────────────
 
+// Mock stream returned by fetchPrivateAssetStream — must support .on() and .pipe().
+const mockStream = { on: jest.fn(), pipe: jest.fn() };
+
 jest.mock('../src/config/cloudinary', () => ({
   isCloudinaryConfigured: jest.fn(() => true),
   uploadLegalDocumentBuffer: jest.fn(async () => ({ public_id: 'legal-cases/legal-case-1/fake-uuid' })),
-  generateLegalDocumentSignedUrl: jest.fn(() => 'https://res.cloudinary.com/fake/legal-case-1.pdf')
+  fetchPrivateAssetStream: jest.fn(async () => ({
+    stream: mockStream,
+    contentType: 'application/pdf',
+    contentLength: '12345'
+  }))
 }));
 
 // ── PDF service mock ─────────────────────────────────────────────────────────
@@ -89,13 +96,13 @@ const {
   IncidentReport
 } = require('../src/models');
 
-const { isCloudinaryConfigured } = require('../src/config/cloudinary');
+const { isCloudinaryConfigured, fetchPrivateAssetStream } = require('../src/config/cloudinary');
 
 const {
   saveDraft,
   updateCaseStatus,
   generateDocument,
-  getDocumentAccessUrl
+  streamDocument
 } = require('../src/controllers/legalCaseController');
 
 // ── Helper: build a standard request ────────────────────────────────────────
@@ -112,7 +119,9 @@ function buildReq(overrides = {}) {
 function buildRes() {
   const res = {
     json: jest.fn(),
-    status: jest.fn().mockReturnThis()
+    status: jest.fn().mockReturnThis(),
+    setHeader: jest.fn(),
+    destroy: jest.fn()
   };
   return res;
 }
@@ -289,30 +298,43 @@ describe('generateDocument', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// 4. getDocumentAccessUrl
+// 4. streamDocument
 // ────────────────────────────────────────────────────────────────────────────
 
-describe('getDocumentAccessUrl', () => {
+describe('streamDocument', () => {
   it('returns 404 when no document has been generated yet', async () => {
     mockLegalCase.generatedDocumentPath = null;
     const req = buildReq();
     const res = buildRes();
 
-    await getDocumentAccessUrl(req, res);
+    await streamDocument(req, res);
 
     expect(res.status).toHaveBeenCalledWith(404);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.stringContaining('No document has been generated') }));
   });
 
-  it('returns a signed URL when a document exists', async () => {
+  it('streams PDF bytes with correct headers when a document exists', async () => {
     mockLegalCase.generatedDocumentPath = 'legal-cases/legal-case-1/fake-uuid';
     const req = buildReq();
     const res = buildRes();
 
-    await getDocumentAccessUrl(req, res);
+    await streamDocument(req, res);
 
-    expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({ signedUrl: expect.stringContaining('cloudinary'), expiresInSeconds: 300 })
+    // Verify fetchPrivateAssetStream was called with the stored public_id.
+    expect(fetchPrivateAssetStream).toHaveBeenCalledWith(
+      expect.objectContaining({ publicId: 'legal-cases/legal-case-1/fake-uuid', resourceType: 'raw' })
     );
+
+    // Headers must be set before piping.
+    expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'application/pdf');
+    expect(res.setHeader).toHaveBeenCalledWith(
+      'Content-Disposition',
+      expect.stringContaining(`legal-case-${LEGAL_CASE_ID}.pdf`)
+    );
+    expect(res.setHeader).toHaveBeenCalledWith('Content-Length', '12345');
+
+    // The stream should be piped to the response, not json().
+    expect(mockStream.pipe).toHaveBeenCalledWith(res);
+    expect(res.json).not.toHaveBeenCalled();
   });
 });

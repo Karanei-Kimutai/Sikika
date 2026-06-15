@@ -1,4 +1,5 @@
 const { randomUUID } = require("crypto");
+const https = require("https");
 const { v2: cloudinary } = require("cloudinary");
 
 /**
@@ -34,21 +35,28 @@ function assertCloudinaryConfigured() {
 /**
  * Uploads survivor report evidence as a private Cloudinary asset.
  *
- * We keep evidence private using `type: authenticated` and later expose
- * short-lived signed URLs via `generateEvidenceSignedUrl`.
+ * We keep evidence private using `type: authenticated` and stream files to
+ * the client via the backend proxy (`streamEvidenceFile`), so Cloudinary
+ * delivery URLs never reach the browser.
+ *
+ * Explicit resource_type mapping (via resolveCloudinaryResourceType) is used
+ * instead of "auto" to prevent Cloudinary from misclassifying PDFs as "image",
+ * which would cause a resource_type mismatch and break the proxy download.
  */
 function uploadEvidenceBuffer({ buffer, reportId, mimeType }) {
   assertCloudinaryConfigured();
 
   const publicId = `incident-reports/${reportId}/${randomUUID()}`;
-  void mimeType;
+
+  // Explicit mapping prevents auto-detect from misclassifying PDFs as "image".
+  const resourceType = resolveCloudinaryResourceType(mimeType);
 
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       {
         public_id: publicId,
         overwrite: false,
-        resource_type: "auto",
+        resource_type: resourceType,
         type: "authenticated"
       },
       (error, result) => {
@@ -66,28 +74,63 @@ function uploadEvidenceBuffer({ buffer, reportId, mimeType }) {
 }
 
 /**
+ * Maps a MIME type to the Cloudinary resource_type required for correct delivery.
+ *
+ * Cloudinary's "auto" detection misclassifies PDFs as "image" which breaks
+ * download URLs. Explicit mapping ensures the stored resource_type always
+ * matches what Cloudinary needs to serve the file correctly.
+ *
+ * - "image" : raster images (JPEG, PNG, WEBP)
+ * - "video" : audio and video (MP3, WAV, MP4) — Cloudinary uses "video" for both
+ * - "raw"   : everything else (PDF, DOC, DOCX, TXT)
+ *
+ * @param {string} mimeType - MIME type from the uploaded file.
+ * @returns {"image"|"video"|"raw"}
+ */
+function resolveCloudinaryResourceType(mimeType) {
+  const mime = String(mimeType || "").toLowerCase();
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("audio/") || mime.startsWith("video/")) return "video";
+  return "raw";
+}
+
+/**
  * Uploads a support-resource file to Cloudinary.
  *
  * Resource assets are grouped by category and resourceId to make moderation,
  * lifecycle cleanup, and Cloudinary console browsing easier.
  */
-function uploadSupportResourceBuffer({ buffer, resourceId, category, originalFileName }) {
+function uploadSupportResourceBuffer({ buffer, resourceId, category, originalFileName, mimeType }) {
   assertCloudinaryConfigured();
 
   const normalizedCategory = String(category || "general")
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9_-]/g, "-");
-  const safeName = String(originalFileName || randomUUID()).replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "-");
-  const publicId = `support-resources/${normalizedCategory}/${resourceId}/${safeName}-${randomUUID()}`;
+
+  const rawName = String(originalFileName || "");
+  const extMatch = rawName.match(/\.[^/.]+$/);
+  const ext = extMatch ? extMatch[0].toLowerCase() : "";
+  const baseName = rawName.replace(/\.[^/.]+$/, "") || randomUUID();
+  const safeName = baseName.replace(/[^a-zA-Z0-9_-]/g, "-");
+
+  // Extension is included in the public_id for raw resources so Cloudinary sets
+  // the correct Content-Type header on delivery (without it, files are served as
+  // application/octet-stream and browsers can't open them).
+  const publicId = `support-resources/${normalizedCategory}/${resourceId}/${safeName}-${randomUUID()}${ext}`;
+
+  // Use explicit resource_type instead of "auto" — Cloudinary misclassifies PDFs as "image".
+  const resourceType = resolveCloudinaryResourceType(mimeType);
 
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       {
         public_id: publicId,
         overwrite: false,
-        resource_type: "auto",
-        type: "upload"
+        resource_type: resourceType,
+        // Use authenticated delivery so signed URLs are required — this bypasses
+        // account-level restrictions that block raw file delivery on type: upload.
+        type: "authenticated"
       },
       (error, result) => {
         if (error) {
@@ -106,6 +149,10 @@ function uploadSupportResourceBuffer({ buffer, resourceId, category, originalFil
 /**
  * Deletes a previously uploaded support-resource asset from Cloudinary.
  *
+ * Support resources are stored with `type: "authenticated"`, so the destroy
+ * call must use the same type. Using `type: "upload"` would cause Cloudinary
+ * to return `"not found"` even when the asset exists, silently leaking it.
+ *
  * We accept `not found` as a successful cleanup outcome because records can
  * be deleted out-of-band in Cloudinary during operational maintenance.
  */
@@ -116,7 +163,7 @@ async function deleteSupportResourceAsset({ publicId, resourceType }) {
 
   const result = await cloudinary.uploader.destroy(publicId, {
     resource_type: resourceType || "raw",
-    type: "upload",
+    type: "authenticated",
     invalidate: true
   });
 
@@ -129,8 +176,8 @@ async function deleteSupportResourceAsset({ publicId, resourceType }) {
  * Uploads a generated legal case PDF as a private Cloudinary asset.
  *
  * Legal documents are stored with the same access model as incident evidence —
- * `type: authenticated` ensures direct public access is blocked. A short-lived
- * signed URL must be generated via `generateLegalDocumentSignedUrl` to open them.
+ * `type: authenticated` ensures direct public access is blocked. Files are
+ * delivered via the backend streaming proxy (GET /api/legal-cases/:id/document).
  *
  * Folder structure: legal-cases/<legalCaseId>/<uuid>
  *
@@ -212,12 +259,74 @@ function generateEvidenceSignedUrl({ publicId, evidenceType, expiresInSeconds = 
   });
 }
 
+/**
+ * Fetches a private Cloudinary asset and returns a readable stream plus
+ * response metadata so the caller can set all HTTP headers before piping.
+ *
+ * The caller MUST pipe the returned `stream` to the Express response after
+ * setting Content-Disposition, Content-Type, and Content-Length. Keeping
+ * header writes in the controller and piping last ensures no chunk is flushed
+ * before headers are sent.
+ *
+ * Used by all three private asset classes: support resources, report evidence,
+ * and legal-case PDFs. All are stored as `type: authenticated`.
+ *
+ * Uses Cloudinary's private_download_url to generate an API-credential-signed
+ * download URL, then fetches it server-side. This bypasses all Cloudinary
+ * account-level delivery restrictions because the request is made with API
+ * credentials rather than through the public delivery network.
+ *
+ * Follows up to one redirect (Cloudinary occasionally returns 302 on downloads).
+ *
+ * @param {{ publicId: string, resourceType: string }} options
+ * @returns {Promise<{ stream: import('http').IncomingMessage, contentType: string, contentLength: string|null }>}
+ */
+function fetchPrivateAssetStream({ publicId, resourceType }) {
+  assertCloudinaryConfigured();
+
+  const downloadUrl = cloudinary.utils.private_download_url(publicId, "", {
+    resource_type: resourceType || "raw",
+    type: "authenticated",
+    expires_at: Math.floor(Date.now() / 1000) + 300
+  });
+
+  return new Promise((resolve, reject) => {
+    function fetchUrl(url) {
+      https.get(url, (cloudinaryRes) => {
+        // Follow a single redirect if Cloudinary returns 301/302.
+        if ((cloudinaryRes.statusCode === 301 || cloudinaryRes.statusCode === 302) && cloudinaryRes.headers.location) {
+          cloudinaryRes.resume();
+          fetchUrl(cloudinaryRes.headers.location);
+          return;
+        }
+
+        if (cloudinaryRes.statusCode !== 200) {
+          reject(new Error(`Cloudinary returned HTTP ${cloudinaryRes.statusCode}`));
+          return;
+        }
+
+        // Resolve with the stream and metadata. The caller sets all headers
+        // first, then pipes — guaranteeing headers are written before data.
+        resolve({
+          stream: cloudinaryRes,
+          contentType: cloudinaryRes.headers["content-type"] || "application/octet-stream",
+          contentLength: cloudinaryRes.headers["content-length"] || null
+        });
+      }).on("error", reject);
+    }
+
+    fetchUrl(downloadUrl);
+  });
+}
+
 module.exports = {
   isCloudinaryConfigured,
   uploadEvidenceBuffer,
   generateEvidenceSignedUrl,
+  getResourceTypeForEvidence,
   uploadLegalDocumentBuffer,
   generateLegalDocumentSignedUrl,
   uploadSupportResourceBuffer,
-  deleteSupportResourceAsset
+  deleteSupportResourceAsset,
+  fetchPrivateAssetStream
 };
