@@ -7,7 +7,8 @@ const {
   listResources,
   createResource,
   updateResource,
-  deleteResource
+  deleteResource,
+  streamResourceFile
 } = require('../controllers/resourceController');
 const { SupportResource, ResourceAccessEvent } = require('../models');
 
@@ -44,6 +45,7 @@ const upload = multer({
  * - POST/PATCH/DELETE require auth and are RBAC-enforced in the controller.
  */
 router.get('/', listResources);
+router.get('/:resourceId/file', streamResourceFile);
 router.post('/', authMiddleware, upload.single('file'), createResource);
 router.patch('/:resourceId', authMiddleware, upload.single('file'), updateResource);
 router.delete('/:resourceId', authMiddleware, deleteResource);

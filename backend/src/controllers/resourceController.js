@@ -4,7 +4,8 @@ const { SupportResource, UserAccount } = require("../models");
 const {
   isCloudinaryConfigured,
   uploadSupportResourceBuffer,
-  deleteSupportResourceAsset
+  deleteSupportResourceAsset,
+  streamResourceToResponse
 } = require("../config/cloudinary");
 
 /**
@@ -210,7 +211,8 @@ async function createResource(req, res) {
       buffer: req.file.buffer,
       resourceId,
       category,
-      originalFileName: req.file.originalname
+      originalFileName: req.file.originalname,
+      mimeType: req.file.mimetype
     });
 
     const created = await SupportResource.create({
@@ -290,7 +292,8 @@ async function updateResource(req, res) {
         buffer: req.file.buffer,
         resourceId: resource.resourceId,
         category,
-        originalFileName: req.file.originalname
+        originalFileName: req.file.originalname,
+        mimeType: req.file.mimetype
       });
 
       previousPublicId = resource.cloudinaryPublicId;
@@ -373,9 +376,70 @@ async function deleteResource(req, res) {
   }
 }
 
+/**
+ * GET /api/resources/:resourceId/file
+ *
+ * Streams the resource file to the client via the backend, fetching it from
+ * Cloudinary using API credentials. This avoids exposing Cloudinary delivery
+ * URLs to the browser and bypasses account-level delivery restrictions that
+ * block raw/authenticated assets when accessed directly.
+ *
+ * Sets Content-Disposition to suggest the original filename for the download.
+ *
+ * @param {import('express').Request}  req
+ * @param {import('express').Response} res
+ */
+async function streamResourceFile(req, res) {
+  try {
+    const resource = await SupportResource.findByPk(req.params.resourceId, {
+      attributes: ["resourceId", "cloudinaryPublicId", "cloudinaryResourceType", "originalFileName", "mimeType"]
+    });
+
+    if (!resource) {
+      return res.status(404).json({ error: "Resource not found." });
+    }
+
+    if (!resource.cloudinaryPublicId) {
+      return res.status(404).json({ error: "No file is associated with this resource." });
+    }
+
+    if (!isCloudinaryConfigured()) {
+      return res.status(503).json({ error: "File storage is not configured." });
+    }
+
+    const safeName = encodeURIComponent(resource.originalFileName || "resource");
+    res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
+
+    if (resource.mimeType) {
+      res.setHeader("Content-Type", resource.mimeType);
+    }
+
+    const { contentLength } = await streamResourceToResponse(
+      {
+        publicId: resource.cloudinaryPublicId,
+        resourceType: resource.cloudinaryResourceType || "raw"
+      },
+      res
+    );
+
+    if (contentLength) {
+      res.setHeader("Content-Length", contentLength);
+    }
+  } catch (error) {
+    console.error("[resource] streamResourceFile error:", error.message);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        error: "Could not stream resource file.",
+        details: process.env.NODE_ENV === "production" ? undefined : error.message
+      });
+    }
+  }
+}
+
 module.exports = {
   listResources,
   createResource,
   updateResource,
-  deleteResource
+  deleteResource,
+  streamResourceFile
 };

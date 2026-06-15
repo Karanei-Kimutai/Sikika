@@ -93,6 +93,9 @@ function LibraryPage() {
     } catch {
       // Analytics should never block resource access.
     }
+
+    const apiBase = import.meta.env.VITE_API_BASE_URL || "";
+    window.open(`${apiBase}/api/resources/${resource.id}/file`, "_blank", "noreferrer");
   }
 
   useEffect(() => {
@@ -410,15 +413,13 @@ function LibraryPage() {
               </div>
 
               <div className="resource-tile-actions">
-                <a
+                <button
+                  type="button"
                   className="tile-action"
-                  href={resource.fileUrl}
-                  target="_blank"
-                  rel="noreferrer"
                   onClick={() => handleResourceOpen(resource)}
                 >
                   View / Download
-                </a>
+                </button>
 
                 {canManageResources && editingId !== resource.id && (
                   <div className="resource-manager-actions">
