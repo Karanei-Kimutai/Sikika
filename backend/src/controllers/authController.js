@@ -13,28 +13,77 @@ const {
 const { ensureAutoChannelsForSurvivor } = require('../services/chatAccessService');
 
 /**
- * Authentication controller
+ * authController.js
+ * -----------------
+ * Central authentication controller for the GBV Support Platform.
  *
- * Handles:
- * - OTP signup and OTP signin intents
- * - Password signin
- * - Forgot/reset password by OTP
- * - OTP expiry/retry limits and temporary lockouts
+ * Handles all authentication entry points:
+ * - OTP-based signup (phone verification + password creation)
+ * - OTP-based signin (for users who prefer not to type a password)
+ * - Password-based signin
+ * - Forgot-password OTP flow
+ * - In-session forced password set (for staff whose accounts are provisioned by an admin)
+ *
+ * Security model:
+ * - OTPs are bcrypt-hashed before storage; plaintext is never persisted.
+ * - OTPs are purpose-bound (SIGNUP_OTP / SIGNIN_OTP / PASSWORD_RESET) to prevent
+ *   cross-flow replay attacks (e.g. using a signup OTP to reset a password).
+ * - Both OTP and password paths share the same lockout mechanism:
+ *   5 consecutive failures trigger a 15-minute account lock (env-configurable).
+ * - BANNED accounts surface the ban reason in the response; SUSPENDED/DEACTIVATED
+ *   receive a generic message to avoid leaking enforcement metadata.
+ * - JWT tokens carry both `id` and `userId` for backwards compatibility with
+ *   middleware that may read either field.
+ *
+ * External dependency: Africa's Talking SMS API (sandbox or live, controlled by
+ * AFRICASTALKING_USERNAME). In local dev, set SKIP_SMS_IN_DEV=true to bypass
+ * the SMS send and receive the plaintext OTP in the response body instead.
  */
 
 const credentials = {
     apiKey: process.env.AFRICASTALKING_API_KEY,
     username: process.env.AFRICASTALKING_USERNAME
 };
+
+// SDK is initialised once at module load — not per request — to avoid
+// re-establishing the underlying HTTP client on every OTP send.
 const AfricasTalking = require('africastalking')(credentials);
 const sms = AfricasTalking.SMS;
 
-// Security knobs are env-driven so ops can tighten limits without code changes.
+// ---------------------------------------------------------------------------
+// Security knobs — all env-driven so ops can tighten limits without deploys.
+// ---------------------------------------------------------------------------
+
+/** How long (ms) an OTP remains valid before the user must request a new one. Default: 10 min. */
 const OTP_TTL_MS = Number(process.env.AUTH_OTP_TTL_MS || 10 * 60 * 1000);
+
+/** Maximum OTP verification attempts before the account is locked and the OTP is voided. Default: 5. */
 const OTP_MAX_ATTEMPTS = Number(process.env.AUTH_OTP_MAX_ATTEMPTS || 5);
+
+/** Maximum consecutive password failures before a temporary account lock. Default: 5. */
 const LOGIN_MAX_ATTEMPTS = Number(process.env.AUTH_LOGIN_MAX_ATTEMPTS || 5);
+
+/** How long (ms) an account stays locked after exhausting attempts. Default: 15 min. */
 const LOCKOUT_MS = Number(process.env.AUTH_LOCKOUT_MS || 15 * 60 * 1000);
 
+// ---------------------------------------------------------------------------
+// Auth stage and intent constants
+// ---------------------------------------------------------------------------
+
+/**
+ * AUTH_STAGES
+ * -----------
+ * Deterministic stage labels returned in every auth response so the frontend
+ * can branch without inspecting error messages or HTTP status codes.
+ *
+ * - OTP_VERIFICATION_REQUIRED   : OTP has been sent; frontend should show the OTP input.
+ * - PASSWORD_SETUP_REQUIRED     : OTP verified for first-time signup; frontend must collect password.
+ * - PASSWORD_RESET_REQUIRED     : Account flagged for forced reset (staff provisioned by admin).
+ * - SIGNUP_REQUIRED             : Phone has no completed account; user must sign up.
+ * - SIGNIN_REQUIRED             : Account already exists; user should sign in, not sign up.
+ * - PASSWORD_RESET_OTP_REQUIRED : Forgot-password OTP sent; frontend should show OTP + new-password fields.
+ * - AUTHENTICATED               : Auth complete; JWT issued; user may proceed.
+ */
 const AUTH_STAGES = {
     OTP_VERIFICATION_REQUIRED: 'OTP_VERIFICATION_REQUIRED',
     PASSWORD_SETUP_REQUIRED: 'PASSWORD_SETUP_REQUIRED',
@@ -45,18 +94,54 @@ const AUTH_STAGES = {
     AUTHENTICATED: 'AUTHENTICATED'
 };
 
+/**
+ * AUTH_INTENTS
+ * ------------
+ * Caller-supplied intent values that tell the OTP endpoints which flow is being
+ * executed. They are also stored as `otpPurpose` on the account so that verify-otp
+ * can confirm the OTP is being consumed in the same flow it was issued for.
+ *
+ * - SIGNUP_OTP      : OTP requested as part of new-account creation.
+ * - SIGNIN_OTP      : OTP requested as an alternative to password login.
+ * - PASSWORD_RESET  : OTP requested to authorize a forgotten-password reset.
+ */
 const AUTH_INTENTS = {
     SIGNIN_OTP: 'SIGNIN_OTP',
     SIGNUP_OTP: 'SIGNUP_OTP',
     PASSWORD_RESET: 'PASSWORD_RESET'
 };
 
-// Local/dev mode may bypass real SMS delivery while still exercising OTP flows.
+// ---------------------------------------------------------------------------
+// Utility helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * isLocalOtpMode
+ * --------------
+ * Returns true when the environment is configured for local development OTP bypass.
+ * In this mode, no SMS is sent via Africa's Talking; instead, the plaintext OTP
+ * is returned in the response body as `developmentOtp`.
+ *
+ * Both conditions must be true:
+ * - SKIP_SMS_IN_DEV=true (explicit opt-in)
+ * - NODE_ENV !== 'production' (safety guard: can never activate in prod)
+ *
+ * @returns {boolean}
+ */
 function isLocalOtpMode() {
     return process.env.SKIP_SMS_IN_DEV === 'true' && process.env.NODE_ENV !== 'production';
 }
 
-// Extracts a user-safe error summary from external provider/sdk errors.
+/**
+ * getSafeErrorMessage
+ * -------------------
+ * Extracts a human-readable error string from Africa's Talking SDK errors,
+ * which may be Axios HTTP errors (with a response body) or plain Error objects.
+ * Falls back to a generic string if no message can be extracted.
+ *
+ * @param {Error} error - The caught error from the SMS SDK or other async call.
+ * @returns {string} A user-safe error summary string.
+ */
 function getSafeErrorMessage(error) {
     return error.response?.data?.SMSMessageData?.Message ||
         error.response?.data?.message ||
@@ -65,7 +150,20 @@ function getSafeErrorMessage(error) {
         'Unknown error';
 }
 
-// Africa's Talking may return HTTP success while rejecting one or more recipients.
+/**
+ * getSmsDeliveryFailure
+ * ---------------------
+ * Africa's Talking can return HTTP 200 while still rejecting one or more
+ * recipients in the response body. This function inspects the recipients array
+ * and returns a failure description if any entry was not successfully delivered.
+ *
+ * A recipient is considered successful when:
+ * - status (case-insensitive) === 'success', OR
+ * - statusCode === 100 (submitted to carrier) or 101 (sent to handset)
+ *
+ * @param {object} smsResponse - The raw response object from sms.send().
+ * @returns {string|null} A failure description string, or null if all recipients succeeded.
+ */
 function getSmsDeliveryFailure(smsResponse) {
     const recipients = smsResponse?.SMSMessageData?.Recipients;
     if (!Array.isArray(recipients) || recipients.length === 0) {
@@ -90,6 +188,16 @@ function getSmsDeliveryFailure(smsResponse) {
     return `SMS delivery rejected: ${status} (code ${code}).`;
 }
 
+/**
+ * getCanonicalRole
+ * ----------------
+ * Returns the user's role from whichever field is populated. The model carries
+ * both `userRole` (ENUM, primary) and `role` (legacy string) for historical
+ * compatibility with older JWT payloads and seeded data.
+ *
+ * @param {UserAccount} user - UserAccount model instance or plain object.
+ * @returns {string} The user's role string.
+ */
 function getCanonicalRole(user) {
     return user.userRole || user.role;
 }
@@ -103,9 +211,9 @@ function getCanonicalRole(user) {
  * automatically blocks access without a code change.
  *
  * States blocked:
- * - SUSPENDED: temporary operational block (staff suspension, moderation).
- * - DEACTIVATED: soft-deleted account.
- * - BANNED: explicit NGO admin enforcement ban (may be time-limited).
+ * - SUSPENDED   : reversible operational block (e.g. staff temporarily deactivated by NGO admin).
+ * - DEACTIVATED : soft-deleted account.
+ * - BANNED      : explicit safety/moderation enforcement; may carry a time-limited expiry.
  *
  * IMPORTANT: for BANNED accounts, callers should surface banReason so the user
  * understands why access was denied rather than receiving a generic error.
@@ -123,11 +231,15 @@ function isAccountActive(user) {
  * liftExpiredBan
  * --------------
  * Checks whether a BANNED account has a past-expiry temporary ban and, if so,
- * auto-restores it to ACTIVE by clearing all ban fields.
+ * auto-restores it to ACTIVE by clearing all ban metadata fields.
  *
- * Called at login time and in authMiddleware. Shared here to avoid duplication.
+ * Called at the top of every auth check (verifyOTP, loginWithPassword) and also
+ * in authMiddleware so that a ban expiry is honoured on the very next request
+ * after the expiry time passes — no cron job required.
  *
- * @param {UserAccount} user - Sequelize UserAccount instance (must be loaded with ban fields).
+ * Permanent bans (banExpiresAt is null) are never auto-lifted.
+ *
+ * @param {UserAccount} user - Sequelize UserAccount instance loaded with ban fields.
  * @returns {Promise<boolean>} true if the ban was lifted and accountStatus changed to ACTIVE.
  */
 async function liftExpiredBan(user) {
@@ -147,7 +259,23 @@ async function liftExpiredBan(user) {
     return true;
 }
 
-// Normalizes accepted phone formats into a stable canonical representation.
+/**
+ * normalizePhoneNumber
+ * --------------------
+ * Converts a phone number in any common Kenyan format into a stable E.164
+ * canonical form (+254XXXXXXXXX) that Africa's Talking requires.
+ *
+ * Handled formats:
+ * - 0711000001    (local 10-digit starting with 0)  → +254711000001
+ * - 254711000001  (12-digit without plus)            → +254711000001
+ * - +254711000001 (already canonical)                → +254711000001
+ *
+ * Non-Kenyan numbers with a leading + are passed through as-is after stripping
+ * non-digit characters. Unrecognised formats are returned unchanged.
+ *
+ * @param {string} phoneNumber - Raw phone number string from user input.
+ * @returns {string} Normalized E.164 phone number, or empty string if input was blank.
+ */
 function normalizePhoneNumber(phoneNumber) {
     const raw = String(phoneNumber || '').trim();
     if (!raw) return '';
@@ -168,7 +296,16 @@ function normalizePhoneNumber(phoneNumber) {
     return hasPlus ? `+${digits}` : raw;
 }
 
-// Restricts supported intents to known enum-like constants.
+/**
+ * resolveAuthIntent
+ * -----------------
+ * Validates the caller-supplied authIntent string against known AUTH_INTENTS
+ * constants and returns the canonical value. Returns null for any unrecognised
+ * or missing value so callers can apply a safe default.
+ *
+ * @param {string} value - Raw authIntent string from the request body.
+ * @returns {string|null} A known AUTH_INTENTS value, or null.
+ */
 function resolveAuthIntent(value) {
     const raw = String(value || '').trim().toUpperCase();
     if (raw === AUTH_INTENTS.SIGNIN_OTP) return AUTH_INTENTS.SIGNIN_OTP;
@@ -177,7 +314,16 @@ function resolveAuthIntent(value) {
     return null;
 }
 
-// Issues stateless JWT auth token consumed by frontend and middleware.
+/**
+ * issueAuthToken
+ * --------------
+ * Signs and returns a 2-hour JWT containing the user's ID and role.
+ * Both `id` and `userId` are included in the payload for backwards compatibility
+ * with authMiddleware variants that may read either field.
+ *
+ * @param {UserAccount} user - Authenticated UserAccount instance.
+ * @returns {string} Signed JWT string.
+ */
 function issueAuthToken(user) {
     return jwt.sign(
         { id: user.userId, userId: user.userId, role: getCanonicalRole(user) },
@@ -186,19 +332,47 @@ function issueAuthToken(user) {
     );
 }
 
-// Returns true when account lockout is still active.
+/**
+ * isLocked
+ * --------
+ * Returns true if the account is currently under a temporary auth lockout
+ * (i.e. authLockUntil is set and is still in the future).
+ *
+ * @param {UserAccount} user - UserAccount instance.
+ * @returns {boolean}
+ */
 function isLocked(user) {
     return Boolean(user.authLockUntil && new Date(user.authLockUntil).getTime() > Date.now());
 }
 
-// Provides client-friendly countdown for lockout responses.
+/**
+ * getLockoutSecondsRemaining
+ * --------------------------
+ * Computes how many seconds remain in the current lockout period.
+ * Used to populate `retryAfterSeconds` in 423 responses so the frontend can
+ * display a countdown without polling.
+ *
+ * @param {UserAccount} user - UserAccount instance with authLockUntil set.
+ * @returns {number} Whole seconds remaining (0 if lock has already expired).
+ */
 function getLockoutSecondsRemaining(user) {
     if (!user.authLockUntil) return 0;
     const ms = new Date(user.authLockUntil).getTime() - Date.now();
     return ms > 0 ? Math.ceil(ms / 1000) : 0;
 }
 
-// Increments password failure counters and applies lockout threshold.
+/**
+ * registerPasswordFailure
+ * -----------------------
+ * Increments the per-account password failure counter and, when the threshold
+ * is reached, applies a temporary lockout.
+ *
+ * The failure counter is reset to 0 when the lockout is applied so that the
+ * next lockout period starts fresh rather than inheriting accumulated failures.
+ *
+ * @param {UserAccount} user - UserAccount instance (mutated and saved).
+ * @returns {Promise<void>}
+ */
 async function registerPasswordFailure(user) {
     user.authFailedAttempts = (user.authFailedAttempts || 0) + 1;
     if (user.authFailedAttempts >= LOGIN_MAX_ATTEMPTS) {
@@ -208,7 +382,16 @@ async function registerPasswordFailure(user) {
     await user.save();
 }
 
-// Clears lock/failure state after successful authentication.
+/**
+ * clearPasswordFailureState
+ * -------------------------
+ * Resets failure counters and clears any expired lockout after a successful
+ * password authentication. No-ops if the counters are already clean to avoid
+ * an unnecessary DB write.
+ *
+ * @param {UserAccount} user - UserAccount instance (conditionally mutated and saved).
+ * @returns {Promise<void>}
+ */
 async function clearPasswordFailureState(user) {
     if (!user.authFailedAttempts && !user.authLockUntil) return;
     user.authFailedAttempts = 0;
@@ -216,10 +399,22 @@ async function clearPasswordFailureState(user) {
     await user.save();
 }
 
-// Sets a fresh OTP with purpose, expiry, and reset attempt counter.
-// The plaintext code is hashed before storage so the DB never contains
-// readable OTPs — a critical requirement on a GBV safety platform where
-// DB exposure must not also expose user auth codes.
+/**
+ * setOtpForUser
+ * -------------
+ * Generates and stores a fresh OTP on the account:
+ * - Hashes the plaintext OTP with bcrypt (10 rounds) before storage so the DB
+ *   never contains a readable code — critical on a GBV safety platform where
+ *   a DB breach must not also expose active auth codes.
+ * - Stores the flow purpose so verifyOTP can confirm the OTP is being consumed
+ *   in the same flow it was issued for (cross-flow replay prevention).
+ * - Resets the OTP attempt counter so the new code gets a fresh 5-attempt budget.
+ *
+ * @param {UserAccount} user    - UserAccount instance (mutated and saved).
+ * @param {string}      otpCode - Plaintext 4-digit OTP string.
+ * @param {string}      purpose - One of AUTH_INTENTS (SIGNUP_OTP / SIGNIN_OTP / PASSWORD_RESET).
+ * @returns {Promise<void>}
+ */
 async function setOtpForUser(user, otpCode, purpose) {
     user.otpHash = await bcrypt.hash(otpCode, 10);
     user.otpPurpose = purpose;
@@ -228,7 +423,16 @@ async function setOtpForUser(user, otpCode, purpose) {
     await user.save();
 }
 
-// Removes any active OTP state after success, expiry, or exhaustion.
+/**
+ * clearOtpForUser
+ * ---------------
+ * Wipes all OTP-related fields on the account after the code has been
+ * consumed (successfully or by exhaustion/expiry). Ensures a code cannot
+ * be replayed after first use.
+ *
+ * @param {UserAccount} user - UserAccount instance (mutated and saved).
+ * @returns {Promise<void>}
+ */
 async function clearOtpForUser(user) {
     user.otpHash = null;
     user.otpPurpose = null;
@@ -237,7 +441,18 @@ async function clearOtpForUser(user) {
     await user.save();
 }
 
-// Tracks OTP verification failures and locks account on exhaustion.
+/**
+ * registerOtpFailure
+ * ------------------
+ * Increments the OTP attempt counter. When the limit is reached, the account
+ * is locked and the OTP is voided so the user must request a new code.
+ *
+ * Unlike password failures, OTP exhaustion clears authFailedAttempts before
+ * applying the lockout — the two counters track separate failure surfaces.
+ *
+ * @param {UserAccount} user - UserAccount instance (mutated and saved).
+ * @returns {Promise<{exhausted: boolean}>} exhausted: true when the OTP budget is spent.
+ */
 async function registerOtpFailure(user) {
     user.otpAttemptCount = (user.otpAttemptCount || 0) + 1;
     if (user.otpAttemptCount >= OTP_MAX_ATTEMPTS) {
@@ -251,7 +466,30 @@ async function registerOtpFailure(user) {
     return { exhausted: false };
 }
 
-// Sends OTP via SMS unless local/dev mode bypasses external provider calls.
+/**
+ * sendOtpSms
+ * ----------
+ * Sends the plaintext OTP to the given phone number via Africa's Talking SMS.
+ *
+ * Dev bypass: when SKIP_SMS_IN_DEV=true and NODE_ENV !== 'production', the
+ * Africa's Talking call is skipped entirely. The plaintext OTP is exposed in
+ * the API response body instead (see buildOtpResponse).
+ *
+ * Delivery verification: Africa's Talking can return HTTP 200 while rejecting
+ * a recipient. getSmsDeliveryFailure inspects the per-recipient status entries
+ * and throws if any failed.
+ *
+ * Error handling:
+ * - In production: all errors are re-thrown and result in HTTP 500.
+ * - In non-production: SMS errors are downgraded to a warning string. The OTP
+ *   is still stored and the request succeeds so dev/test flows are not blocked
+ *   by SMS provider configuration issues.
+ *
+ * @param {string} phoneNumber - Raw phone number (normalized internally).
+ * @param {string} otpCode     - Plaintext 4-digit OTP to embed in the SMS.
+ * @returns {Promise<string|null>} Warning string if SMS failed non-fatally in dev, else null.
+ * @throws {Error} In production if the SMS send fails or any recipient is rejected.
+ */
 async function sendOtpSms(phoneNumber, otpCode) {
     let warning = null;
     const recipient = normalizePhoneNumber(phoneNumber);
@@ -267,6 +505,7 @@ async function sendOtpSms(phoneNumber, otpCode) {
             message: `Your secure access code is: ${otpCode}. Do not share this code with anyone.`
         };
 
+        // Sender ID is optional; without it Africa's Talking uses a shared shortcode.
         if (senderId) {
             options.from = senderId;
         }
@@ -281,6 +520,7 @@ async function sendOtpSms(phoneNumber, otpCode) {
             const safeMessage = getSafeErrorMessage(error);
             let enrichedMessage = safeMessage;
 
+            // Enrich known Africa's Talking error codes with actionable guidance.
             if (safeMessage.includes('UserInBlacklist')) {
                 enrichedMessage = `${safeMessage}. Check Africa's Talking SMS sender/product configuration and recipient opt-out status.`;
             }
@@ -293,6 +533,8 @@ async function sendOtpSms(phoneNumber, otpCode) {
                 throw new Error(enrichedMessage);
             }
 
+            // Non-production: log and downgrade to a warning so the OTP flow is
+            // not blocked by SMS config issues during development or testing.
             warning = `SMS send failed in non-production mode: ${enrichedMessage}`;
             console.warn('SMS Warning:', warning);
         }
@@ -301,7 +543,22 @@ async function sendOtpSms(phoneNumber, otpCode) {
     return warning;
 }
 
-// Builds a consistent OTP API response payload for all OTP-request endpoints.
+/**
+ * buildOtpResponse
+ * ----------------
+ * Builds a consistent OTP API response payload used by all OTP-issuing endpoints.
+ * Conditionally includes warning (if SMS failed non-fatally) and developmentOtp
+ * (if in local OTP bypass mode) so the frontend and testers can access the code
+ * without checking an SMS simulator.
+ *
+ * @param {object} params
+ * @param {string} params.otpCode    - Plaintext OTP (only exposed in dev mode).
+ * @param {string|null} params.warning    - Non-fatal SMS warning, or null.
+ * @param {string} params.authStage  - AUTH_STAGES value for the frontend to branch on.
+ * @param {string} params.authIntent - AUTH_INTENTS value echoed back for context.
+ * @param {string} params.message    - Human-readable success message.
+ * @returns {object} Response payload object.
+ */
 function buildOtpResponse({ otpCode, warning, authStage, authIntent, message }) {
     const response = {
         message,
@@ -315,8 +572,16 @@ function buildOtpResponse({ otpCode, warning, authStage, authIntent, message }) 
     return response;
 }
 
-// Creates deterministic placeholder values for mandatory survivor profile fields
-// when signup currently collects only phone/password/OTP.
+/**
+ * buildDefaultSurvivorProfileFields
+ * ----------------------------------
+ * Creates deterministic placeholder values for mandatory SurvivorProfile fields
+ * when signup collects only phone, password, and OTP. These defaults ensure the
+ * profile row can always be created; the survivor can update them later.
+ *
+ * @param {UserAccount} user - The newly created UserAccount (userId used for nickname).
+ * @returns {object} Default profile field values.
+ */
 function buildDefaultSurvivorProfileFields(user) {
     const shortId = String(user.userId || '').replace(/-/g, '').slice(0, 6) || 'new';
     return {
@@ -327,6 +592,19 @@ function buildDefaultSurvivorProfileFields(user) {
     };
 }
 
+/**
+ * sanitizeSignupSurvivorProfileInput
+ * ------------------------------------
+ * Validates and sanitizes the optional profileDetails object submitted during
+ * OTP verification on signup. Merges caller-supplied values over safe defaults,
+ * enforcing field-level constraints (max lengths, ENUM safety, boolean coercion).
+ *
+ * Called only on the first-time SIGNUP_OTP verification path.
+ *
+ * @param {object|null} rawInput - profileDetails from the verify-otp request body.
+ * @param {UserAccount} user     - The UserAccount being signed up (used for fallback nickname).
+ * @returns {object} Sanitized profile fields safe to pass to SurvivorProfile.create().
+ */
 function sanitizeSignupSurvivorProfileInput(rawInput, user) {
     const input = rawInput && typeof rawInput === 'object' ? rawInput : {};
 
@@ -344,10 +622,26 @@ function sanitizeSignupSurvivorProfileInput(rawInput, user) {
     };
 }
 
-// Picks least-loaded staff member, preferring currently AVAILABLE or BUSY workers,
-// then falling back to any profile if all staff are OFFLINE.
-// Assumption: staff profiles are provisioned via NGO admin user-management flows.
-// Signup logic here never promotes survivor role; it only links existing staff.
+/**
+ * pickLeastLoadedStaff
+ * --------------------
+ * Selects the staff member with the lowest currentWorkloadScore for auto-assignment
+ * to a new survivor.
+ *
+ * Preference order:
+ * 1. Staff currently AVAILABLE or BUSY (i.e. online and reachable).
+ * 2. If no preferred staff are found, falls back to any staff member regardless
+ *    of availability status — ensures assignment always succeeds even when all
+ *    staff are OFFLINE.
+ *
+ * Tie-breaking: ascending primary key ensures deterministic selection when scores
+ * are equal, preventing random assignment drift.
+ *
+ * @param {Model}  ProfileModel - Sequelize model (CounsellorProfile or LegalCounselProfile).
+ * @param {string} idField      - The PK field name for that profile ('counsellorId' / 'legalCounselId').
+ * @param {Transaction} transaction - Active Sequelize transaction.
+ * @returns {Promise<Model|null>} The selected staff profile instance, or null if none exist.
+ */
 async function pickLeastLoadedStaff(ProfileModel, idField, transaction) {
     const preferred = await ProfileModel.findOne({
         where: { availabilityStatus: { [Op.in]: ['AVAILABLE', 'BUSY'] } },
@@ -369,8 +663,28 @@ async function pickLeastLoadedStaff(ProfileModel, idField, transaction) {
     });
 }
 
-// Ensures every newly completed survivor signup has a survivor profile, auto-assigned
-// counsellor/legal counsel, and an assignment history record for auditing.
+/**
+ * ensureSurvivorStaffAutoAssignment
+ * ----------------------------------
+ * Idempotently creates a SurvivorProfile for a newly verified survivor and
+ * auto-assigns the least-loaded counsellor and legal counsel.
+ *
+ * All writes happen inside a single Sequelize transaction so a partial failure
+ * (e.g. workload score update fails) rolls back the entire assignment rather
+ * than leaving the system in an inconsistent state.
+ *
+ * Side effects (all within the transaction):
+ * 1. Creates SurvivorProfile with sanitized profile fields and assignment FKs.
+ * 2. Increments currentWorkloadScore on both assigned staff profiles.
+ * 3. Writes a StaffAssignmentHistory record for audit purposes.
+ *
+ * Idempotent: if a SurvivorProfile already exists for this userId (e.g. due to
+ * a duplicate request), it is returned as-is without re-assigning staff.
+ *
+ * @param {UserAccount} user              - The verified UserAccount.
+ * @param {object|null} profileOverrides  - Sanitized profile fields from signup form (may be null).
+ * @returns {Promise<SurvivorProfile>} The created (or existing) SurvivorProfile instance.
+ */
 async function ensureSurvivorStaffAutoAssignment(user, profileOverrides = null) {
     return sequelize.transaction(async (transaction) => {
         const existingProfile = await SurvivorProfile.findOne({
@@ -419,11 +733,34 @@ async function ensureSurvivorStaffAutoAssignment(user, profileOverrides = null) 
     });
 }
 
+// ---------------------------------------------------------------------------
+// Route handlers (exported)
+// ---------------------------------------------------------------------------
+
 /**
  * POST /api/auth/request-otp
+ * --------------------------
+ * Entry point for both OTP-based signup and OTP-based signin. The caller
+ * supplies an `authIntent` to indicate which flow they are starting; the
+ * server validates this against the account state and rejects mismatches
+ * (e.g. trying to sign up with a phone that already has an account).
  *
- * Supports both signup and signin OTP intents and returns a stage/intent pair
- * the frontend can branch on deterministically.
+ * Signup path (SIGNUP_OTP):
+ * - If no account exists for the phone, a shell UserAccount is created
+ *   immediately (role: SURVIVOR, status: ACTIVE, no password yet).
+ * - If an account already has a password, returns 409 SIGNIN_REQUIRED.
+ *
+ * Signin path (SIGNIN_OTP):
+ * - If no completed account exists (no hashedPassword), returns 409 SIGNUP_REQUIRED.
+ *
+ * Both paths:
+ * - Check for an active lockout before generating a new OTP.
+ * - Generate a 4-digit OTP, bcrypt-hash it, and store it with purpose + expiry.
+ * - Send the plaintext OTP via SMS (or expose it in response body in dev mode).
+ * - Return authStage: OTP_VERIFICATION_REQUIRED so the frontend shows the OTP input.
+ *
+ * @param {import('express').Request}  req - Body: { phoneNumber, authIntent }
+ * @param {import('express').Response} res
  */
 const requestOTP = async (req, res) => {
     const { phoneNumber, authIntent } = req.body;
@@ -457,7 +794,8 @@ const requestOTP = async (req, res) => {
         }
 
         if (!user) {
-            // Signup may bootstrap a survivor account during OTP request.
+            // No account exists — create a shell account for the signup flow.
+            // Role is always SURVIVOR here; staff accounts are provisioned by NGO/system admins.
             user = await UserAccount.create({
                 phoneNumber: normalizedPhone,
                 userRole: 'SURVIVOR',
@@ -475,6 +813,9 @@ const requestOTP = async (req, res) => {
         }
 
         const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
+
+        // If intent was not supplied, infer it from account state:
+        // accounts without a password are in the signup flow; those with one are signing in.
         const effectiveIntent = resolvedIntent || (user.hashedPassword ? AUTH_INTENTS.SIGNIN_OTP : AUTH_INTENTS.SIGNUP_OTP);
 
         await setOtpForUser(user, otpCode, effectiveIntent);
@@ -496,10 +837,38 @@ const requestOTP = async (req, res) => {
 
 /**
  * POST /api/auth/verify-otp
+ * -------------------------
+ * Second step for both the signup and OTP-signin flows. Validates the submitted
+ * OTP and, on success, either completes signup or issues an auth token.
  *
- * Verifies OTP against purpose+expiry, applies retry limits, and then:
- * - completes signup (when password provided for first-time account)
- * - or authenticates existing account by OTP signin
+ * Signup completion (SIGNUP_OTP, first-time account):
+ * - Requires `password` (min 8 chars) in the body — this is the moment the
+ *   survivor sets their password.
+ * - Calls ensureSurvivorStaffAutoAssignment to create the SurvivorProfile,
+ *   auto-assign counsellor and legal counsel, and write the assignment history
+ *   record — all in a single transaction.
+ * - Calls ensureAutoChannelsForSurvivor to eagerly provision direct chat
+ *   channels to both assigned staff so they are immediately visible.
+ *
+ * OTP signin (SIGNIN_OTP, existing account):
+ * - No profile creation or staff assignment; those already exist.
+ * - Clears OTP state and issues a JWT directly.
+ *
+ * Both paths:
+ * - Auto-lift expired temporary bans before any access check.
+ * - Reject BANNED / SUSPENDED / DEACTIVATED accounts (with reason for BANNED).
+ * - Enforce lockout: reject if authLockUntil is still in the future.
+ * - Validate OTP purpose matches the active intent (cross-flow replay prevention).
+ * - Validate OTP expiry (10 minutes from issue).
+ * - bcrypt.compare the submitted OTP against the stored hash.
+ * - On failure: increment attempt counter; lock and void OTP at exhaustion.
+ * - On success: clear OTP state, reset failure counters, issue 2-hour JWT.
+ * - If account.status === 'password_reset_required': return
+ *   authStage: PASSWORD_RESET_REQUIRED with the token; frontend must call
+ *   POST /api/auth/set-password before normal navigation is permitted.
+ *
+ * @param {import('express').Request}  req - Body: { phoneNumber, otp, password?, authIntent?, profileDetails? }
+ * @param {import('express').Response} res
  */
 const verifyOTP = async (req, res) => {
     const { phoneNumber, otp, password, authIntent, profileDetails } = req.body;
@@ -555,6 +924,7 @@ const verifyOTP = async (req, res) => {
             return res.status(401).json({ error: 'Invalid OTP.' });
         }
 
+        // Catch intent/state mismatches that could arise from concurrent requests.
         if (effectiveIntent === AUTH_INTENTS.SIGNUP_OTP && user.hashedPassword) {
             await clearOtpForUser(user);
             return res.status(409).json({
@@ -592,24 +962,24 @@ const verifyOTP = async (req, res) => {
         user.isOtpVerified = true;
         user.authLockUntil = null;
         user.authFailedAttempts = 0;
-        await clearOtpForUser(user);
+        await clearOtpForUser(user); // also calls user.save()
         await user.save();
 
         if (effectiveIntent === AUTH_INTENTS.SIGNUP_OTP && isFirstTimeSignup) {
             // Signup completion bundles three side effects:
-            // 1) sanitize/persist survivor profile fields from onboarding UI,
-            // 2) auto-assign counsellor/legal counsel based on workload,
-            // 3) pre-create direct chat channels for immediate visibility.
+            // 1) sanitize/persist survivor profile fields from the onboarding UI
+            // 2) auto-assign least-loaded counsellor and legal counsel
+            // 3) pre-create direct chat channels for immediate visibility on the chat page
             const sanitizedProfileInput = sanitizeSignupSurvivorProfileInput(profileDetails, user);
             const survivorProfile = await ensureSurvivorStaffAutoAssignment(user, sanitizedProfileInput);
-
-            // Eagerly provision direct-chat channels so assigned counsellor/legal counsel
-            // and the survivor can see each other immediately on the chat page.
             await ensureAutoChannelsForSurvivor(survivorProfile);
         }
 
         const token = issueAuthToken(user);
 
+        // Staff accounts provisioned by an admin arrive here with status='password_reset_required'.
+        // Return the token but signal that the frontend must enforce a password change before
+        // allowing normal navigation.
         if (String(user.status || '').toLowerCase() === 'password_reset_required') {
             return res.status(200).json({
                 message: 'Password reset is required before first access.',
@@ -639,8 +1009,25 @@ const verifyOTP = async (req, res) => {
 
 /**
  * POST /api/auth/login-password
+ * -----------------------------
+ * Password-based signin. An alternative to OTP signin for users who prefer
+ * to authenticate with their password directly.
  *
- * Password-based sign in with per-account failure counters and temporary lock.
+ * Flow:
+ * - Normalizes phone number and fetches the account.
+ * - Returns a generic 401 (no account vs wrong password are indistinguishable)
+ *   to prevent account enumeration.
+ * - Auto-lifts any expired temporary ban.
+ * - Rejects BANNED / SUSPENDED / DEACTIVATED accounts.
+ * - Rejects accounts under an active lockout (returns seconds remaining).
+ * - bcrypt.compare against hashedPassword.
+ * - On failure: calls registerPasswordFailure (increments counter, locks at threshold).
+ * - On success: calls clearPasswordFailureState, issues a 2-hour JWT.
+ * - If account.status === 'password_reset_required': returns
+ *   authStage: PASSWORD_RESET_REQUIRED; frontend must call POST /api/auth/set-password.
+ *
+ * @param {import('express').Request}  req - Body: { phoneNumber, password }
+ * @param {import('express').Response} res
  */
 const loginWithPassword = async (req, res) => {
     const { phoneNumber, password } = req.body;
@@ -653,6 +1040,8 @@ const loginWithPassword = async (req, res) => {
 
         const user = await UserAccount.findOne({ where: { phoneNumber: normalizedPhone } });
 
+        // Generic rejection: do not distinguish "no account" from "wrong password"
+        // to prevent callers from enumerating which phone numbers are registered.
         if (!user || !user.hashedPassword) {
             return res.status(401).json({ error: 'Invalid credentials.' });
         }
@@ -715,9 +1104,19 @@ const loginWithPassword = async (req, res) => {
 
 /**
  * POST /api/auth/forgot-password/request
+ * ----------------------------------------
+ * Initiates the forgot-password flow by sending a PASSWORD_RESET OTP to the
+ * account's registered phone number.
  *
- * Sends password-reset OTP for existing accounts while keeping response shape
- * generic enough to avoid account enumeration.
+ * Response shape is intentionally generic regardless of whether the phone number
+ * is registered: always HTTP 200 with the same message. This prevents account
+ * enumeration — a caller cannot determine whether a phone number has an account.
+ *
+ * If the account does not exist or has no hashedPassword (incomplete signup),
+ * the response is identical to a success but no OTP is generated or sent.
+ *
+ * @param {import('express').Request}  req - Body: { phoneNumber }
+ * @param {import('express').Response} res
  */
 const requestPasswordReset = async (req, res) => {
     const { phoneNumber } = req.body;
@@ -729,6 +1128,9 @@ const requestPasswordReset = async (req, res) => {
         }
 
         const user = await UserAccount.findOne({ where: { phoneNumber: normalizedPhone } });
+
+        // Return a generic success response even when no account exists —
+        // prevents enumeration of registered phone numbers.
         if (!user || !user.hashedPassword) {
             return res.status(200).json({
                 message: 'If an account exists for this number, a reset code has been sent.',
@@ -764,8 +1166,18 @@ const requestPasswordReset = async (req, res) => {
 
 /**
  * POST /api/auth/forgot-password/reset
+ * --------------------------------------
+ * Second step of the forgot-password flow. Validates the PASSWORD_RESET OTP
+ * and writes the new hashed password to the account.
  *
- * Validates reset OTP and writes a new hashed password.
+ * On success:
+ * - The new password is bcrypt-hashed and saved.
+ * - All failure counters and lockout state are cleared.
+ * - OTP state is cleared so the code cannot be replayed.
+ * - Returns HTTP 200 with a success message (no token; user must sign in again).
+ *
+ * @param {import('express').Request}  req - Body: { phoneNumber, otp, newPassword }
+ * @param {import('express').Response} res
  */
 const resetPasswordWithOtp = async (req, res) => {
     const { phoneNumber, otp, newPassword } = req.body;
@@ -785,6 +1197,7 @@ const resetPasswordWithOtp = async (req, res) => {
             return res.status(401).json({ error: 'Invalid reset request.' });
         }
 
+        // OTP must exist and must have been issued for the PASSWORD_RESET flow specifically.
         if (!user.otpHash || user.otpPurpose !== AUTH_INTENTS.PASSWORD_RESET) {
             return res.status(401).json({ error: 'Invalid or expired OTP.' });
         }
@@ -819,8 +1232,23 @@ const resetPasswordWithOtp = async (req, res) => {
 
 /**
  * POST /api/auth/set-password
+ * ---------------------------
+ * Authenticated endpoint for in-session password changes. Used in two scenarios:
  *
- * Authenticated password set/reset endpoint for in-session users.
+ * 1. Staff first login: an NGO/system admin creates a staff account with
+ *    status='password_reset_required'. On first login, the auth response includes
+ *    authStage: PASSWORD_RESET_REQUIRED and the frontend gates all navigation
+ *    until this endpoint is called successfully.
+ *
+ * 2. Any authenticated user choosing to change their password in-session
+ *    (no current-password verification required — this endpoint trusts the JWT).
+ *
+ * On success, account status is set to 'active' to clear the forced-reset gate.
+ *
+ * Requires: valid JWT in the Authorization header (enforced by authMiddleware).
+ *
+ * @param {import('express').Request}  req - Body: { password }; req.user populated by authMiddleware.
+ * @param {import('express').Response} res
  */
 const setPassword = async (req, res) => {
     const { password } = req.body;
@@ -836,6 +1264,7 @@ const setPassword = async (req, res) => {
         }
 
         user.hashedPassword = await bcrypt.hash(password, 10);
+        // Clear the forced-reset gate so subsequent logins proceed normally.
         user.status = 'active';
         await user.save();
 
