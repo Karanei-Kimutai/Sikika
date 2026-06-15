@@ -206,7 +206,8 @@ You can watch requests hit your server in the ngrok terminal, and also open the 
 ### Important ngrok limitations
 
 - **Free tier URLs are temporary.** Every time you restart ngrok you get a new URL, and you must update the callback URL in the AT dashboard.
-- **Sessions drop on inactivity.** If ngrok disconnects, AT will show the default fallback message ("You have reached Africa's Talking USSD Services...") instead of your menu. Restart ngrok and update the AT callback URL when this happens.
+- **No session time limit.** The tunnel stays alive indefinitely as long as the `ngrok http 5000` process keeps running — it does not expire after a fixed time.
+- **Sessions drop if the process dies.** If the terminal is closed or ngrok crashes, AT will show the default fallback message ("You have reached Africa's Talking USSD Services...") instead of your menu. Restart ngrok and update the AT callback URL when this happens.
 - **One tunnel at a time** on the free plan.
 
 ---
