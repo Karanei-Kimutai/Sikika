@@ -152,7 +152,7 @@ Clears auth state and navigates to Google. Auto-collapses after 3 seconds of ina
 
 ### Fallback Data (`frontend/src/data/fallbackResources.js`)
 
-Static resource list shown in the Library when the backend is unreachable.
+Static resource list shown in the Library when the backend is unreachable. Full module documentation in `docs/resource-management.md`.
 
 ## Key Cross-Cutting Behaviors
 
