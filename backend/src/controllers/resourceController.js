@@ -90,12 +90,31 @@ async function getActorContext(req) {
   };
 }
 
+/**
+ * Determines whether an authenticated actor is permitted to mutate a resource.
+ *
+ * NGO Admins can manage any resource. Other staff roles are limited to
+ * resources they personally uploaded.
+ *
+ * @param {{ userId: string, role: string }} actor
+ * @param {import('../models/supportResource')} resource
+ * @returns {boolean}
+ */
 function canManageTargetResource(actor, resource) {
   if (actor.role === "NGO_ADMIN") return true;
   return String(resource.uploadedByStaffId) === String(actor.userId);
 }
 
-// Maps DB fields to the stable API shape consumed by frontend pages.
+/**
+ * Transforms a Sequelize SupportResource instance into the stable API shape
+ * expected by every frontend consumer.
+ *
+ * Keeping the mapping in one place means DB column renames only require a
+ * single change, not edits across all calling controllers.
+ *
+ * @param {import('../models/supportResource')} resource
+ * @returns {{ id: string, title: string, description: string, category: string, categoryLabel: string, fileUrl: string, uploadedAt: Date, uploaderId: string }}
+ */
 function toApiResource(resource) {
   return {
     id: resource.resourceId,

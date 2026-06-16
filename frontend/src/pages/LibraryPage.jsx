@@ -5,6 +5,15 @@ import { getToken, getUserId } from "../utils/auth";
 
 const MANAGEMENT_ROLES = new Set(["COUNSELLOR", "LEGAL_COUNSEL", "NGO_ADMIN"]);
 
+/**
+ * Decodes the role claim from the JWT stored in sessionStorage.
+ *
+ * Role is read from the token payload rather than state to avoid prop drilling
+ * from the top-level auth shell. The backend re-validates role on every mutating
+ * request, so a tampered token cannot escalate permissions.
+ *
+ * @returns {string} Uppercase role string (e.g. "COUNSELLOR") or "" if absent.
+ */
 function decodeRoleFromToken() {
   const token = getToken();
   if (!token) return "";
@@ -17,6 +26,15 @@ function decodeRoleFromToken() {
   }
 }
 
+/**
+ * Returns the current user's ID from sessionStorage or the JWT payload.
+ *
+ * Checks the sessionStorage key first (written at login), then falls back
+ * to decoding the JWT. Used to determine which resources the current staff
+ * member uploaded and may therefore edit or delete.
+ *
+ * @returns {string} userId string or "" if the session is absent.
+ */
 function getCurrentUserId() {
   const explicitUserId = getUserId();
   if (explicitUserId) return explicitUserId;
@@ -33,11 +51,16 @@ function getCurrentUserId() {
 }
 
 /**
- * Public resource library page.
+ * Client-side resource filter used in fallback mode only.
  *
- * Resources are loaded from the backend when available. During early
- * development, the page falls back to local sample resources so the UI remains
- * usable before the database/API is running.
+ * When the backend is unreachable, resources are sourced from
+ * `fallbackResources.js` and filtered here. In normal mode the backend
+ * applies the same logic and returns pre-filtered results.
+ *
+ * @param {{ title: string, description: string, categoryLabel: string, category: string }} resource
+ * @param {string} searchQuery - Raw text from the search input.
+ * @param {string} category    - Active category tab value, or "all".
+ * @returns {boolean}
  */
 function matchesResource(resource, searchQuery, category) {
   const normalizedSearch = searchQuery.trim().toLowerCase();
@@ -54,6 +77,22 @@ function matchesResource(resource, searchQuery, category) {
   );
 }
 
+/**
+ * Public resource library page.
+ *
+ * Renders the full support-resource library accessible to all visitors.
+ * Staff roles (COUNSELLOR, LEGAL_COUNSEL, NGO_ADMIN) additionally see a
+ * management panel for uploading and editing their own resources; NGO Admins
+ * can manage any resource regardless of uploader.
+ *
+ * Data flow:
+ *  - Backend is the source of truth; resources re-fetch on search/category change.
+ *  - When the backend is unreachable, `fallbackResources.js` is shown with a
+ *    warning banner; file links open directly rather than through the proxy.
+ *  - File delivery routes through the backend streaming proxy
+ *    (`GET /api/resources/:id/file`) so Cloudinary signed URLs never reach
+ *    the browser.
+ */
 function LibraryPage() {
   const role = decodeRoleFromToken();
   const currentUserId = getCurrentUserId();
@@ -91,6 +130,16 @@ function LibraryPage() {
   // must open fileUrl directly instead of going through the proxy.
   const [usingFallback, setUsingFallback] = useState(false);
 
+  /**
+   * Fires a best-effort analytics event then opens the resource file.
+   *
+   * In normal mode the file is served through the backend proxy to avoid
+   * exposing Cloudinary delivery URLs. In fallback mode the static fileUrl
+   * from `fallbackResources.js` is opened directly because the proxy is
+   * unavailable and the fallback IDs do not exist in the DB.
+   *
+   * @param {{ id: string, fileUrl: string }} resource
+   */
   async function handleResourceOpen(resource) {
     try {
       if (resource?.id) {
@@ -170,6 +219,13 @@ function LibraryPage() {
     return resources.filter((resource) => resource.uploaderId === currentUserId);
   }, [canManageResources, currentUserId, resources]);
 
+  /**
+   * Refreshes the resource list using the current search and category state.
+   *
+   * Called after any successful create/update/delete so the grid reflects the
+   * new state without requiring a full page reload. Always clears the fallback
+   * flag because a successful API call confirms the backend is reachable.
+   */
   async function reloadResourcesForCurrentFilters() {
     const data = await getResources({
       search: searchQuery,
@@ -182,11 +238,20 @@ function LibraryPage() {
     setUsingFallback(false);
   }
 
+  /** Clears both the error and success banners in the management panel. */
   function clearManagementNotices() {
     setManagementError("");
     setManagementSuccess("");
   }
 
+  /**
+   * Populates inline edit state and sets the active editing resource ID.
+   *
+   * Incrementing `editFileInputKey` resets the file input element so the
+   * previously chosen file is cleared when switching between edit targets.
+   *
+   * @param {{ id: string, title: string, description: string, category: string }} resource
+   */
   function startEdit(resource) {
     clearManagementNotices();
     setEditingId(resource.id);
@@ -197,6 +262,7 @@ function LibraryPage() {
     setEditFileInputKey((value) => value + 1);
   }
 
+  /** Collapses the inline edit panel and discards all unsaved changes. */
   function cancelEdit() {
     setEditingId("");
     setEditTitle("");
@@ -205,6 +271,15 @@ function LibraryPage() {
     setEditFile(null);
   }
 
+  /**
+   * Submits the upload form and creates a new support resource.
+   *
+   * Validates required fields client-side before calling the API to avoid
+   * wasting a multipart upload round-trip on obviously incomplete data. The
+   * file input key is incremented after success to reset the native input.
+   *
+   * @param {React.FormEvent<HTMLFormElement>} event
+   */
   async function handleCreateResource(event) {
     event.preventDefault();
     clearManagementNotices();
@@ -238,6 +313,14 @@ function LibraryPage() {
     }
   }
 
+  /**
+   * Saves changes to an existing resource, then collapses the edit panel.
+   *
+   * Sends metadata and an optional replacement file. If no new file is chosen,
+   * the existing Cloudinary asset is retained and only the metadata changes.
+   *
+   * @param {string} resourceId - UUID of the resource being updated.
+   */
   async function handleSaveEdit(resourceId) {
     clearManagementNotices();
 
@@ -266,6 +349,14 @@ function LibraryPage() {
     }
   }
 
+  /**
+   * Prompts the user for confirmation, then permanently deletes the resource.
+   *
+   * If the deleted resource was open in the inline editor, the editor is
+   * dismissed. The backend deletes both the DB row and the Cloudinary asset.
+   *
+   * @param {{ id: string, title: string }} resource
+   */
   async function handleDeleteResource(resource) {
     clearManagementNotices();
 

@@ -15,8 +15,15 @@ const { SupportResource, ResourceAccessEvent } = require('../models');
 const router = express.Router();
 
 /**
- * Multer in-memory storage is used so files can be streamed directly to
- * Cloudinary without touching local disk.
+ * Attempts to extract the authenticated user's ID from the request's
+ * Authorization header without enforcing authentication.
+ *
+ * Used exclusively by the track-access endpoint, which accepts anonymous
+ * opens (no token present) and authenticated opens alike — the caller
+ * records null when no valid token is found.
+ *
+ * @param {import('express').Request} req
+ * @returns {string|null} The userId/id claim from the JWT, or null.
  */
 function tryExtractUserId(req) {
   const header = req.headers.authorization || '';
