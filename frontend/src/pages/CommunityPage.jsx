@@ -89,6 +89,9 @@ function CommunityPage() {
 
   const currentUserId = getUserId();
   const isNgoAdmin = currentUserRole === "NGO_ADMIN";
+  // Moderators share Community Chat oversight (delete/moderate) with NGO admins,
+  // but cannot create rooms — that stays an NGO Admin-only operational action.
+  const canModerate = isNgoAdmin || currentUserRole === "MODERATOR";
   const activeRoom = rooms.find((room) => room.roomId === activeRoomId) || null;
   // Membership gate: only joined rooms can load/render message history.
   const canAccessActiveRoom = Boolean(activeRoom?.joined);
@@ -530,6 +533,12 @@ function CommunityPage() {
                       {message.senderUserId === currentUserId && (
                         <button type="button" onClick={() => handleDeleteMessageClick(message.communityMessageId)}>
                           Delete My Message
+                        </button>
+                      )}
+
+                      {message.senderUserId !== currentUserId && canModerate && (
+                        <button type="button" onClick={() => handleDeleteMessageClick(message.communityMessageId)}>
+                          Remove Message (Moderation)
                         </button>
                       )}
                     </div>

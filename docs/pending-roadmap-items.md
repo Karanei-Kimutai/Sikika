@@ -163,7 +163,7 @@ What exists now:
   COUNSELLOR, LEGAL_COUNSEL only; admins not bannable; self-ban rejected; past-date expiry rejected.
 - `PATCH /api/admin/ngo/users/:userId/unban` — lifts ban and restores ACTIVE; clears all ban fields.
 - Dual audit trail on ban/unban: `ModerationActionLog` (type BAN/UNBAN) + `AuditLog`
-  (type ACCOUNT_BANNED/ACCOUNT_UNBANNED, surfaces in System Admin logs feed).
+  (type ACCOUNT_BANNED/ACCOUNT_UNBANNED).
 - Immediate mid-session enforcement: `authMiddleware` now makes a DB lookup on every
   authenticated request and blocks BANNED (and SUSPENDED/DEACTIVATED) accounts immediately
   — no need to wait for JWT expiry.
@@ -176,7 +176,6 @@ What exists now:
   Banning from the moderation desk resolves the underlying report atomically (report marked APPROVED).
 - Lift Ban is available in both Staff Directory (for staff) and Moderation Desk (for community
   members/survivors banned from there) — all banned user types have a reverse path.
-- System Admin dashboard: `accountStatus` badge (BANNED visually distinct) in Admin Directory.
 - Frontend service: `banUser()` and `unbanUser()` in `frontend/src/services/admin.js`.
 - Tests: `backend/tests/banEnforcement.test.js` covers liftExpiredBan, authMiddleware enforcement,
   banUser guards (reason required, past expiry, admin target, self-ban), and unbanUser.
@@ -250,7 +249,7 @@ Status: Done
 
 `reviewReport(action="ban_user")` in `communityController.js` now enforces the same
 bannable-role allow-list (`BANNABLE_ROLES` from `utils/roles.js`) and self-ban rejection as
-the admin ban endpoint. NGO_ADMIN/SYSTEM_ADMIN accounts cannot be banned through the community
+the admin ban endpoint. NGO_ADMIN accounts cannot be banned through the community
 moderation path. The shared `BANNABLE_ROLES` constant ensures both paths stay in sync.
 
 ### Immediate forced socket revocation on ban
@@ -299,3 +298,34 @@ Status: Done
 `backend/src/services/notificationService.js` is the single write path for all in-app
 notifications. Replaced the three inline `InAppNotification.create` duplicates in
 reportController, chatSocket, and communityController.
+
+## 10) Progress-Presentation Feedback Batch
+Status: Done
+
+Addressed eight items of panel feedback from a progress presentation:
+
+- **ID column length / boolean flag**: confirmed (no code change) that all UUID PKs/FKs
+  already use `VARCHAR(36)` and `isOtpVerified` is already `DataTypes.BOOLEAN` — MySQL
+  always stores `BOOLEAN` as `TINYINT(1)` regardless of declaration.
+- **Moderator role**: new `MODERATOR` userRole + `moderatorProfile` table, delegated
+  Moderation Desk + Community Chat oversight (`communityController.js`), narrow frontend
+  nav via `moderatorRoutes` in `App.jsx`.
+- **Signup reworked to OTP-first**: `request-otp` → `verify-otp` (issues a signup ticket,
+  no password yet) → `complete-signup` (password + profile details, issues JWT).
+- **Signin reworked to password + mandatory 2FA**: `login-password` no longer issues a JWT
+  directly — it sends a `SIGNIN_2FA` OTP; `verify-2fa` issues the JWT. The old standalone
+  OTP-only signin method was removed.
+- **System Admin removed**: NGO_ADMIN is now the only admin role. `SystemAdministratorProfile`
+  model, `SystemAdminDashboardPage.jsx`, and the infra/logs/runtime-action endpoints were
+  deleted. Maintenance mode (the one capability still needed) was folded into the NGO Admin
+  dashboard, re-gated to `NGO_ADMIN`.
+- **Dark/light mode consistency**: replaced ~150 hardcoded hex colors in `App.css` with
+  existing/new CSS variable tokens (`--surface`, `--community-*`, `--legal-*`, new
+  `--status-*` and `--chart-*` tokens) so the existing `prefers-color-scheme: dark` override
+  actually reaches every component. No manual toggle added (kept OS-driven, per decision).
+- **Auto-suggested staff reassignment**: `getLeastLoadedStaff` helper (shared with the ban
+  cascade) backs `GET /api/admin/ngo/reassignments/suggestions`; Team Capacity's manual
+  reassignment form shows a "Recommended" badge the admin can apply or ignore.
+- **USSD callback auto-routing**: `ussdCallbackRequest.assignedCounsellorId` is set at
+  creation time via `pickLeastLoadedCounsellor`; the NGO dashboard's USSD Callbacks table
+  shows "Assigned To" instead of requiring manual triage.

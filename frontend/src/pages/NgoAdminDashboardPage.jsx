@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import AdminWorkspace from "@/components/AdminWorkspace";
+import axios from "axios";
 import {
   getNgoAdminDashboard,
   reviewModerationReport,
@@ -15,8 +16,12 @@ import {
   updateNgoStaffStatus,
   banUser,
   unbanUser,
-  listBannedUsers
+  listBannedUsers,
+  setMaintenanceMode as setMaintenanceModeApi,
+  getReassignmentSuggestions
 } from "@/services/admin";
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 import { getEvidenceAccessUrl, getReportById } from "@/services/reports";
 import { prettifyLabel, formatDate, formatNumber, priorityClass } from "./ngo-admin/helpers";
 import CommandCenterSection from "./ngo-admin/CommandCenterSection";
@@ -105,6 +110,44 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
   const [bannedUsersFilter, setBannedUsersFilter] = useState("");
   const [bannedUsersLoading, setBannedUsersLoading] = useState(false);
   const [liftingBanId, setLiftingBanId] = useState(null);
+
+  // ── Maintenance mode state ────────────────────────────────────────────────
+  // The one System-Admin capability retained after that role's removal —
+  // folded into the NGO Admin dashboard and re-gated to NGO_ADMIN on the backend.
+  const [maintenanceMode, setMaintenanceModeState] = useState({ enabled: false, reason: null, expectedUntil: null });
+  const [maintenanceToggling, setMaintenanceToggling] = useState(false);
+
+  async function refreshMaintenanceStatus() {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/system/public-status`);
+      setMaintenanceModeState(response.data?.maintenanceMode || { enabled: false, reason: null, expectedUntil: null });
+    } catch {
+      // Non-fatal — the toggle control simply reflects stale state until the next refresh.
+    }
+  }
+
+  useEffect(() => {
+    const timerId = window.setTimeout(() => {
+      void refreshMaintenanceStatus();
+    }, 0);
+    return () => window.clearTimeout(timerId);
+  }, []);
+
+  async function handleToggleMaintenanceMode() {
+    setErrorMessage("");
+    setSuccessMessage("");
+    setMaintenanceToggling(true);
+    try {
+      const nextEnabled = !maintenanceMode.enabled;
+      const result = await setMaintenanceModeApi(nextEnabled);
+      setMaintenanceModeState(result.maintenanceMode);
+      setSuccessMessage(`Maintenance mode ${nextEnabled ? "enabled" : "disabled"}.`);
+    } catch (error) {
+      setErrorMessage(error.response?.data?.error || "Failed to update maintenance mode.");
+    } finally {
+      setMaintenanceToggling(false);
+    }
+  }
 
   // ── Staff active/inactive toggle state ───────────────────────────────────
   /** In-flight userId for the active/inactive flip (drives per-row loading state). */
@@ -386,6 +429,39 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
 
     return () => window.clearTimeout(timerId);
   }, [assignmentForm.survivorId, dashboard]);
+
+  // ── Auto-suggested reassignment ───────────────────────────────────────────
+  // Fetches the least-loaded available counsellor/legal-counsel for the
+  // selected survivor so the admin sees a recommendation instead of picking
+  // blind. Purely advisory — the admin can still pick anyone in the dropdowns.
+  const [reassignmentSuggestion, setReassignmentSuggestion] = useState(null);
+
+  useEffect(() => {
+    const timerId = window.setTimeout(async () => {
+      if (!assignmentForm.survivorId) {
+        setReassignmentSuggestion(null);
+        return;
+      }
+
+      try {
+        const result = await getReassignmentSuggestions(assignmentForm.survivorId);
+        setReassignmentSuggestion(result);
+      } catch {
+        setReassignmentSuggestion(null);
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timerId);
+  }, [assignmentForm.survivorId]);
+
+  function applyReassignmentSuggestion() {
+    if (!reassignmentSuggestion) return;
+    setAssignmentForm((prev) => ({
+      ...prev,
+      counsellorId: reassignmentSuggestion.suggestedCounsellorId || prev.counsellorId,
+      legalCounselId: reassignmentSuggestion.suggestedLegalCounselId || prev.legalCounselId
+    }));
+  }
 
   function handleSectionSelect(sectionId) {
     // Some sections route to dedicated product pages instead of rendering in-place.
@@ -746,7 +822,6 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
 
   return (
     <AdminWorkspace
-      variant="ngo"
       roleLabel="NGO Operations Administrator"
       title={currentNgoSection?.label || "NGO Admin"}
       subtitle={currentNgoSection?.description || "NGO operations workspace"}
@@ -760,6 +835,22 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
     >
       {errorMessage && <p className="status-message warning" role="alert">{errorMessage}</p>}
       {successMessage && <p className="status-message" role="status">{successMessage}</p>}
+
+      <div className="maintenance-mode-toggle-bar">
+        <span>
+          Maintenance Mode: <strong>{maintenanceMode.enabled ? "ON" : "OFF"}</strong>
+        </span>
+        <button
+          type="button"
+          className="secondary-btn"
+          onClick={handleToggleMaintenanceMode}
+          disabled={maintenanceToggling}
+        >
+          {maintenanceToggling
+            ? "Updating..."
+            : maintenanceMode.enabled ? "Disable Maintenance Mode" : "Enable Maintenance Mode"}
+        </button>
+      </div>
 
       {/* ── Extracted sections ────────────────────────────────────────── */}
       {activeSection === "command-center" && (
@@ -779,6 +870,8 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
           assignmentForm={assignmentForm}
           setAssignmentForm={setAssignmentForm}
           selectedSurvivor={selectedSurvivor}
+          reassignmentSuggestion={reassignmentSuggestion}
+          onApplyReassignmentSuggestion={applyReassignmentSuggestion}
           staffForm={staffForm}
           setStaffForm={setStaffForm}
           togglingStaffId={togglingStaffId}

@@ -121,10 +121,17 @@ The goal is a **dual-channel (Web + USSD), survivor-centred GBV support platform
 - Staff account status: SUSPENDED (reversible operational "Inactive" toggle) separate from BANNED (moderation enforcement). `PATCH /api/admin/ngo/staff/:userId/status` handles SUSPENDED↔ACTIVE; `banUser`/`unbanUser` handle the BANNED lifecycle.
 - Global search, survivor reassignment override, USSD callback queue.
 
-#### System Admin (`adminController.js`)
-- DB health check, SMS config status, server uptime, audit log streaming.
+#### Maintenance Mode (`adminController.js`)
+System Admin was removed — NGO Admin is the only admin role, and maintenance mode (the
+one System Admin capability still needed) is folded into the NGO Admin dashboard.
 - **Durable maintenance mode:** `SystemSetting` model (key/value, TEXT JSON) stores maintenance state under key `'maintenance'`. `loadMaintenanceStateFromDb()` restores cached state at boot so maintenance survives process restarts. `_maintenanceCache` keeps the guard fast (no DB round-trip per request).
-- Runtime actions: `CLEAR_CACHE`, `RESTART_SERVER` (opt-in via `ALLOW_ADMIN_RESTART`).
+- `POST /api/admin/system/maintenance-mode` is now NGO_ADMIN-gated. The infra/health/log-streaming and runtime-action (`CLEAR_CACHE`/`RESTART_SERVER`) endpoints that used to live alongside it were removed along with the System Admin role.
+
+#### Moderator (`communityController.js`)
+Delegated subset of NGO Admin responsibilities: Moderation Desk (reports queue, message
+removal, warnings, bans) + Community Chat oversight. Own `MODERATOR` userRole ENUM member
+and `moderatorProfile` table (`currentWorkloadScore`, incremented per moderation action for
+capacity visibility — the report queue itself stays a shared pull queue).
 
 #### Resource Library (`resourceController.js`, `resourceRoutes.js`)
 - Public read (no auth required): list with category filter and text search.
@@ -146,7 +153,7 @@ The goal is a **dual-channel (Web + USSD), survivor-centred GBV support platform
 - NGO admin lists, approves (picks least-loaded replacement, calls `applySurvivorReassignment`, writes history, resyncs channels, refreshes workload), or rejects.
 
 #### Data Models (Sequelize, all in `backend/src/models/`)
-25 entities: `UserAccount`, `SurvivorProfile`, `CounsellorProfile`, `LegalCounselProfile`, `NgoAdministratorProfile`, `SystemAdministratorProfile`, `IncidentReport`, `EvidenceFile`, `LegalCaseFile`, `DirectChatChannel`, `DirectChatMessage`, `CommunityRoom`, `RoomMembership`, `CommunityMessage`, `HarmfulContentReport`, `ModerationActionLog`, `StaffReassignmentRequest`, `StaffAssignmentHistory`, `SupportResource`, `ResourceAccessEvent`, `OtpVerificationRequest`, `InAppNotification`, `AuditLog`, `UssdCallbackRequest`, `SystemSetting`.
+25 entities: `UserAccount`, `SurvivorProfile`, `CounsellorProfile`, `LegalCounselProfile`, `NgoAdministratorProfile`, `ModeratorProfile`, `IncidentReport`, `EvidenceFile`, `LegalCaseFile`, `DirectChatChannel`, `DirectChatMessage`, `CommunityRoom`, `RoomMembership`, `CommunityMessage`, `HarmfulContentReport`, `ModerationActionLog`, `StaffReassignmentRequest`, `StaffAssignmentHistory`, `SupportResource`, `ResourceAccessEvent`, `OtpVerificationRequest`, `InAppNotification`, `AuditLog`, `UssdCallbackRequest`, `SystemSetting`.
 
 `DirectChatMessage` now includes `deliveredAt` (DATE) and `seenAt` (DATE) for delivery and seen ticks.
 
@@ -156,7 +163,7 @@ The goal is a **dual-channel (Web + USSD), survivor-centred GBV support platform
 - `validateEnv()` fail-fast on missing required vars.
 - `ensureSchemaCompatibility(sequelize)` runs on every boot after `sync()`.
 - Proxy variable cleanup for WSL2 environments.
-- `maintenanceGuard` middleware applied globally; allows `/api/health`, `/api/admin`, `/api/system/public-status`, OTP/password sign-in, and SYSTEM_ADMIN-authenticated requests.
+- `maintenanceGuard` middleware applied globally; allows `/api/health`, `/api/admin`, `/api/system/public-status`, OTP/password sign-in, and NGO_ADMIN-authenticated requests (the only admin role — bypasses maintenance mode).
 - `loadMaintenanceStateFromDb()` called at boot to restore durable maintenance state from `SystemSetting`.
 
 ---
@@ -173,13 +180,13 @@ The goal is a **dual-channel (Web + USSD), survivor-centred GBV support platform
 
 #### Pages
 - **LandingPage:** Introductory page for unauthenticated users.
-- **AuthPage:** OTP signup and signin, password login, forgot/reset password, forced first-login reset.
+- **AuthPage:** 3-step OTP-first signup (phone → OTP → password/profile details); password + mandatory-2FA signin (OTP is no longer a standalone alternative login method); forgot/reset password, forced first-login reset.
 - **LibraryPage:** Resource browsing with category tabs and text search.
 - **DirectChatPage:** Real-time E2EE direct chat; channel list with coloured presence dot (green/amber/grey) and `MessageTicks` component (✓ Sent → ✓✓ Delivered → ✓✓ Seen in blue). Archive/Restore/Delete action menu per channel. Separate Trash view (deleted channels only) lets survivors restore contact.
 - **ReportingPage:** Report submission, evidence upload, report list, status tracking. Unauthenticated visitors see an emergency intercept screen offering Register or View Emergency Contacts (Police 999/112, Childline 116, GBV Hotline 1195). Legal counsel sees a structured drafting panel with four authoring fields, Save Draft, Generate Document, and Open Document.
 - **CommunityPage:** Room list, join rooms, real-time community messaging with pseudonymous identities.
-- **NgoAdminDashboardPage:** Command center (KPIs + trend chart), staffing, reports, moderation desk (internal tabs: Reports Queue / Banned Users), team capacity, USSD callbacks section, resources.
-- **SystemAdminDashboardPage:** Infrastructure, maintenance toggle, audit logs, admin/staff directories.
+- **NgoAdminDashboardPage:** Command center (KPIs + trend chart), staffing, reports, moderation desk (internal tabs: Reports Queue / Banned Users), team capacity (with auto-suggested reassignment), USSD callbacks section (auto-assigned counsellor), resources, maintenance-mode toggle. NGO Admin is the only admin role — System Admin was removed.
+- **ModerationDashboardPage:** Moderator's narrow view (Moderation Desk + Community Chat only); also reused as the NGO Admin's `/moderation` route.
 - **ManageProfilePage:** Role-aware profile view and edit.
 
 #### Notification Bell (`SiteHeader.jsx` → `NotificationBell`)
@@ -501,7 +508,6 @@ app.use(helmet());
 **Production environment checklist:**
 - `NODE_ENV=production`
 - `SKIP_SMS_IN_DEV` absent or `false`
-- `ALLOW_ADMIN_RESTART=false` (or omitted)
 - `DB_SYNC_ALTER=false` (stable schema)
 - `JWT_SECRET` is a 64-byte random string, not a memorable phrase
 - Cloudinary vars set and tested
@@ -615,7 +621,7 @@ CSProject/
 │       │   ├── CommunityPage.jsx
 │       │   ├── LibraryPage.jsx
 │       │   ├── NgoAdminDashboardPage.jsx     # Includes ModerationDeskSection (Reports/Banned tabs)
-│       │   ├── SystemAdminDashboardPage.jsx
+│       │   ├── ModerationDashboardPage.jsx   # Moderator's narrow view; also NGO Admin's /moderation route
 │       │   └── ManageProfilePage.jsx
 │       ├── services/
 │       │   ├── admin.js

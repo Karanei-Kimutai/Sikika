@@ -122,6 +122,49 @@ async function ensureAccountStatusEnum(sequelize) {
 }
 
 /**
+ * Ensures the userAccount.userRole ENUM includes MODERATOR and excludes the
+ * removed SYSTEM_ADMIN role (NGO_ADMIN is now the only admin role).
+ *
+ * Safety steps (order matters):
+ *   1. Backfill — any existing SYSTEM_ADMIN rows are reassigned to NGO_ADMIN
+ *      before the MODIFY, so MySQL cannot reject/truncate them when the ENUM
+ *      shrinks.
+ *   2. DDL — only runs when the ENUM doesn't already match the target set.
+ *
+ * @param {import('sequelize').Sequelize} sequelize
+ * @returns {Promise<"applied"|"skipped">}
+ */
+async function ensureUserRoleEnum(sequelize) {
+  const metadata = await getColumnMetadata(sequelize, "userAccount", "userRole");
+  const enumDefinition = String(metadata?.columnType || "").toUpperCase();
+
+  const alreadyTarget = enumDefinition.includes("'MODERATOR'") && !enumDefinition.includes("'SYSTEM_ADMIN'");
+  if (alreadyTarget) return "skipped";
+
+  // Step 1 — backfill: reassign any SYSTEM_ADMIN accounts to NGO_ADMIN before
+  // the ENUM narrows, so MySQL cannot reject existing rows.
+  await sequelize.query(
+    `
+      UPDATE ${quoteIdentifier("userAccount")}
+      SET    ${quoteIdentifier("userRole")} = 'NGO_ADMIN'
+      WHERE  ${quoteIdentifier("userRole")} = 'SYSTEM_ADMIN'
+    `
+  );
+
+  // Step 2 — DDL: set the ENUM to the current canonical role set.
+  await sequelize.query(
+    `
+      ALTER TABLE ${quoteIdentifier("userAccount")}
+      MODIFY COLUMN ${quoteIdentifier("userRole")}
+      ENUM('SURVIVOR','COUNSELLOR','LEGAL_COUNSEL','NGO_ADMIN','MODERATOR')
+      NOT NULL DEFAULT 'SURVIVOR'
+    `
+  );
+
+  return "applied";
+}
+
+/**
  * Reconciles known compatibility columns and enum definitions on every startup.
  * Safe to run after sequelize.sync() — all checks are guarded by INFORMATION_SCHEMA
  * lookups and are idempotent (no-op when schema is already up-to-date).
@@ -179,6 +222,16 @@ async function ensureSchemaCompatibility(sequelize) {
   // See ensureAccountStatusEnum() for details.
   const accountStatusEnum = await ensureAccountStatusEnum(sequelize);
   results.push(`accountStatus.ENUM=${accountStatusEnum}`);
+
+  // ── ENUM: userAccount.userRole must include MODERATOR ─────────────────────
+  const userRoleEnum = await ensureUserRoleEnum(sequelize);
+  results.push(`userRole.ENUM=${userRoleEnum}`);
+
+  // ── Column: ussdCallbackRequest.assignedCounsellorId ──────────────────────
+  const assignedCounsellorId = await ensureColumnExists(
+    sequelize, "ussdCallbackRequest", "assignedCounsellorId", "VARCHAR(36) NULL"
+  );
+  results.push(`assignedCounsellorId=${assignedCounsellorId}`);
 
   // Single structured log line for observability.
   // Each token is "name=applied|skipped". "applied" means a change was made;

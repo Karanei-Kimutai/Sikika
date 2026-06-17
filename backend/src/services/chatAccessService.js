@@ -116,8 +116,6 @@ async function canUserAccessChannel(userId, chatId) {
   // active status in socket handlers.
   if (!channel || channel.chatChannelStatus === "deleted") return false;
 
-  if (actor.role === "SYSTEM_ADMIN") return false;
-
   if (actor.role === "SURVIVOR") {
     return Boolean(actor.survivorId && actor.survivorId === channel.survivorId);
   }

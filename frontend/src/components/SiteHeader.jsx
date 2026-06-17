@@ -38,23 +38,23 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
         { path: "/reports", label: "Case Queue" },
         { path: "/moderation", label: "Moderation Desk" },
         { path: "/community", label: "Community Chat" },
-        { path: "/chat", label: "Staffing" },
+        { path: "/staff", label: "Staffing" },
         { path: "/ussd-callbacks", label: "USSD Callbacks" },
         { path: "/profile", label: "Profile" },
         { path: "/library", label: "Resources" }
       ];
     }
 
-    if (role === "SYSTEM_ADMIN") {
+    if (role === "MODERATOR") {
+      // Moderator scope is intentionally narrow: Moderation Desk + Community
+      // Chat oversight only — a delegated subset of NGO Admin responsibilities.
+      // No separate "Home" tab: /home and /moderation both render the same
+      // ModerationDashboardPage (there's no distinct landing page for this
+      // role), so a dedicated Home link would just duplicate this one.
       return [
-        { path: "/home", label: "Home" },
-        // Report tab is read-oriented for system admins; mutation permissions
-        // are still restricted in backend report status endpoints.
-        { path: "/reports", label: "Reports" },
-        { path: "/community", label: "Infra Logs" },
-        { path: "/chat", label: "Maintenance" },
-        { path: "/profile", label: "Profile" },
-        { path: "/library", label: "Access Control" }
+        { path: "/moderation", label: "Moderation Desk" },
+        { path: "/community", label: "Community Chat" },
+        { path: "/profile", label: "Profile" }
       ];
     }
 
@@ -64,6 +64,9 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
       { path: "/reports", label: "Reports" },
       { path: "/chat", label: "Direct Chat" },
       { path: "/community", label: "Community" },
+      // USSD callback auto-routing only ever assigns COUNSELLOR — survivors
+      // and legal counsel have no callbacks to manage here.
+      ...(role === "COUNSELLOR" ? [{ path: "/callbacks", label: "My Callbacks" }] : []),
       { path: "/profile", label: "Profile" }
     ];
   })();
@@ -183,7 +186,13 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
           aria-label="Primary navigation"
         >
           {navItems.map((item) => {
-            const isActive = currentPath === item.path || (item.path === "/" && currentPath === "/home");
+            // /home has no dedicated nav tab for NGO_ADMIN ("/" covers it) or
+            // MODERATOR (no separate landing page) — alias it to whichever
+            // tab represents that role's actual landing destination.
+            const isActive =
+              currentPath === item.path ||
+              (item.path === "/" && currentPath === "/home") ||
+              (item.path === "/moderation" && currentPath === "/home" && role === "MODERATOR");
             return (
               <a
                 key={item.path}

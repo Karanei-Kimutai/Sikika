@@ -24,7 +24,7 @@ const SurvivorProfile           = require('./survivorProfile');
 const CounsellorProfile         = require('./counsellorProfile');
 const LegalCounselProfile       = require('./legalCounselProfile');
 const NgoAdministratorProfile   = require('./ngoAdministratorProfile');
-const SystemAdministratorProfile = require('./systemAdministratorProfile');
+const ModeratorProfile          = require('./moderatorProfile');
 
 // ── Reporting models ─────────────────────────────────────────────────────────
 const IncidentReport            = require('./incidentReport');
@@ -74,8 +74,8 @@ LegalCounselProfile.belongsTo(UserAccount,     { foreignKey: 'userId' });
 UserAccount.hasOne(NgoAdministratorProfile,    { foreignKey: 'userId', onDelete: 'CASCADE' });
 NgoAdministratorProfile.belongsTo(UserAccount, { foreignKey: 'userId' });
 
-UserAccount.hasOne(SystemAdministratorProfile,    { foreignKey: 'userId', onDelete: 'CASCADE' });
-SystemAdministratorProfile.belongsTo(UserAccount, { foreignKey: 'userId' });
+UserAccount.hasOne(ModeratorProfile,    { foreignKey: 'userId', onDelete: 'CASCADE' });
+ModeratorProfile.belongsTo(UserAccount, { foreignKey: 'userId' });
 
 
 // ── SurvivorProfile → assigned staff (M:1 from survivor side) ───────────────
@@ -271,7 +271,7 @@ module.exports = {
   CounsellorProfile,
   LegalCounselProfile,
   NgoAdministratorProfile,
-  SystemAdministratorProfile,
+  ModeratorProfile,
 
   // Reporting
   IncidentReport,

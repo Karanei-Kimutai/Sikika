@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Gender-Based Violence (GBV) Support Platform for Kenya. Dual-channel (Web + USSD), survivor-centred platform with six user roles: Survivor, Counsellor, Legal Counsel, NGO Admin, System Admin, and unregistered visitors.
+Gender-Based Violence (GBV) Support Platform for Kenya. Dual-channel (Web + USSD), survivor-centred platform with six user roles: Survivor, Counsellor, Legal Counsel, Moderator, NGO Admin, and unregistered visitors. NGO Admin is the only admin role — System Admin was removed; the one capability it owned that's still needed (maintenance mode) is folded into the NGO Admin dashboard.
 
 **Stack:** React 19 (frontend) · Node.js + Express 5 + Socket.io (backend) · MySQL + Sequelize · Africa's Talking (USSD + SMS OTP) · Cloudinary (file storage)
 
@@ -43,7 +43,7 @@ npm run lint     # ESLint
 
 - Required: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `JWT_SECRET`, `AFRICASTALKING_API_KEY`, `AFRICASTALKING_USERNAME`
 - Optional but needed for uploads: `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`
-- Dev shortcuts: `SKIP_SMS_IN_DEV=true` (OTP is returned in the response body instead of sent via SMS), `DB_SYNC_ALTER=false` (stable schema), `ALLOW_ADMIN_RESTART=true`, `ENABLE_SCHEMA_COMPAT=true` (boot-time ENUM reconciliation via `schemaCompatibility.js`; set to `false` for emergency rollback without a code revert)
+- Dev shortcuts: `SKIP_SMS_IN_DEV=true` (OTP is returned in the response body instead of sent via SMS), `DB_SYNC_ALTER=false` (stable schema), `ENABLE_SCHEMA_COMPAT=true` (boot-time ENUM reconciliation via `schemaCompatibility.js`; set to `false` for emergency rollback without a code revert)
 
 **Frontend** — create `frontend/.env`:
 ```
@@ -61,8 +61,9 @@ Server startup sequence: load env → validate required vars → `CREATE DATABAS
 ### Data Model (`backend/src/models/`)
 
 - `index.js` is the single registry + association hub — all controllers/services must import from here to get consistent association eager-loading
-- `userAccount.js` is the identity root; role-specific profile tables extend it (`survivorProfile`, `counsellorProfile`, `legalCounselProfile`, `ngoAdministratorProfile`, `systemAdministratorProfile`)
-- UUIDs are used as PKs across most domain entities
+- `userAccount.js` is the identity root; role-specific profile tables extend it (`survivorProfile`, `counsellorProfile`, `legalCounselProfile`, `ngoAdministratorProfile`, `moderatorProfile`)
+- UUIDs are used as `VARCHAR(36)` PKs across most domain entities (32 hex chars + 4 hyphens — intentional, doubles as an anti-enumeration measure)
+- `isOtpVerified` (and other flag-like columns) are declared as `DataTypes.BOOLEAN` in Sequelize; MySQL has no native boolean type and always physically stores `BOOLEAN` as `TINYINT(1)` regardless of how it was declared — that's a MySQL rendering detail, not a schema mistake
 - `SurvivorProfile` carries `assignedCounsellor` and `assignedLegalCounsel` FKs; assignment is done at signup by selecting the staff with the lowest `currentWorkloadScore`
 
 ### Request Flow
@@ -75,11 +76,12 @@ Maintenance mode middleware sits at the global level and blocks all non-admin tr
 
 ### Auth System (`backend/src/controllers/authController.js`)
 
-- Dual auth paths: OTP (via Africa's Talking SMS) and password; both enforce lockout counters persisted on `UserAccount`
+- **Signup (3 steps, OTP-first):** `POST /api/auth/request-otp` (phone → SMS OTP, purpose `SIGNUP_OTP`) → `POST /api/auth/verify-otp` (OTP only, no password yet; on success issues a short-lived **signup ticket**, purpose `SIGNUP_TICKET`, reusing the same bcrypt-hashed OTP storage fields; returns `authStage=DETAILS_REQUIRED`) → `POST /api/auth/complete-signup` (`{ phoneNumber, signupTicket, password, profileDetails }`; validates the ticket, sets the password, creates `SurvivorProfile`, assigns least-loaded counsellor and legal counsel by `currentWorkloadScore`, provisions direct-chat channels, and issues the JWT — all in a single Sequelize transaction via `ensureSurvivorStaffAutoAssignment`).
+- **Signin (password + mandatory 2FA):** `POST /api/auth/login-password` validates the password but does **not** issue a JWT — it sends a `SIGNIN_2FA` OTP and returns `authStage=OTP_2FA_REQUIRED`. `POST /api/auth/verify-2fa` validates that OTP and issues the JWT. OTP is no longer a standalone alternative login method — it's enforced as the second factor after every password match. Exception: accounts with `status=password_reset_required` get the JWT immediately from `login-password` (they must set a real password before normal navigation anyway, so 2FA is deferred to their next login).
+- Both lockout counters (`authFailedAttempts`/`authLockUntil` for password, `otpAttemptCount` for OTP) are persisted on `UserAccount` and shared across all OTP-purpose flows.
 - JWT payload carries both `id` and `userId` for compatibility
-- On first survivor signup: creates `SurvivorProfile`, assigns least-loaded counsellor and legal counsel by `currentWorkloadScore`, and provisions direct-chat channels — all in a single Sequelize transaction
 - `status=password_reset_required` triggers first-login forced reset; backend returns `authStage=PASSWORD_RESET_REQUIRED` and frontend must call `POST /api/auth/set-password` before normal navigation
-- OTPs are bcrypt-hashed (10 rounds) before storage in `otpHash`; both verify paths use `bcrypt.compare`. Dev mode returns the plaintext OTP in the response body via `developmentOtp` for local testing only.
+- OTPs (and the signup ticket) are bcrypt-hashed (10 rounds) before storage in `otpHash`; all verify paths use `bcrypt.compare`. Dev mode returns the plaintext code in the response body via `developmentOtp` for local testing only.
 - `normalizeRole` and `BANNABLE_ROLES` are defined once in `backend/src/utils/roles.js` and imported by all controllers and services that need them.
 
 ### Report Status State Machine
@@ -106,13 +108,21 @@ Legal case auto-creation fires on `LEGAL_REVIEW` and `ESCALATED_TO_LEGAL_CASE` t
 
 ### USSD (`backend/src/controllers/ussdController.js`)
 
-Live endpoint: `POST /api/ussd/callback`. NGO admin USSD management endpoints and dashboard section are included.
+Live endpoint: `POST /api/ussd/callback`. NGO admin USSD management endpoints and dashboard section are included. Callback requests are auto-routed: `pickLeastLoadedCounsellor` assigns the least-loaded available counsellor (`ussdCallbackRequest.assignedCounsellorId`) at creation time, so NGO Admin sees "Assigned To" in the queue instead of manually triaging every request — admin can still reassign.
+
+### Moderator role (`backend/src/controllers/communityController.js`)
+
+Delegated subset of NGO Admin responsibilities: Moderation Desk (reports queue, message removal, warnings, bans/unbans) + Community Chat oversight. `MODERATOR` is a `userRole` ENUM member with its own `moderatorProfile` table (`currentWorkloadScore` — incremented per moderation action for capacity visibility; the report queue itself stays a shared pull queue, not per-item assigned). `getModerationReports`/`reviewReport`/`deleteMessage` in `communityController.js` allow both `NGO_ADMIN` and `MODERATOR`. Frontend: `MODERATOR` logins route to a narrow nav (Moderation Desk + Community Chat only) via `moderatorRoutes` in `App.jsx`, reusing `ModerationDashboardPage.jsx` and `CommunityPage.jsx`. Onboarded via the same NGO staff-onboarding form (`createStaffAccount`) as Counsellor/Legal Counsel.
+
+### Auto-suggested staff reassignment (`backend/src/controllers/adminController.js`)
+
+`getLeastLoadedStaff(ProfileModel, idField, excludeId)` is the shared least-loaded-staff selector, used by both `cascadeReassignOnStaffBan` (auto-reassignment when a counsellor/legal counsel is banned) and `GET /api/admin/ngo/reassignments/suggestions?survivorId=` (recommends a replacement counsellor/legal counsel for the Team Capacity manual reassignment form — shown as a "Recommended" badge the admin can apply or ignore).
 
 ## Frontend Architecture
 
 ### Routing & Auth Shell (`frontend/src/App.jsx`)
 
-Custom SPA router using `window.history.pushState` — **no React Router**. Navigation is section-based within large page components, not URL-parameter-based. Role-based route maps redirect NGO Admin and System Admin to their dashboards. Maintenance mode polled from `/api/system/public-status` every 15 seconds.
+Custom SPA router using `window.history.pushState` — **no React Router**. Navigation is section-based within large page components, not URL-parameter-based. Role-based route maps redirect NGO Admin to its dashboard and Moderator to a narrow Moderation Desk + Community Chat nav (`moderatorRoutes`). Maintenance mode polled from `/api/system/public-status` every 15 seconds; only `NGO_ADMIN` sessions bypass the maintenance screen (the only admin role since System Admin's removal).
 
 Session: `authToken` + `userId` persisted in `sessionStorage` (tab-scoped; cleared on tab close). Protected routes redirect to `/join` when session is absent.
 
@@ -126,17 +136,17 @@ Each page owns its screen-level state (loading, errors, selected entities):
 
 | Page | Feature |
 |---|---|
-| `AuthPage.jsx` | OTP + password auth, signup, forgot password, forced reset |
+| `AuthPage.jsx` | 3-step OTP-first signup (phone → OTP → password/profile details) via `SignUpFlow.jsx`; password + mandatory-2FA signin via `SignInFlow.jsx`; forgot password, forced reset |
 | `DirectChatPage.jsx` | E2EE chat, channel switching, privacy mask; Archive/Restore/Delete action menu per channel |
-| `CommunityPage.jsx` | Rooms, join gate, moderation actions |
+| `CommunityPage.jsx` | Rooms, join gate, moderation actions (`canModerate` covers NGO_ADMIN + MODERATOR) |
 | `LibraryPage.jsx` | Public resource browsing + staff write actions |
 | `ReportingPage.jsx` | Incident report submission + evidence upload; emergency intercept screen for unauthenticated reporters (`/reports` is not a protected path) |
-| `NgoAdminDashboardPage.jsx` | NGO KPIs, case triage, staff management, USSD callback queue; section components under `pages/ngo-admin/`; Moderation Desk has internal tabs (Reports Queue / Banned Users) managed by `ModerationDeskSection.jsx`; chart uses gradient bars + smooth bezier trend in `CommandCenterSection.jsx` |
-| `SystemAdminDashboardPage.jsx` | Infrastructure, logs, maintenance control, staff lifecycle |
+| `NgoAdminDashboardPage.jsx` | NGO KPIs, case triage, staff management, USSD callback queue (with auto-assigned counsellor), maintenance-mode toggle; section components under `pages/ngo-admin/`; Moderation Desk has internal tabs (Reports Queue / Banned Users) managed by `ModerationDeskSection.jsx`; chart uses gradient bars + smooth bezier trend in `CommandCenterSection.jsx` |
+| `ModerationDashboardPage.jsx` | Moderator's Moderation Desk view (also reused as the NGO Admin's `/moderation` route) |
 
 ### Service Layer (`frontend/src/services/`)
 
-- `admin.js` — dashboard, search, maintenance, runtime actions, staff lifecycle, moderation reviews
+- `admin.js` — NGO dashboard, search, maintenance mode, staff lifecycle, moderation reviews, reassignment suggestions (System Admin's infra/logs/runtime-action calls were removed along with that role)
 - `resources.js` — CRUD + access tracking for support resources
 - `reports.js` — report submission and status
 
@@ -161,6 +171,7 @@ Static resource list shown in the Library when the backend is unreachable. Full 
 - **`SUSPENDED` vs `BANNED`**: `SUSPENDED` = reversible staff operational pause (no metadata); `BANNED` = moderation/safety enforcement (reason + optional expiry + dual audit trail). Both block all authenticated access immediately via `authMiddleware` DB lookup.
 - **Survivor identity in community**: survivors appear by nickname only in room timelines.
 - **Resource access tracking**: `POST /api/resources/:id/track-access` is best-effort; frontend fires and ignores failures so it never blocks resource opens.
+- **Light/dark theming**: CSS custom properties in `frontend/src/App.css` `:root`, overridden by an OS-driven `@media (prefers-color-scheme: dark)` block (no manual toggle). Use existing tokens (`--surface`, `--community-*`, `--legal-*`, `--status-*`, `--chart-*`, `--workspace-*`) rather than hardcoded hex — a hardcoded color bypasses the dark-mode override entirely.
 
 ## Incomplete Features
 
@@ -181,3 +192,6 @@ Tracked in `docs/pending-roadmap-items.md`.
 |---|---|---|
 | Survivor | +254711000001 | Survivor@2026! |
 | Counsellor | +254700000020 | Counsellor@2026! |
+| Legal Counsel | +254700000030 | LegalCounsel@2026! |
+| NGO Admin | +254700000010 | NgoAdmin@2026! |
+| Moderator | +254700000001 | Moderator@2026! |

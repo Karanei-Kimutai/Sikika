@@ -197,14 +197,14 @@ export default function CommandCenterSection({ overview, reportsOverTime, commun
             </linearGradient>
             {/* Peak day bar gets a brighter, fully-opaque gradient */}
             <linearGradient id="ngo-peak-grad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"   stopColor="#bf4d12" stopOpacity="1"    />
-              <stop offset="100%" stopColor="#e07848" stopOpacity="0.55" />
+              <stop offset="0%"   stopColor="var(--chart-peak)" stopOpacity="1"    />
+              <stop offset="100%" stopColor="var(--chart-peak-soft)" stopOpacity="0.55" />
             </linearGradient>
             {/* Area fill under the trend line — green with heavy fade to bottom */}
             <linearGradient id="ngo-area-grad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"   stopColor="#2a7b50" stopOpacity="0.20" />
-              <stop offset="70%"  stopColor="#2a7b50" stopOpacity="0.05" />
-              <stop offset="100%" stopColor="#2a7b50" stopOpacity="0"    />
+              <stop offset="0%"   stopColor="var(--chart-trend)" stopOpacity="0.20" />
+              <stop offset="70%"  stopColor="var(--chart-trend)" stopOpacity="0.05" />
+              <stop offset="100%" stopColor="var(--chart-trend)" stopOpacity="0"    />
             </linearGradient>
             {/* Clip to the chart plot area so the trend line / area don't spill */}
             <clipPath id="ngo-chart-clip">
@@ -270,7 +270,7 @@ export default function CommandCenterSection({ overview, reportsOverTime, commun
             <path
               d={trendLinePath}
               fill="none"
-              stroke="#2a7b50"
+              stroke="var(--chart-trend)"
               strokeWidth="2.5"
               strokeLinecap="round"
               strokeLinejoin="round"

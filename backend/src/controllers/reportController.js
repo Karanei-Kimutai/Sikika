@@ -24,7 +24,6 @@ const { createNotification, createNotificationsBulk } = require("../services/not
  * Core reporting workflow:
  * - Survivors create and manage their own submissions.
  * - Assigned staff (counsellor/legal) and NGO admins can review and advance status.
- * - System admins have read-only visibility for oversight (no status mutations).
  * - Status changes are guarded by both transition rules and role permissions.
  * - Evidence files are stored in Cloudinary; clients receive short-lived signed URLs.
  */
@@ -66,10 +65,7 @@ const STATUS_UPDATE_PERMISSIONS = {
   SURVIVOR: [],
   COUNSELLOR: [REPORT_STATUS.ACTIVE_SUPPORT, REPORT_STATUS.UNDER_INVESTIGATION, REPORT_STATUS.RESOLVED],
   LEGAL_COUNSEL: [REPORT_STATUS.LEGAL_REVIEW, REPORT_STATUS.ESCALATED_TO_LEGAL_CASE, REPORT_STATUS.RESOLVED],
-  NGO_ADMIN: [REPORT_STATUS.UNDER_REVIEW, REPORT_STATUS.ACTIVE_SUPPORT, REPORT_STATUS.UNDER_INVESTIGATION, REPORT_STATUS.LEGAL_REVIEW, REPORT_STATUS.RESOLVED],
-  // Governance boundary: system admins can inspect report/evidence data but do
-  // not participate in operational case-state transitions.
-  SYSTEM_ADMIN: []
+  NGO_ADMIN: [REPORT_STATUS.UNDER_REVIEW, REPORT_STATUS.ACTIVE_SUPPORT, REPORT_STATUS.UNDER_INVESTIGATION, REPORT_STATUS.LEGAL_REVIEW, REPORT_STATUS.RESOLVED]
 };
 
 // Roles are allowed to set only specific next states, even when a transition
@@ -247,13 +243,6 @@ async function getActorContext(req) {
 
 async function canActorAccessReport(actor, report) {
   if (!actor || !report) return false;
-
-  if (actor.role === "SYSTEM_ADMIN") {
-    // Roadmap item 7 read-scope expansion:
-    // - system admins can view any report and evidence metadata for oversight
-    // - write operations are still blocked elsewhere by role guards
-    return true;
-  }
 
   if (actor.role === "NGO_ADMIN") {
     return true;
@@ -635,8 +624,6 @@ async function updateReportStatus(req, res) {
   }
 
   if (!["COUNSELLOR", "LEGAL_COUNSEL", "NGO_ADMIN"].includes(actor.role)) {
-    // Intentionally excludes SYSTEM_ADMIN to keep report workflow ownership with
-    // support/operations roles while still allowing system-admin read visibility.
     return res.status(403).json({ error: "Only support staff can update report status." });
   }
 

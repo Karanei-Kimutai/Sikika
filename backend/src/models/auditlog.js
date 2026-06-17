@@ -6,7 +6,7 @@ const sequelize = require('../config/database');
  * --------
  * General system-level audit trail for significant platform events.
  * Complements ModerationActionLog with broader action tracking.
- * Used by system administrators for compliance and security monitoring.
+ * Used by NGO administrators for compliance and security monitoring.
  *
  * Relationships defined in models/index.js:
  *   - auditLog.belongsTo(userAccount, as: 'actor')

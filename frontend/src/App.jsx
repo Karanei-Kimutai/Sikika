@@ -10,8 +10,8 @@ import ReportingPage from "./pages/ReportingPage";
 import CommunityPage from "./pages/CommunityPage";
 import ModerationDashboardPage from "./pages/ModerationDashboardPage";
 import NgoAdminDashboardPage from "./pages/NgoAdminDashboardPage";
-import SystemAdminDashboardPage from "./pages/SystemAdminDashboardPage";
 import ManageProfilePage from "./pages/ManageProfilePage";
+import MyCallbacksPage from "./pages/MyCallbacksPage";
 import "./App.css";
 
 /**
@@ -32,7 +32,9 @@ const API_BASE_URL =
   import.meta.env.VITE_API_URL ||
   "http://localhost:5000";
 
-// Public route map for unauthenticated users and fallback routing.
+// Public route map for unauthenticated users and fallback routing. Also
+// covers SURVIVOR/COUNSELLOR/LEGAL_COUNSEL sessions, which share this same
+// page set (no dedicated role-specific route map needed for them).
 const publicRoutes = {
   "/": LandingPage,
   "/home": LandingPage,
@@ -44,7 +46,10 @@ const publicRoutes = {
   "/profile": ManageProfilePage,
   "/moderation": ModerationDashboardPage,
   "/ngo-admin": NgoAdminDashboardPage,
-  "/system-admin": SystemAdminDashboardPage
+  // Only COUNSELLOR has a nav entry to this (USSD callback auto-routing
+  // assigns COUNSELLOR only), but the route itself is harmless for other
+  // roles to hit directly — the backend 403s anyone who isn't a counsellor.
+  "/callbacks": MyCallbacksPage
 };
 
 // Role-specific route remapping used after successful authentication.
@@ -52,7 +57,7 @@ const ngoAdminRoutes = {
   "/": (props) => <NgoAdminDashboardPage {...props} initialSection="command-center" />,
   "/home": (props) => <NgoAdminDashboardPage {...props} initialSection="command-center" />,
   "/reports": (props) => <NgoAdminDashboardPage {...props} initialSection="reports" />,
-  "/chat": (props) => <NgoAdminDashboardPage {...props} initialSection="team-capacity" />,
+  "/staff": (props) => <NgoAdminDashboardPage {...props} initialSection="team-capacity" />,
   "/community": CommunityPage,
   "/moderation": (props) => <NgoAdminDashboardPage {...props} initialSection="moderation-desk" />,
   "/ussd-callbacks": (props) => <NgoAdminDashboardPage {...props} initialSection="ussd-callbacks" />,
@@ -61,15 +66,13 @@ const ngoAdminRoutes = {
   "/join": AuthPage
 };
 
-const systemAdminRoutes = {
-  "/": (props) => <SystemAdminDashboardPage {...props} initialSection="infrastructure" />,
-  "/home": (props) => <SystemAdminDashboardPage {...props} initialSection="infrastructure" />,
-  // System admins are intentionally granted report/evidence read navigation.
-  // Backend remains source-of-truth for read-only enforcement.
-  "/reports": ReportingPage,
-  "/chat": (props) => <SystemAdminDashboardPage {...props} initialSection="maintenance" />,
-  "/community": (props) => <SystemAdminDashboardPage {...props} initialSection="ops-logs" />,
-  "/library": (props) => <SystemAdminDashboardPage {...props} initialSection="admin-access" />,
+// Moderator scope is intentionally narrow — Moderation Desk + Community Chat
+// oversight only, reusing the same pages NGO Admin uses for those features.
+const moderatorRoutes = {
+  "/": ModerationDashboardPage,
+  "/home": ModerationDashboardPage,
+  "/moderation": ModerationDashboardPage,
+  "/community": CommunityPage,
   "/profile": ManageProfilePage,
   "/join": AuthPage
 };
@@ -79,15 +82,14 @@ const systemAdminRoutes = {
 const knownPaths = new Set([
   ...Object.keys(publicRoutes),
   ...Object.keys(ngoAdminRoutes),
-  ...Object.keys(systemAdminRoutes),
+  ...Object.keys(moderatorRoutes),
 ]);
 
 function getRoutesForRole(role, isAuthenticated) {
   if (!isAuthenticated) return publicRoutes;
   if (role === "NGO_ADMIN") return ngoAdminRoutes;
-  // Role-specific app mapping mirrors backend governance model:
-  // NGO admins run operations, system admins monitor infrastructure and oversight views.
-  if (role === "SYSTEM_ADMIN") return systemAdminRoutes;
+  if (role === "MODERATOR") return moderatorRoutes;
+  // NGO_ADMIN is the only admin role — System Admin has been removed.
   return publicRoutes;
 }
 
@@ -138,7 +140,7 @@ function App() {
 
     async function refreshPublicStatus() {
       try {
-        // Used by global maintenance banner/screen for non-system-admin users.
+        // Used by global maintenance banner/screen for non-admin users.
         const response = await axios.get(`${API_BASE_URL}/api/system/public-status`);
         setMaintenanceMode(response.data?.maintenanceMode || { enabled: false, updatedAt: null });
       } catch {
@@ -214,10 +216,10 @@ function App() {
   // /reports is intentionally excluded from this set — unauthenticated users who navigate
   // there receive a purpose-built emergency intercept screen inside ReportingPage rather
   // than a silent redirect, so they can access crisis contacts without creating an account.
-  const protectedPaths = new Set(["/chat", "/community", "/profile", "/moderation", "/ngo-admin", "/system-admin"]);
+  const protectedPaths = new Set(["/chat", "/staff", "/callbacks", "/community", "/profile", "/moderation", "/ngo-admin"]);
   const resolvedPath = protectedPaths.has(currentPath) && !isAuthenticated ? "/join" : currentPath;
   const roleResolvedPath = (() => {
-    if (["/ngo-admin", "/system-admin"].includes(resolvedPath)) {
+    if (resolvedPath === "/ngo-admin") {
       return "/home";
     }
 
@@ -228,20 +230,20 @@ function App() {
   const finalPath = activeRoutes[roleResolvedPath] ? roleResolvedPath : fallbackPath;
   const Page = activeRoutes[finalPath] || LandingPage;
 
-  // During active maintenance, non-system-admin sessions are redirected to a
+  // During active maintenance, non-admin sessions are redirected to a
   // read-only status card instead of normal app pages.
   // Exception: keep /join reachable so signed-out operators can still recover
-  // access by authenticating as SYSTEM_ADMIN.
+  // access by authenticating as NGO_ADMIN.
   const shouldShowMaintenanceScreen =
     maintenanceMode.enabled &&
-    role !== "SYSTEM_ADMIN" &&
+    role !== "NGO_ADMIN" &&
     finalPath !== "/join";
 
   if (shouldShowMaintenanceScreen) {
     return (
       <div className="app-shell">
         {/*
-          Dedicated maintenance surface for non-system-admin sessions.
+          Dedicated maintenance surface for non-admin sessions.
           This keeps users informed while backend maintenance guard returns 503s.
         */}
         <main className="maintenance-page" role="main" aria-label="Maintenance status page">
@@ -257,7 +259,7 @@ function App() {
             </p>
 
             <div className="maintenance-meta-grid">
-              {/* Operational reason set by system admins while enabling maintenance. */}
+              {/* Operational reason set by an NGO admin while enabling maintenance. */}
               <article className="maintenance-meta-item">
                 <h2>Current activity</h2>
                 <p>{maintenanceMode.reason || "Scheduled platform maintenance"}</p>
@@ -267,7 +269,7 @@ function App() {
                 <h2>Last status update</h2>
                 <p>{maintenanceMode.updatedAt ? new Date(maintenanceMode.updatedAt).toLocaleString() : "-"}</p>
               </article>
-              {/* Optional ETA authored by system admin; may be intentionally absent. */}
+              {/* Optional ETA authored by an NGO admin; may be intentionally absent. */}
               <article className="maintenance-meta-item">
                 <h2>Estimated return</h2>
                 <p>{maintenanceMode.expectedUntil ? new Date(maintenanceMode.expectedUntil).toLocaleString() : "Not specified"}</p>

@@ -8,6 +8,7 @@ const {
   UserAccount,
   AuditLog,
   SurvivorProfile,
+  ModeratorProfile,
   sequelize
 } = require("../models");
 const { normalizeRole, BANNABLE_ROLES } = require("../utils/roles");
@@ -40,6 +41,24 @@ async function getActor(req) {
     userId: user.userId,
     role: normalizeRole(user.userRole)
   };
+}
+
+/**
+ * incrementModeratorWorkload
+ * --------------------------
+ * Bumps currentWorkloadScore on a moderator's profile after they take a
+ * moderation action. Pure capacity-visibility counter — the report queue
+ * stays a shared pull queue, so this never affects routing. No-op for
+ * NGO_ADMIN actors (they have no moderatorProfile row).
+ *
+ * @param {string} userId
+ * @param {import('sequelize').Transaction} [transaction]
+ */
+async function incrementModeratorWorkload(userId, transaction) {
+  const profile = await ModeratorProfile.findOne({ where: { userId }, transaction });
+  if (!profile) return;
+  profile.currentWorkloadScore += 1;
+  await profile.save({ transaction });
 }
 
 /**
@@ -82,6 +101,10 @@ async function getDisplayIdentity(userId) {
 
   if (role === "NGO_ADMIN") {
     return { displayName: "Verified NGO Administrator", role, badge: "Verified NGO Administrator" };
+  }
+
+  if (role === "MODERATOR") {
+    return { displayName: "Verified Moderator", role, badge: "Verified Moderator" };
   }
 
   return { displayName: "Community Member", role, badge: null };
@@ -438,7 +461,8 @@ async function reportMessage(req, res) {
  * deleteMessage
  * -------------
  * Allows message owners to delete their own posts.
- * NGO admins may also delete any message as a moderation action.
+ * NGO admins and moderators may also delete any message as a moderation action
+ * (Community Chat oversight is part of the delegated Moderator scope).
  */
 async function deleteMessage(req, res) {
   const actor = await getActor(req);
@@ -451,15 +475,15 @@ async function deleteMessage(req, res) {
     return res.status(404).json({ error: "Message not found." });
   }
 
-  // Message owners can self-delete; NGO admins can moderate-delete.
+  // Message owners can self-delete; NGO admins/moderators can moderate-delete.
   const isOwner = message.senderUserId === actor.userId;
-  const isNgoAdmin = actor.role === "NGO_ADMIN";
+  const isModerationStaff = actor.role === "NGO_ADMIN" || actor.role === "MODERATOR";
 
-  if (!isOwner && !isNgoAdmin) {
+  if (!isOwner && !isModerationStaff) {
     return res.status(403).json({ error: "You can only delete your own messages." });
   }
 
-  if (isNgoAdmin && !isOwner) {
+  if (isModerationStaff && !isOwner) {
     // Admin deletions are audit-logged for moderation traceability.
     await ModerationActionLog.create({
       moderationActionId: randomUUID(),
@@ -468,6 +492,10 @@ async function deleteMessage(req, res) {
       moderationActionType: "MESSAGE_DELETION",
       moderationActionReason: "Manual moderation deletion"
     });
+
+    if (actor.role === "MODERATOR") {
+      await incrementModeratorWorkload(actor.userId);
+    }
   }
 
   await message.destroy();
@@ -483,7 +511,7 @@ async function deleteMessage(req, res) {
 /**
  * getModerationReports
  * --------------------
- * NGO-admin-only moderation queue endpoint.
+ * Moderation queue endpoint — NGO admins and moderators (delegated scope).
  * Hydrates reports with message and identity context for moderation review UI.
  */
 async function getModerationReports(req, res) {
@@ -492,8 +520,8 @@ async function getModerationReports(req, res) {
     return res.status(401).json({ error: "Authentication required." });
   }
 
-  if (actor.role !== "NGO_ADMIN") {
-    return res.status(403).json({ error: "Only NGO admins can access moderation dashboard." });
+  if (actor.role !== "NGO_ADMIN" && actor.role !== "MODERATOR") {
+    return res.status(403).json({ error: "Only NGO admins and moderators can access the moderation dashboard." });
   }
 
   const reports = await HarmfulContentReport.findAll({
@@ -553,9 +581,9 @@ async function reviewReport(req, res) {
     return res.status(401).json({ error: "Authentication required." });
   }
 
-  if (actor.role !== "NGO_ADMIN") {
+  if (actor.role !== "NGO_ADMIN" && actor.role !== "MODERATOR") {
     await transaction.rollback();
-    return res.status(403).json({ error: "Only NGO admins can review reports." });
+    return res.status(403).json({ error: "Only NGO admins and moderators can review reports." });
   }
 
   const report = await HarmfulContentReport.findByPk(req.params.reportId, { transaction });
@@ -590,6 +618,10 @@ async function reviewReport(req, res) {
         moderationActionType: "MESSAGE_DELETION",
         moderationActionReason: report.reportReasonText
       }, { transaction });
+
+      if (actor.role === "MODERATOR") {
+        await incrementModeratorWorkload(actor.userId, transaction);
+      }
     }
 
     if (action === "ban_user") {
@@ -636,7 +668,7 @@ async function reviewReport(req, res) {
       }
 
       // Dual audit trail: moderation log (visible in NGO desk history) + audit log
-      // (visible in System Admin logs feed) — same convention as the admin ban endpoint.
+      // (general platform audit trail) — same convention as the admin ban endpoint.
       await ModerationActionLog.create({
         moderationActionId: randomUUID(),
         moderatorUserId: actor.userId,
@@ -651,6 +683,10 @@ async function reviewReport(req, res) {
         actionType: "ACCOUNT_BANNED",
         targetEntity: `${targetAccount?.userRole || "USER"}:${message.senderUserId}`
       }, { transaction });
+
+      if (actor.role === "MODERATOR") {
+        await incrementModeratorWorkload(actor.userId, transaction);
+      }
 
       // Force-revoke live sockets immediately after committing the ban.
       // Stored on a local variable so we can call it after transaction.commit().
@@ -670,6 +706,10 @@ async function reviewReport(req, res) {
       // can be informed without exposing sensitive moderation context in plain UI text.
       // createNotification is called after commit to avoid transaction entanglement.
       req._warnTargetUserId = message.senderUserId;
+
+      if (actor.role === "MODERATOR") {
+        await incrementModeratorWorkload(actor.userId, transaction);
+      }
     }
   }
 

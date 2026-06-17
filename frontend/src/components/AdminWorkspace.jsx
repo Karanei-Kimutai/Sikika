@@ -1,20 +1,18 @@
 /**
  * AdminWorkspace
  * --------------
- * Shared layout shell for both NGO and System admin pages.
+ * Layout shell for the NGO Admin dashboard (the only admin role — System
+ * Admin was removed).
  *
  * Why this component exists:
- * - keeps the two dashboards visually consistent
  * - centralizes common chrome (identity card, sidebar/actions, module area)
- * - lets each dashboard focus on business logic and section rendering
+ * - lets the dashboard focus on business logic and section rendering
  *
  * Key props:
- * - `variant`: switches color theme between `ngo` and `system`
  * - `menuItems` + `activeSection`: section navigation metadata/state
  * - `showSidebar`: allows compact single-column mode where page-level nav is external
  */
 function AdminWorkspace({
-  variant,
   roleLabel,
   title,
   subtitle,
@@ -27,11 +25,9 @@ function AdminWorkspace({
   showSidebar = true,
   children
 }) {
-  // Theme class drives CSS variable selection in App.css.
-  const heroClass = variant === "system" ? "admin-workspace system" : "admin-workspace ngo";
 
   return (
-    <main className={heroClass}>
+    <main className="admin-workspace ngo">
       <div className={`admin-workspace-grid ${showSidebar ? "" : "single-column"}`}>
         {showSidebar && (
           <aside className="admin-sidebar" aria-label="Admin navigation">

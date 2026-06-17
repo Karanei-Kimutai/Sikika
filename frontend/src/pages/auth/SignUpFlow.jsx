@@ -8,9 +8,10 @@ const AUTH_INTENTS = { SIGNUP_OTP: "SIGNUP_OTP" };
 /**
  * SignUpFlow
  * ----------
- * Renders the Sign Up tab panel:
- * - Step 1: phone number + send OTP
- * - Step 2: verify OTP, set password, fill profile details
+ * Renders the Sign Up tab panel as a 3-step sequence:
+ * - Step 1 (request): phone number → send OTP
+ * - Step 2 (verify): enter OTP only → server issues a short-lived signup ticket
+ * - Step 3 (details): set password + profile fields → complete-signup using the ticket
  *
  * @param {object}   props
  * @param {boolean}  props.loading
@@ -29,6 +30,7 @@ export default function SignUpFlow({
   const [signupPhone, setSignupPhone] = useState("");
   const [signupStep, setSignupStep] = useState("request");
   const [signupOtp, setSignupOtp] = useState("");
+  const [signupTicket, setSignupTicket] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
   const [showSignupPassword, setShowSignupPassword] = useState(false);
   const [signupNickname, setSignupNickname] = useState("");
@@ -55,13 +57,13 @@ export default function SignUpFlow({
       setSignupStep("verify");
       setSuccessMessage(
         response.data.developmentOtp
-          ? "Development OTP loaded. Confirm it and set your password."
-          : "A secure code has been sent to your phone. Verify it and set your password."
+          ? "Development OTP loaded. Confirm it to continue."
+          : "A secure code has been sent to your phone. Enter it to continue."
       );
     } catch (error) {
       if (error.response?.data?.authStage === "SIGNIN_REQUIRED") {
         onSwitchToSignin(signupPhone.trim());
-        setErrorMessage("This phone already has an account. Sign in with OTP or password.");
+        setErrorMessage("This phone already has an account. Please sign in.");
       } else {
         setErrorMessage(formatApiError(error, "Could not send access code. Please try again."));
       }
@@ -70,9 +72,9 @@ export default function SignUpFlow({
     }
   };
 
-  const completeSignup = async () => {
-    if (!canSubmitSignupOtp || !canSubmitSignupPassword) {
-      setErrorMessage("Enter OTP, password, nickname, and county to complete signup.");
+  const verifySignupOtp = async () => {
+    if (!canSubmitSignupOtp) {
+      setErrorMessage("Enter the 4-digit code sent to your phone.");
       return;
     }
     clearMessages();
@@ -80,9 +82,35 @@ export default function SignUpFlow({
     try {
       const response = await axios.post(`${API_BASE_URL}/api/auth/verify-otp`, {
         phoneNumber: signupPhone.trim(),
-        otp: signupOtp.trim(),
+        otp: signupOtp.trim()
+      });
+      setSignupTicket(response.data.signupTicket || "");
+      setSignupStep("details");
+      setSuccessMessage("Phone number verified. Now set your password and profile details.");
+    } catch (error) {
+      if (error.response?.data?.authStage === "SIGNIN_REQUIRED") {
+        onSwitchToSignin(signupPhone.trim());
+        setErrorMessage("This account already has a password. Please sign in.");
+      } else {
+        setErrorMessage(error.response?.data?.error || "Verification failed. Please try again.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const completeSignupDetails = async () => {
+    if (!canSubmitSignupPassword) {
+      setErrorMessage("Set a password with at least 8 characters.");
+      return;
+    }
+    clearMessages();
+    setLoading(true);
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/complete-signup`, {
+        phoneNumber: signupPhone.trim(),
+        signupTicket,
         password: signupPassword.trim(),
-        authIntent: AUTH_INTENTS.SIGNUP_OTP,
         profileDetails: {
           displayNickname: signupNickname.trim(),
           assignedGender: signupGender,
@@ -96,7 +124,7 @@ export default function SignUpFlow({
         onSwitchToSignin(signupPhone.trim());
         setErrorMessage("This account already has a password. Please sign in.");
       } else {
-        setErrorMessage(error.response?.data?.error || "Verification failed. Please try again.");
+        setErrorMessage(error.response?.data?.error || "Could not complete signup. Please try again.");
       }
     } finally {
       setLoading(false);
@@ -108,10 +136,22 @@ export default function SignUpFlow({
     await requestSignupOtp();
   };
 
+  const resetToPhoneStep = () => {
+    clearMessages();
+    setSignupStep("request");
+    setSignupOtp("");
+    setSignupTicket("");
+    setSignupPassword("");
+    setSignupNickname("");
+    setSignupGender("UNSPECIFIED");
+    setSignupCounty("");
+  };
+
   const handleSubmit = (e) => {
     e.preventDefault();
     if (signupStep === "request") return requestSignupOtp();
-    return completeSignup();
+    if (signupStep === "verify") return verifySignupOtp();
+    return completeSignupDetails();
   };
 
   return (
@@ -124,7 +164,7 @@ export default function SignUpFlow({
     >
       <p className="auth-step-heading">New Account Setup</p>
 
-      {signupStep === "request" ? (
+      {signupStep === "request" && (
         <>
           <label htmlFor="signupPhone">Mobile Number</label>
           <input
@@ -141,9 +181,11 @@ export default function SignUpFlow({
             {loading ? "Sending code..." : "Send OTP Code"}
           </button>
         </>
-      ) : (
+      )}
+
+      {signupStep === "verify" && (
         <>
-          <p className="auth-mini-guide">Step 2 of 2: Verify your OTP and create your password.</p>
+          <p className="auth-mini-guide">Step 2 of 3: Verify the code sent to your phone.</p>
           <label htmlFor="signupOtp">Enter 4-Digit Code</label>
           <input
             id="signupOtp"
@@ -156,6 +198,25 @@ export default function SignUpFlow({
             onChange={(e) => setSignupOtp(e.target.value.replace(/\D/g, ""))}
             autoComplete="one-time-code"
           />
+          <button
+            type="submit"
+            className="primary-btn auth-verify-btn"
+            disabled={loading || !canSubmitSignupOtp}
+          >
+            {loading ? "Verifying..." : "Verify Code"}
+          </button>
+          <button type="button" className="link-btn" onClick={resendCode} disabled={loading}>
+            Resend Code
+          </button>
+          <button type="button" className="link-btn" onClick={resetToPhoneStep} disabled={loading}>
+            Change Number
+          </button>
+        </>
+      )}
+
+      {signupStep === "details" && (
+        <>
+          <p className="auth-mini-guide">Step 3 of 3: Set your password and profile details.</p>
           <label htmlFor="signupPassword">Create Password</label>
           <div className="password-input-wrap">
             <input
@@ -201,27 +262,11 @@ export default function SignUpFlow({
           <button
             type="submit"
             className="primary-btn auth-verify-btn"
-            disabled={loading || !canSubmitSignupOtp || !canSubmitSignupPassword}
+            disabled={loading || !canSubmitSignupPassword}
           >
-            {loading ? "Creating account..." : "Verify OTP & Create Password"}
+            {loading ? "Creating account..." : "Create Account"}
           </button>
-          <button type="button" className="link-btn" onClick={resendCode} disabled={loading}>
-            Resend Code
-          </button>
-          <button
-            type="button"
-            className="link-btn"
-            onClick={() => {
-              clearMessages();
-              setSignupStep("request");
-              setSignupOtp("");
-              setSignupPassword("");
-              setSignupNickname("");
-              setSignupGender("UNSPECIFIED");
-              setSignupCounty("");
-            }}
-            disabled={loading}
-          >
+          <button type="button" className="link-btn" onClick={resetToPhoneStep} disabled={loading}>
             Change Number
           </button>
         </>

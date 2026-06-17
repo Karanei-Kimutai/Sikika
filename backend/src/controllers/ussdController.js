@@ -1,7 +1,33 @@
 const { v4: uuidv4 } = require('uuid');
+const { Op } = require('sequelize');
 const db = require('../models');
-const { UssdCallbackRequest, UserAccount } = db;
-const { createNotificationsBulk } = require('../services/notificationService');
+const { UssdCallbackRequest, UserAccount, CounsellorProfile } = db;
+const { createNotification, createNotificationsBulk } = require('../services/notificationService');
+
+/**
+ * pickLeastLoadedCounsellor
+ * --------------------------
+ * Selects the counsellor with the lowest currentWorkloadScore, preferring
+ * AVAILABLE staff, for auto-routing incoming USSD callback requests.
+ *
+ * Local to this controller (rather than reusing authController's
+ * pickLeastLoadedStaff) to keep the unauthenticated USSD webhook path free
+ * of authController's heavier module graph (JWT/bcrypt/Africa's Talking SDK
+ * init) — this is the only staff-assignment logic this controller needs.
+ *
+ * @returns {Promise<import('sequelize').Model|null>}
+ */
+async function pickLeastLoadedCounsellor() {
+  const preferred = await CounsellorProfile.findOne({
+    where: { availabilityStatus: { [Op.in]: ['AVAILABLE', 'BUSY'] } },
+    order: [['currentWorkloadScore', 'ASC'], ['counsellorId', 'ASC']]
+  });
+  if (preferred) return preferred;
+
+  return CounsellorProfile.findOne({
+    order: [['currentWorkloadScore', 'ASC'], ['counsellorId', 'ASC']]
+  });
+}
 
 /**
  * ussdController.js
@@ -91,10 +117,19 @@ async function handleCallback(req, res) {
     if (confirmation === '1') {
       // Persist the callback request — phone number only, no account required.
       try {
+        // Auto-route to the least-loaded available counsellor so NGO Admin
+        // doesn't have to manually triage every incoming callback. Best-effort:
+        // a lookup failure should not block saving the request itself.
+        const assignedCounsellor = await pickLeastLoadedCounsellor().catch((err) => {
+          console.error('[USSD] Failed to auto-assign counsellor for callback:', err.message);
+          return null;
+        });
+
         await UssdCallbackRequest.create({
           callbackRequestId: uuidv4(),
           requesterPhoneNumber: phoneNumber,
-          callbackFulfillmentStatus: 'PENDING'
+          callbackFulfillmentStatus: 'PENDING',
+          assignedCounsellorId: assignedCounsellor?.counsellorId || null
         });
 
         // Notify all active NGO admins of the new callback request in real time.
@@ -113,6 +148,19 @@ async function handleCallback(req, res) {
         }).catch((err) => {
           console.error('[USSD] Failed to notify NGO admins of callback request:', err.message);
         });
+
+        // Notify the auto-assigned counsellor directly so they have visibility
+        // into the callback without relying on the NGO admin to relay it.
+        // Best-effort — notification failure must not break the USSD flow.
+        if (assignedCounsellor?.userId) {
+          createNotification({
+            recipientUserId: assignedCounsellor.userId,
+            message: 'A new callback request has been assigned to you.',
+            category: 'CALLBACK_REQUEST'
+          }).catch((err) => {
+            console.error('[USSD] Failed to notify assigned counsellor of callback request:', err.message);
+          });
+        }
 
       } catch (err) {
         console.error('[USSD] Failed to save callback request:', err.message);
@@ -174,10 +222,62 @@ async function listCallbackRequests(req, res) {
       order: [['callbackRequestTimestamp', 'DESC']]
     });
 
-    return res.json({ requests });
+    // Resolve assigned-counsellor phone numbers for display — a single lookup
+    // covering all rows rather than N+1 queries per request.
+    const counsellorProfiles = await CounsellorProfile.findAll({
+      attributes: ['counsellorId', 'userId'],
+      include: [{ model: UserAccount, attributes: ['phoneNumber'] }]
+    });
+    const counsellorPhoneById = new Map(
+      counsellorProfiles.map((profile) => [profile.counsellorId, profile.userAccount?.phoneNumber || null])
+    );
+
+    const enrichedRequests = requests.map((request) => ({
+      ...request.toJSON(),
+      assignedCounsellorPhone: counsellorPhoneById.get(request.assignedCounsellorId) || null
+    }));
+
+    return res.json({ requests: enrichedRequests });
   } catch (err) {
     console.error('[USSD] listCallbackRequests error:', err.message);
     return res.status(500).json({ error: 'Could not retrieve callback requests.' });
+  }
+}
+
+/**
+ * GET /api/ussd/my-callback-requests
+ *
+ * Returns the USSD callback requests auto-assigned to the calling counsellor,
+ * newest first. Restricted to COUNSELLOR role — gives the assigned counsellor
+ * visibility into their own queue without the NGO-admin-wide view.
+ *
+ * @param {import('express').Request}  req  - Must have req.user from authMiddleware.
+ * @param {import('express').Response} res
+ */
+async function getMyCallbackRequests(req, res) {
+  if (req.user?.role !== 'COUNSELLOR') {
+    return res.status(403).json({ error: 'Counsellor access required.' });
+  }
+
+  try {
+    const counsellorProfile = await CounsellorProfile.findOne({
+      where: { userId: req.user.userId },
+      attributes: ['counsellorId']
+    });
+
+    if (!counsellorProfile) {
+      return res.status(404).json({ error: 'Counsellor profile not found.' });
+    }
+
+    const requests = await UssdCallbackRequest.findAll({
+      where: { assignedCounsellorId: counsellorProfile.counsellorId },
+      order: [['callbackRequestTimestamp', 'DESC']]
+    });
+
+    return res.json({ requests });
+  } catch (err) {
+    console.error('[USSD] getMyCallbackRequests error:', err.message);
+    return res.status(500).json({ error: 'Could not retrieve your callback requests.' });
   }
 }
 
@@ -186,14 +286,18 @@ async function listCallbackRequests(req, res) {
  *
  * Updates the fulfillment status of a USSD callback request.
  * Only COMPLETED and CANCELLED are valid next states from PENDING.
- * Restricted to NGO_ADMIN role.
+ * NGO_ADMIN may update any request; a COUNSELLOR may only update a request
+ * that is auto-assigned to them.
  *
  * @param {import('express').Request}  req  - body: { callbackFulfillmentStatus }
  * @param {import('express').Response} res
  */
 async function updateCallbackRequest(req, res) {
-  if (req.user?.role !== 'NGO_ADMIN') {
-    return res.status(403).json({ error: 'NGO admin access required.' });
+  const isAdmin = req.user?.role === 'NGO_ADMIN';
+  const isCounsellor = req.user?.role === 'COUNSELLOR';
+
+  if (!isAdmin && !isCounsellor) {
+    return res.status(403).json({ error: 'NGO admin or assigned counsellor access required.' });
   }
 
   const { requestId } = req.params;
@@ -213,6 +317,19 @@ async function updateCallbackRequest(req, res) {
       return res.status(404).json({ error: 'Callback request not found.' });
     }
 
+    if (isCounsellor) {
+      // A counsellor may only act on a request auto-assigned to them — not
+      // the NGO-admin-wide queue.
+      const counsellorProfile = await CounsellorProfile.findOne({
+        where: { userId: req.user.userId },
+        attributes: ['counsellorId']
+      });
+
+      if (!counsellorProfile || record.assignedCounsellorId !== counsellorProfile.counsellorId) {
+        return res.status(403).json({ error: 'This callback request is not assigned to you.' });
+      }
+    }
+
     if (record.callbackFulfillmentStatus !== 'PENDING') {
       return res.status(409).json({
         error: `Cannot update a request that is already ${record.callbackFulfillmentStatus}.`
@@ -228,4 +345,4 @@ async function updateCallbackRequest(req, res) {
   }
 }
 
-module.exports = { handleCallback, listCallbackRequests, updateCallbackRequest };
+module.exports = { handleCallback, listCallbackRequests, getMyCallbackRequests, updateCallbackRequest };

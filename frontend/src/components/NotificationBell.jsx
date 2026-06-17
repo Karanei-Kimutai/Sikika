@@ -43,7 +43,8 @@ function getCategoryLabel(category) {
     REPORT_UPDATE: "Update",
     ASSIGNMENT: "Assignment",
     MODERATION_ALERT: "Notice",
-    NEW_SUBMISSION: "Submission"
+    NEW_SUBMISSION: "Submission",
+    CALLBACK_REQUEST: "Callback"
   };
   return labels[category] || "Update";
 }
