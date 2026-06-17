@@ -3,14 +3,12 @@ import axios from "axios";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
-const AUTH_INTENTS = { SIGNIN_OTP: "SIGNIN_OTP" };
-
 /**
  * SignInFlow
  * ----------
  * Renders the Sign In tab panel including:
- * - Password sign-in
- * - OTP sign-in (request + verify)
+ * - Password sign-in, with OTP enforced as a mandatory 2FA step after a
+ *   successful password match (no separate OTP-only login method)
  * - Forgot/reset password sub-flow
  * - First-login forced password reset for staff provisioned by NGO admins
  *
@@ -26,14 +24,13 @@ const AUTH_INTENTS = { SIGNIN_OTP: "SIGNIN_OTP" };
  */
 export default function SignInFlow({
   loading, setLoading, setErrorMessage, setSuccessMessage, clearMessages,
-  finalizeLogin, formatApiError, onSwitchToSignup
+  finalizeLogin, onSwitchToSignup
 }) {
   const [signinPhone, setSigninPhone] = useState("");
   const [signinPassword, setSigninPassword] = useState("");
-  const [signinOtp, setSigninOtp] = useState("");
   const [showSigninPassword, setShowSigninPassword] = useState(false);
-  const [signinMethod, setSigninMethod] = useState("password");
-  const [signinOtpStep, setSigninOtpStep] = useState("request");
+  const [signinStep, setSigninStep] = useState("password");
+  const [signinTwoFactorOtp, setSigninTwoFactorOtp] = useState("");
 
   const [showResetFlow, setShowResetFlow] = useState(false);
   const [resetStep, setResetStep] = useState("request");
@@ -50,7 +47,7 @@ export default function SignInFlow({
 
   const canSubmitSigninPhone = useMemo(() => signinPhone.trim().length >= 10, [signinPhone]);
   const canSubmitSigninPassword = useMemo(() => signinPassword.trim().length >= 8, [signinPassword]);
-  const canSubmitSigninOtp = useMemo(() => signinOtp.trim().length === 4, [signinOtp]);
+  const canSubmitTwoFactorOtp = useMemo(() => signinTwoFactorOtp.trim().length === 4, [signinTwoFactorOtp]);
   const canSubmitResetPhone = useMemo(() => resetPhone.trim().length >= 10, [resetPhone]);
   const canSubmitResetOtp = useMemo(() => resetOtp.trim().length === 4, [resetOtp]);
   const canSubmitResetPassword = useMemo(() => resetNewPassword.trim().length >= 8, [resetNewPassword]);
@@ -93,6 +90,16 @@ export default function SignInFlow({
         beginFirstLoginResetFlow(response.data, signinPhone.trim());
         return;
       }
+      if (response.data?.authStage === "OTP_2FA_REQUIRED") {
+        if (response.data.developmentOtp) setSigninTwoFactorOtp(response.data.developmentOtp);
+        setSigninStep("twoFactor");
+        setSuccessMessage(
+          response.data.developmentOtp
+            ? "Password verified. Development OTP loaded — confirm it to finish signing in."
+            : "Password verified. Enter the OTP sent to your phone to finish signing in."
+        );
+        return;
+      }
       finalizeLogin(response.data.token, response.data.userId);
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Password login failed. Check your phone number and password.");
@@ -101,65 +108,29 @@ export default function SignInFlow({
     }
   };
 
-  const requestSigninOtp = async () => {
-    if (!canSubmitSigninPhone) {
-      setErrorMessage("Enter a valid mobile number including country code.");
+  const verifyTwoFactorOtp = async () => {
+    if (!canSubmitTwoFactorOtp || !canSubmitSigninPhone) {
+      setErrorMessage("Enter the 4-digit OTP sent to your phone.");
       return;
     }
     clearMessages();
     setLoading(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/auth/request-otp`, {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/verify-2fa`, {
         phoneNumber: signinPhone.trim(),
-        authIntent: AUTH_INTENTS.SIGNIN_OTP
+        otp: signinTwoFactorOtp.trim()
       });
-      if (response.data.developmentOtp) setSigninOtp(response.data.developmentOtp);
-      setSigninOtpStep("verify");
-      setSuccessMessage(
-        response.data.developmentOtp
-          ? "Development OTP loaded. Enter it to complete sign in."
-          : "A secure sign-in code has been sent to your phone. Enter it below."
-      );
+      finalizeLogin(response.data.token, response.data.userId);
     } catch (error) {
-      if (error.response?.data?.authStage === "SIGNUP_REQUIRED") {
-        onSwitchToSignup(signinPhone.trim());
-        setErrorMessage("This phone number has not completed signup yet. Create your account first.");
-      } else {
-        setErrorMessage(formatApiError(error, "Could not send OTP for sign in."));
-      }
+      setErrorMessage(error.response?.data?.error || "OTP verification failed. Please try again.");
     } finally {
       setLoading(false);
     }
   };
 
-  const verifySigninOtp = async () => {
-    if (!canSubmitSigninOtp || !canSubmitSigninPhone) {
-      setErrorMessage("Enter your mobile number and the 4-digit OTP code.");
-      return;
-    }
-    clearMessages();
-    setLoading(true);
-    try {
-      const response = await axios.post(`${API_BASE_URL}/api/auth/verify-otp`, {
-        phoneNumber: signinPhone.trim(),
-        otp: signinOtp.trim(),
-        authIntent: AUTH_INTENTS.SIGNIN_OTP
-      });
-      if (response.data?.authStage === "PASSWORD_RESET_REQUIRED") {
-        beginFirstLoginResetFlow(response.data, signinPhone.trim());
-        return;
-      }
-      finalizeLogin(response.data.token, response.data.userId);
-    } catch (error) {
-      if (error.response?.data?.authStage === "SIGNUP_REQUIRED") {
-        onSwitchToSignup(signinPhone.trim());
-        setErrorMessage("This phone number has not completed signup yet. Create your account first.");
-      } else {
-        setErrorMessage(error.response?.data?.error || "OTP sign in failed. Please try again.");
-      }
-    } finally {
-      setLoading(false);
-    }
+  const resendTwoFactorOtp = async () => {
+    setSigninTwoFactorOtp("");
+    await loginWithPassword();
   };
 
   const requestResetOtp = async () => {
@@ -234,18 +205,13 @@ export default function SignInFlow({
     }
   };
 
-  const resendCode = async () => {
-    setSigninOtp("");
-    await requestSigninOtp();
-  };
-
   /** Routes form submit to the correct handler based on current sub-flow state. */
   const handleSubmit = (e) => {
     e.preventDefault();
     if (showFirstLoginResetFlow) return completeFirstLoginPasswordReset();
     if (showResetFlow) return resetStep === "request" ? requestResetOtp() : completePasswordReset();
-    if (signinMethod === "password") return loginWithPassword();
-    return signinOtpStep === "request" ? requestSigninOtp() : verifySigninOtp();
+    if (signinStep === "twoFactor") return verifyTwoFactorOtp();
+    return loginWithPassword();
   };
 
   return (
@@ -281,35 +247,108 @@ export default function SignInFlow({
             {loading ? "Updating password..." : "Update Password & Continue"}
           </button>
         </>
+      ) : showResetFlow ? (
+        <>
+          <p className="auth-mini-guide">Reset your password using OTP verification.</p>
+          <label htmlFor="resetPhone">Mobile Number</label>
+          <input
+            id="resetPhone"
+            type="tel"
+            placeholder="e.g. +2547XXXXXXXX"
+            value={resetPhone}
+            onChange={(e) => setResetPhone(e.target.value)}
+            autoComplete="off"
+            name="reset-phone-input"
+            data-lpignore="true"
+          />
+          {resetStep === "request" ? (
+            <button type="submit" className="primary-btn auth-cta-btn" disabled={loading || !canSubmitResetPhone}>
+              {loading ? "Sending reset code..." : "Send Reset OTP"}
+            </button>
+          ) : (
+            <>
+              <label htmlFor="resetOtp">Enter 4-Digit Code</label>
+              <input
+                id="resetOtp"
+                type="text"
+                inputMode="numeric"
+                maxLength={4}
+                placeholder="----"
+                className="otp-input"
+                value={resetOtp}
+                onChange={(e) => setResetOtp(e.target.value.replace(/\D/g, ""))}
+                autoComplete="one-time-code"
+              />
+              <label htmlFor="resetNewPassword">New Password</label>
+              <div className="password-input-wrap">
+                <input
+                  id="resetNewPassword"
+                  type={showResetPassword ? "text" : "password"}
+                  placeholder="Minimum 8 characters"
+                  value={resetNewPassword}
+                  onChange={(e) => setResetNewPassword(e.target.value)}
+                  autoComplete="off"
+                  name="reset-password-input"
+                  data-lpignore="true"
+                />
+                <button type="button" className="password-toggle-btn" onClick={() => setShowResetPassword((v) => !v)}>
+                  {showResetPassword ? "Hide" : "Show"}
+                </button>
+              </div>
+              <button
+                type="submit"
+                className="primary-btn auth-verify-btn"
+                disabled={loading || !canSubmitResetPhone || !canSubmitResetOtp || !canSubmitResetPassword}
+              >
+                {loading ? "Resetting password..." : "Verify OTP & Reset Password"}
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            className="link-btn"
+            onClick={() => { clearMessages(); setShowResetFlow(false); setResetStep("request"); }}
+            disabled={loading}
+          >
+            Back To Sign In
+          </button>
+        </>
+      ) : signinStep === "twoFactor" ? (
+        <>
+          <p className="auth-mini-guide">Step 2 of 2: Enter the OTP sent to your phone to finish signing in.</p>
+          <label htmlFor="signinTwoFactorOtp">Enter 4-Digit Code</label>
+          <input
+            id="signinTwoFactorOtp"
+            type="text"
+            inputMode="numeric"
+            maxLength={4}
+            placeholder="----"
+            className="otp-input"
+            value={signinTwoFactorOtp}
+            onChange={(e) => setSigninTwoFactorOtp(e.target.value.replace(/\D/g, ""))}
+            autoComplete="one-time-code"
+          />
+          <button
+            type="submit"
+            className="primary-btn auth-verify-btn"
+            disabled={loading || !canSubmitTwoFactorOtp}
+          >
+            {loading ? "Verifying..." : "Verify & Sign In"}
+          </button>
+          <button type="button" className="link-btn" onClick={resendTwoFactorOtp} disabled={loading}>
+            Resend Code
+          </button>
+          <button
+            type="button"
+            className="link-btn"
+            onClick={() => { clearMessages(); setSigninStep("password"); setSigninTwoFactorOtp(""); }}
+            disabled={loading}
+          >
+            Back To Sign In
+          </button>
+        </>
       ) : (
         <>
-          <div className="auth-method-switch" role="tablist" aria-label="Sign in method">
-            <button
-              type="button"
-              id="tab-method-password"
-              role="tab"
-              aria-selected={signinMethod === "password"}
-              tabIndex={signinMethod === "password" ? 0 : -1}
-              className={`auth-method-btn ${signinMethod === "password" ? "active" : ""}`}
-              onClick={() => { clearMessages(); setSigninMethod("password"); }}
-              disabled={loading}
-            >
-              Password
-            </button>
-            <button
-              type="button"
-              id="tab-method-otp"
-              role="tab"
-              aria-selected={signinMethod === "otp"}
-              tabIndex={signinMethod === "otp" ? 0 : -1}
-              className={`auth-method-btn ${signinMethod === "otp" ? "active" : ""}`}
-              onClick={() => { clearMessages(); setSigninMethod("otp"); setSigninOtpStep("request"); setSigninOtp(""); }}
-              disabled={loading}
-            >
-              OTP
-            </button>
-          </div>
-
           <label htmlFor="signinPhone">Mobile Number</label>
           <input
             id="signinPhone"
@@ -321,143 +360,32 @@ export default function SignInFlow({
             name="signin-phone-input"
             data-lpignore="true"
           />
-
-          {showResetFlow ? (
-            <>
-              <p className="auth-mini-guide">Reset your password using OTP verification.</p>
-              <label htmlFor="resetPhone">Mobile Number</label>
-              <input
-                id="resetPhone"
-                type="tel"
-                placeholder="e.g. +2547XXXXXXXX"
-                value={resetPhone}
-                onChange={(e) => setResetPhone(e.target.value)}
-                autoComplete="off"
-                name="reset-phone-input"
-                data-lpignore="true"
-              />
-              {resetStep === "request" ? (
-                <button type="submit" className="primary-btn auth-cta-btn" disabled={loading || !canSubmitResetPhone}>
-                  {loading ? "Sending reset code..." : "Send Reset OTP"}
-                </button>
-              ) : (
-                <>
-                  <label htmlFor="resetOtp">Enter 4-Digit Code</label>
-                  <input
-                    id="resetOtp"
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={4}
-                    placeholder="----"
-                    className="otp-input"
-                    value={resetOtp}
-                    onChange={(e) => setResetOtp(e.target.value.replace(/\D/g, ""))}
-                    autoComplete="one-time-code"
-                  />
-                  <label htmlFor="resetNewPassword">New Password</label>
-                  <div className="password-input-wrap">
-                    <input
-                      id="resetNewPassword"
-                      type={showResetPassword ? "text" : "password"}
-                      placeholder="Minimum 8 characters"
-                      value={resetNewPassword}
-                      onChange={(e) => setResetNewPassword(e.target.value)}
-                      autoComplete="off"
-                      name="reset-password-input"
-                      data-lpignore="true"
-                    />
-                    <button type="button" className="password-toggle-btn" onClick={() => setShowResetPassword((v) => !v)}>
-                      {showResetPassword ? "Hide" : "Show"}
-                    </button>
-                  </div>
-                  <button
-                    type="submit"
-                    className="primary-btn auth-verify-btn"
-                    disabled={loading || !canSubmitResetPhone || !canSubmitResetOtp || !canSubmitResetPassword}
-                  >
-                    {loading ? "Resetting password..." : "Verify OTP & Reset Password"}
-                  </button>
-                </>
-              )}
-              <button
-                type="button"
-                className="link-btn"
-                onClick={() => { clearMessages(); setShowResetFlow(false); setResetStep("request"); }}
-                disabled={loading}
-              >
-                Back To Sign In
-              </button>
-            </>
-          ) : signinMethod === "password" ? (
-            <>
-              <label htmlFor="signinPassword">Password</label>
-              <div className="password-input-wrap">
-                <input
-                  id="signinPassword"
-                  type={showSigninPassword ? "text" : "password"}
-                  placeholder="Enter your password"
-                  value={signinPassword}
-                  onChange={(e) => setSigninPassword(e.target.value)}
-                  autoComplete="off"
-                  name="signin-password-input"
-                  data-lpignore="true"
-                />
-                <button type="button" className="password-toggle-btn" onClick={() => setShowSigninPassword((v) => !v)}>
-                  {showSigninPassword ? "Hide" : "Show"}
-                </button>
-              </div>
-              <button
-                type="submit"
-                className="primary-btn auth-cta-btn"
-                disabled={loading || !canSubmitSigninPhone || !canSubmitSigninPassword}
-              >
-                {loading ? "Signing in..." : "Sign In With Password"}
-              </button>
-              <button type="button" className="link-btn" onClick={openResetFlow} disabled={loading}>
-                Forgot Password?
-              </button>
-            </>
-          ) : signinOtpStep === "request" ? (
-            <>
-              <button type="submit" className="primary-btn auth-cta-btn" disabled={loading || !canSubmitSigninPhone}>
-                {loading ? "Sending code..." : "Send Sign-In OTP"}
-              </button>
-            </>
-          ) : (
-            <>
-              <label htmlFor="signinOtp">Enter 4-Digit Code</label>
-              <input
-                id="signinOtp"
-                type="text"
-                inputMode="numeric"
-                maxLength={4}
-                placeholder="----"
-                className="otp-input"
-                value={signinOtp}
-                onChange={(e) => setSigninOtp(e.target.value.replace(/\D/g, ""))}
-                autoComplete="one-time-code"
-              />
-              <button
-                type="submit"
-                className="primary-btn auth-verify-btn"
-                disabled={loading || !canSubmitSigninPhone || !canSubmitSigninOtp}
-              >
-                {loading ? "Verifying..." : "Verify OTP & Sign In"}
-              </button>
-              <button type="button" className="link-btn" onClick={resendCode} disabled={loading}>
-                Resend Code
-              </button>
-              <button
-                type="button"
-                className="link-btn"
-                onClick={() => { clearMessages(); setSigninOtpStep("request"); setSigninOtp(""); }}
-                disabled={loading}
-              >
-                Back To Send OTP
-              </button>
-            </>
-          )}
-
+          <label htmlFor="signinPassword">Password</label>
+          <div className="password-input-wrap">
+            <input
+              id="signinPassword"
+              type={showSigninPassword ? "text" : "password"}
+              placeholder="Enter your password"
+              value={signinPassword}
+              onChange={(e) => setSigninPassword(e.target.value)}
+              autoComplete="off"
+              name="signin-password-input"
+              data-lpignore="true"
+            />
+            <button type="button" className="password-toggle-btn" onClick={() => setShowSigninPassword((v) => !v)}>
+              {showSigninPassword ? "Hide" : "Show"}
+            </button>
+          </div>
+          <button
+            type="submit"
+            className="primary-btn auth-cta-btn"
+            disabled={loading || !canSubmitSigninPhone || !canSubmitSigninPassword}
+          >
+            {loading ? "Signing in..." : "Sign In"}
+          </button>
+          <button type="button" className="link-btn" onClick={openResetFlow} disabled={loading}>
+            Forgot Password?
+          </button>
           <button type="button" className="link-btn" onClick={() => onSwitchToSignup()} disabled={loading}>
             New here? Go to Sign Up
           </button>
