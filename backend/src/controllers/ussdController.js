@@ -1,6 +1,7 @@
 const { v4: uuidv4 } = require('uuid');
 const db = require('../models');
-const { UssdCallbackRequest } = db;
+const { UssdCallbackRequest, UserAccount } = db;
+const { createNotificationsBulk } = require('../services/notificationService');
 
 /**
  * ussdController.js
@@ -95,6 +96,24 @@ async function handleCallback(req, res) {
           requesterPhoneNumber: phoneNumber,
           callbackFulfillmentStatus: 'PENDING'
         });
+
+        // Notify all active NGO admins of the new callback request in real time.
+        // Best-effort — notification failure must not break the USSD flow.
+        UserAccount.findAll({
+          where: { role: 'NGO_ADMIN', accountStatus: 'ACTIVE' },
+          attributes: ['userId']
+        }).then((admins) => {
+          if (!admins.length) return;
+          const ids = admins.map((a) => a.userId);
+          return createNotificationsBulk(
+            ids,
+            'A new callback request has been received via USSD.',
+            'CALLBACK_REQUEST'
+          );
+        }).catch((err) => {
+          console.error('[USSD] Failed to notify NGO admins of callback request:', err.message);
+        });
+
       } catch (err) {
         console.error('[USSD] Failed to save callback request:', err.message);
         return res.type('text/plain').send(
