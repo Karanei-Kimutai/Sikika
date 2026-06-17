@@ -286,7 +286,6 @@ The process exits with code `1`. Common failure causes:
 | `DB_PASSWORD` | — | MySQL password. |
 | `DB_SYNC_ALTER` | `false` | Set `"true"` to run `sequelize.sync({ alter: true })` on this boot. |
 | `ENABLE_SCHEMA_COMPAT` | `true` | Set `"false"` to skip `ensureSchemaCompatibility()` entirely (emergency rollback). |
-| `ALLOW_ADMIN_RESTART` | `true` | Permits the System Admin server-restart action from the dashboard. |
 | `JWT_SECRET` | — | Required. Used to sign and verify all JWTs. |
 | `AFRICASTALKING_API_KEY` | — | Required. Africa's Talking API key. |
 | `AFRICASTALKING_USERNAME` | — | Required. `"sandbox"` routes OTPs to AT simulator; any other value hits the live API. |

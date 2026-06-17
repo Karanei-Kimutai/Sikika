@@ -174,29 +174,27 @@ Key capabilities:
 - create/edit resource catalog entries
 - resource analytics cards for top accessed resources and usage by category
 
-## System Admin Workspace
+## Moderator Workspace
 
-Main implementation: src/pages/SystemAdminDashboardPage.jsx
+NGO Admin is the only admin role — System Admin was removed. Moderator is a separate,
+narrower staff role with delegated access to two sections only: Moderation Desk and
+Community Chat.
 
-Documented sections:
-
-- Infrastructure
-- Operational Logs
-- Maintenance Control
-- Admin Access
+Main implementation: src/pages/ModerationDashboardPage.jsx (also reused as the NGO
+Admin's `/moderation` route), src/pages/CommunityPage.jsx, narrow nav via `moderatorRoutes`
+in `App.jsx`.
 
 Key capabilities:
 
-- infrastructure metrics and status badge
-- live log stream polling
-- maintenance controls with reason + expected return
-- runtime actions (restart request and cache clear)
-- staff creation form for all staff roles
-- all staff directory with status actions
-- suspend/reactivate confirmation modal with:
-	- explicit confirm/cancel
-	- ESC-to-close
-	- click-outside-to-close
+- moderation queue actions (delete message, issue warning, ban user) — same
+  `getModerationReports`/`reviewReport`/`deleteMessage` endpoints used by NGO Admin
+- Community Chat oversight (room/message monitoring)
+- does **not** have access to Team Capacity, Command Center, Staff Directory, USSD
+  Callbacks, or the maintenance-mode toggle — those remain NGO_ADMIN-only
+
+Maintenance mode (the one System Admin capability still needed) now lives as a toggle
+bar inside the NGO Admin dashboard, wired to the same `/api/admin/system/maintenance-mode`
+endpoint, re-gated to `NGO_ADMIN`.
 
 ## Resource Library Tracking
 
@@ -295,20 +293,20 @@ Behavior:
 
 ## Service Layer Reference
 
-Admin service functions: src/services/admin.js
+Admin service functions: src/services/admin.js (NGO_ADMIN is the only admin role —
+System Admin's infra/logs/runtime-action calls were removed along with that role)
 
 - getNgoAdminDashboard
-- getSystemAdminDashboard
 - runAdminSearch
-- setMaintenanceMode
-- getSystemLogs
-- performSystemRuntimeAction
-- createSystemStaffAccount
-- updateSystemStaffStatus
+- setMaintenanceMode (NGO_ADMIN-gated)
+- createNgoStaffAccount / updateNgoStaffStatus
+- banUser / unbanUser / listBannedUsers
 - reviewModerationReport
-- createNgoResource
-- updateNgoResource
-- reassignSurvivorCase
+- createNgoResource / updateNgoResource
+- reassignSurvivorCase / getReassignmentSuggestions
+- getMyReassignmentRequests / createMyReassignmentRequest / cancelMyReassignmentRequest
+- getNgoReassignmentRequests / reviewNgoReassignmentRequest
+- getUssdCallbackRequests / updateUssdCallbackRequest
 
 Resource service functions: src/services/resources.js
 

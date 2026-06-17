@@ -82,7 +82,6 @@ npm start
 | `SKIP_SMS_IN_DEV` | `false` | Set `"true"` (non-production only) to skip SMS and return OTP in response body |
 | `DB_PASSWORD` | — | MySQL password (omit only if your local MySQL user has no password) |
 | `DB_SYNC_ALTER` | `false` | Set `"true"` once to run `sequelize.sync({ alter: true })` on this boot |
-| `ALLOW_ADMIN_RESTART` | `true` | Permits the System Admin server-restart action from the dashboard |
 | `ENABLE_SCHEMA_COMPAT` | `true` | Set `"false"` to skip boot-time schema reconciliation (emergency rollback only) |
 
 ### Africa's Talking (optional)
