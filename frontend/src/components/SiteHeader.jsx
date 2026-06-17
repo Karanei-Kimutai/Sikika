@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { LogOut, Menu, X } from "lucide-react";
 import NotificationBell from "./NotificationBell";
 
@@ -14,11 +14,15 @@ import NotificationBell from "./NotificationBell";
  * - notification bell is shown for all authenticated users; polling and
  *   panel state are encapsulated inside NotificationBell
  * - hamburger drawer activates on narrow viewports (≤ 680px)
+ * - nav pill is horizontally scrollable; hovering near the left/right edges
+ *   auto-scrolls so all items are reachable without a scrollbar being visible
  */
 function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut }) {
   const [navOpen, setNavOpen] = useState(false);
   const navRef = useRef(null);
   const toggleRef = useRef(null);
+  // Tracks the rAF handle so scroll animation can be cancelled cleanly.
+  const scrollRafRef = useRef(null);
 
   const navItems = (() => {
     if (!isAuthenticated) {
@@ -89,6 +93,56 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [navOpen]);
 
+  /**
+   * Edge-hover auto-scroll for the nav pill.
+   * When the pointer is within EDGE_ZONE px of either end, scroll at a speed
+   * proportional to how close the pointer is to the edge (faster = closer).
+   */
+  const stopScroll = useCallback(() => {
+    if (scrollRafRef.current) {
+      cancelAnimationFrame(scrollRafRef.current);
+      scrollRafRef.current = null;
+    }
+  }, []);
+
+  const handleNavMouseMove = useCallback((e) => {
+    const nav = navRef.current;
+    if (!nav) return;
+
+    const EDGE_ZONE = 48; // px from either edge that triggers scrolling
+    const MAX_SPEED = 8;  // px per frame at the very edge
+
+    const { left, width } = nav.getBoundingClientRect();
+    const x = e.clientX - left;
+
+    let speed = 0;
+    if (x < EDGE_ZONE) {
+      // Left zone — scroll left, faster the closer to the edge
+      speed = -MAX_SPEED * (1 - x / EDGE_ZONE);
+    } else if (x > width - EDGE_ZONE) {
+      // Right zone — scroll right
+      speed = MAX_SPEED * (1 - (width - x) / EDGE_ZONE);
+    }
+
+    if (speed === 0) {
+      stopScroll();
+      return;
+    }
+
+    // Kick off an rAF loop only if one isn't already running.
+    if (scrollRafRef.current) return;
+
+    const tick = () => {
+      if (!navRef.current) return;
+      navRef.current.scrollLeft += speed;
+      scrollRafRef.current = requestAnimationFrame(tick);
+    };
+    scrollRafRef.current = requestAnimationFrame(tick);
+  }, [stopScroll]);
+
+  // Clean up any running animation on unmount.
+  useEffect(() => () => stopScroll(), [stopScroll]);
+
   const handleNavClick = (path) => {
     setNavOpen(false);
     onNavigate(path);
@@ -116,30 +170,37 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
         {navOpen ? <X size={20} aria-hidden="true" /> : <Menu size={20} aria-hidden="true" />}
       </button>
 
-      <nav
+      {/* Scroll viewport — takes the grid column, clips overflow, drives rAF scroll */}
+      <div
         ref={navRef}
-        id="primary-nav"
-        className={`site-nav${navOpen ? " site-nav--open" : ""}`}
-        aria-label="Primary navigation"
+        className="site-nav-scroll"
+        onMouseMove={handleNavMouseMove}
+        onMouseLeave={stopScroll}
       >
-        {navItems.map((item) => {
-          const isActive = currentPath === item.path || (item.path === "/" && currentPath === "/home");
-          return (
-            <a
-              key={item.path}
-              href={item.path}
-              className={`site-nav-link ${isActive ? "active" : ""}`}
-              aria-current={isActive ? "page" : undefined}
-              onClick={(e) => {
-                e.preventDefault();
-                handleNavClick(item.path);
-              }}
-            >
-              {item.label}
-            </a>
-          );
-        })}
-      </nav>
+        <nav
+          id="primary-nav"
+          className={`site-nav${navOpen ? " site-nav--open" : ""}`}
+          aria-label="Primary navigation"
+        >
+          {navItems.map((item) => {
+            const isActive = currentPath === item.path || (item.path === "/" && currentPath === "/home");
+            return (
+              <a
+                key={item.path}
+                href={item.path}
+                className={`site-nav-link ${isActive ? "active" : ""}`}
+                aria-current={isActive ? "page" : undefined}
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleNavClick(item.path);
+                }}
+              >
+                {item.label}
+              </a>
+            );
+          })}
+        </nav>
+      </div>
 
       <div className="header-actions">
         {!isAuthenticated && (

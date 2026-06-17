@@ -47,8 +47,6 @@ const publicRoutes = {
   "/system-admin": SystemAdminDashboardPage
 };
 
-const knownPaths = new Set(Object.keys(publicRoutes));
-
 // Role-specific route remapping used after successful authentication.
 const ngoAdminRoutes = {
   "/": (props) => <NgoAdminDashboardPage {...props} initialSection="command-center" />,
@@ -75,6 +73,14 @@ const systemAdminRoutes = {
   "/profile": ManageProfilePage,
   "/join": AuthPage
 };
+
+// Includes role-specific paths so getCurrentPath() doesn't fall back to "/"
+// when an authenticated user lands on a route not present in publicRoutes.
+const knownPaths = new Set([
+  ...Object.keys(publicRoutes),
+  ...Object.keys(ngoAdminRoutes),
+  ...Object.keys(systemAdminRoutes),
+]);
 
 function getRoutesForRole(role, isAuthenticated) {
   if (!isAuthenticated) return publicRoutes;
