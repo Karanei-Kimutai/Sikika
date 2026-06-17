@@ -102,7 +102,7 @@
   min-height: 100vh;
 }
 
-/* Maintenance overlay surface shown when maintenance mode is active for non-system admins. */
+/* Maintenance overlay surface shown when maintenance mode is active for non-NGO-admin sessions. */
 .maintenance-page {
   min-height: 100vh;
   display: grid;
@@ -3761,24 +3761,6 @@ input:focus {
   color: var(--workspace-title);
 }
 
-.system-badge {
-  display: inline-block;
-  border-radius: 999px;
-  padding: 0.33rem 0.72rem;
-  font-size: 0.81rem;
-  font-weight: 900;
-}
-
-.system-badge.ok {
-  background: #d5f4e5;
-  color: #115c3c;
-}
-
-.system-badge.warn {
-  background: #ffd9d9;
-  color: #8e1e1e;
-}
-
 .maintenance-controls {
   margin-top: 0.72rem;
   display: grid;
@@ -3915,15 +3897,6 @@ input:focus {
   --workspace-accent: #a95226;
   --workspace-title: #532a15;
   --workspace-text: #70422a;
-}
-
-.admin-workspace.system {
-  --workspace-bg: radial-gradient(circle at 5% 10%, rgba(31, 107, 209, 0.14), transparent 42%), #f3f8ff;
-  --workspace-surface: #fdfefe;
-  --workspace-border: rgba(33, 88, 165, 0.3);
-  --workspace-accent: #1557b5;
-  --workspace-title: #17365f;
-  --workspace-text: #31557f;
 }
 
 .admin-workspace-grid {
@@ -4646,15 +4619,6 @@ input:focus {
     --workspace-accent:  #c4855a;
     --workspace-title:   #f0dfd0;
     --workspace-text:    #c4b0a0;
-  }
-
-  .admin-workspace.system {
-    --workspace-bg:      #0f1520;
-    --workspace-surface: #161e2e;
-    --workspace-border:  rgba(90, 140, 220, 0.18);
-    --workspace-accent:  #6699dd;
-    --workspace-title:   #d0dff0;
-    --workspace-text:    #8aa4cc;
   }
 
   /* Community and legal palette overrides for dark mode */

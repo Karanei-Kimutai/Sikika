@@ -668,7 +668,7 @@ async function reviewReport(req, res) {
       }
 
       // Dual audit trail: moderation log (visible in NGO desk history) + audit log
-      // (visible in System Admin logs feed) — same convention as the admin ban endpoint.
+      // (general platform audit trail) — same convention as the admin ban endpoint.
       await ModerationActionLog.create({
         moderationActionId: randomUUID(),
         moderatorUserId: actor.userId,

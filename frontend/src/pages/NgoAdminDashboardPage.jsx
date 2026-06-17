@@ -822,7 +822,6 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
 
   return (
     <AdminWorkspace
-      variant="ngo"
       roleLabel="NGO Operations Administrator"
       title={currentNgoSection?.label || "NGO Admin"}
       subtitle={currentNgoSection?.description || "NGO operations workspace"}

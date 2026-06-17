@@ -24,7 +24,6 @@ const { createNotification, createNotificationsBulk } = require("../services/not
  * Core reporting workflow:
  * - Survivors create and manage their own submissions.
  * - Assigned staff (counsellor/legal) and NGO admins can review and advance status.
- * - System admins have read-only visibility for oversight (no status mutations).
  * - Status changes are guarded by both transition rules and role permissions.
  * - Evidence files are stored in Cloudinary; clients receive short-lived signed URLs.
  */

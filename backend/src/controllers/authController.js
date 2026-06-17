@@ -792,7 +792,7 @@ const requestOTP = async (req, res) => {
 
         if (!user) {
             // No account exists — create a shell account for the signup flow.
-            // Role is always SURVIVOR here; staff accounts are provisioned by NGO/system admins.
+            // Role is always SURVIVOR here; staff accounts are provisioned by NGO admins.
             user = await UserAccount.create({
                 phoneNumber: normalizedPhone,
                 userRole: 'SURVIVOR',
@@ -1355,7 +1355,7 @@ const resetPasswordWithOtp = async (req, res) => {
  * ---------------------------
  * Authenticated endpoint for in-session password changes. Used in two scenarios:
  *
- * 1. Staff first login: an NGO/system admin creates a staff account with
+ * 1. Staff first login: an NGO admin creates a staff account with
  *    status='password_reset_required'. On first login, the auth response includes
  *    authStage: PASSWORD_RESET_REQUIRED and the frontend gates all navigation
  *    until this endpoint is called successfully.
