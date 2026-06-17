@@ -11,6 +11,7 @@ import CommunityPage from "./pages/CommunityPage";
 import ModerationDashboardPage from "./pages/ModerationDashboardPage";
 import NgoAdminDashboardPage from "./pages/NgoAdminDashboardPage";
 import ManageProfilePage from "./pages/ManageProfilePage";
+import MyCallbacksPage from "./pages/MyCallbacksPage";
 import "./App.css";
 
 /**
@@ -31,7 +32,9 @@ const API_BASE_URL =
   import.meta.env.VITE_API_URL ||
   "http://localhost:5000";
 
-// Public route map for unauthenticated users and fallback routing.
+// Public route map for unauthenticated users and fallback routing. Also
+// covers SURVIVOR/COUNSELLOR/LEGAL_COUNSEL sessions, which share this same
+// page set (no dedicated role-specific route map needed for them).
 const publicRoutes = {
   "/": LandingPage,
   "/home": LandingPage,
@@ -42,7 +45,11 @@ const publicRoutes = {
   "/community": CommunityPage,
   "/profile": ManageProfilePage,
   "/moderation": ModerationDashboardPage,
-  "/ngo-admin": NgoAdminDashboardPage
+  "/ngo-admin": NgoAdminDashboardPage,
+  // Only COUNSELLOR has a nav entry to this (USSD callback auto-routing
+  // assigns COUNSELLOR only), but the route itself is harmless for other
+  // roles to hit directly — the backend 403s anyone who isn't a counsellor.
+  "/callbacks": MyCallbacksPage
 };
 
 // Role-specific route remapping used after successful authentication.
@@ -50,7 +57,7 @@ const ngoAdminRoutes = {
   "/": (props) => <NgoAdminDashboardPage {...props} initialSection="command-center" />,
   "/home": (props) => <NgoAdminDashboardPage {...props} initialSection="command-center" />,
   "/reports": (props) => <NgoAdminDashboardPage {...props} initialSection="reports" />,
-  "/chat": (props) => <NgoAdminDashboardPage {...props} initialSection="team-capacity" />,
+  "/staff": (props) => <NgoAdminDashboardPage {...props} initialSection="team-capacity" />,
   "/community": CommunityPage,
   "/moderation": (props) => <NgoAdminDashboardPage {...props} initialSection="moderation-desk" />,
   "/ussd-callbacks": (props) => <NgoAdminDashboardPage {...props} initialSection="ussd-callbacks" />,
@@ -209,7 +216,7 @@ function App() {
   // /reports is intentionally excluded from this set — unauthenticated users who navigate
   // there receive a purpose-built emergency intercept screen inside ReportingPage rather
   // than a silent redirect, so they can access crisis contacts without creating an account.
-  const protectedPaths = new Set(["/chat", "/community", "/profile", "/moderation", "/ngo-admin"]);
+  const protectedPaths = new Set(["/chat", "/staff", "/callbacks", "/community", "/profile", "/moderation", "/ngo-admin"]);
   const resolvedPath = protectedPaths.has(currentPath) && !isAuthenticated ? "/join" : currentPath;
   const roleResolvedPath = (() => {
     if (resolvedPath === "/ngo-admin") {
@@ -252,7 +259,7 @@ function App() {
             </p>
 
             <div className="maintenance-meta-grid">
-              {/* Operational reason set by system admins while enabling maintenance. */}
+              {/* Operational reason set by an NGO admin while enabling maintenance. */}
               <article className="maintenance-meta-item">
                 <h2>Current activity</h2>
                 <p>{maintenanceMode.reason || "Scheduled platform maintenance"}</p>
@@ -262,7 +269,7 @@ function App() {
                 <h2>Last status update</h2>
                 <p>{maintenanceMode.updatedAt ? new Date(maintenanceMode.updatedAt).toLocaleString() : "-"}</p>
               </article>
-              {/* Optional ETA authored by system admin; may be intentionally absent. */}
+              {/* Optional ETA authored by an NGO admin; may be intentionally absent. */}
               <article className="maintenance-meta-item">
                 <h2>Estimated return</h2>
                 <p>{maintenanceMode.expectedUntil ? new Date(maintenanceMode.expectedUntil).toLocaleString() : "Not specified"}</p>
