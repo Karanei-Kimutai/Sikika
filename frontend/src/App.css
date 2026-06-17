@@ -470,6 +470,20 @@ button {
   margin-top: 0.1rem;
 }
 
+/* Scroll viewport — fills the center grid column, clips the nav pill */
+.site-nav-scroll {
+  overflow-x: auto;
+  overflow-y: visible;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+  justify-self: center;
+  max-width: 100%;
+}
+
+.site-nav-scroll::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
 .site-nav {
   display: inline-flex;
   gap: 0.35rem;
@@ -477,7 +491,6 @@ button {
   border: 1px solid rgba(139, 94, 60, 0.16);
   border-radius: 0.75rem;
   background: rgba(255, 255, 255, 0.72);
-  justify-self: center;
 }
 
 .site-nav-link,
@@ -493,6 +506,7 @@ button {
   background: transparent;
   font-weight: 800;
   text-decoration: none;
+  white-space: nowrap;
   cursor: pointer;
   transition: color 0.15s ease, background 0.15s ease;
 }
@@ -1561,6 +1575,11 @@ input:focus {
 @media (max-width: 680px) {
   .site-nav-toggle {
     display: flex;
+  }
+
+  /* Hide the scroll wrapper; the nav pill drops out of it as an absolute drawer */
+  .site-nav-scroll {
+    display: contents;
   }
 
   .site-nav {
