@@ -3287,6 +3287,17 @@ input:focus {
   box-shadow: 0 1px 4px rgba(159, 45, 45, 0.14);
 }
 
+/* ── Tappable phone number link in USSD callback table ─────────────────── */
+.phone-link {
+  color: var(--workspace-accent);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.phone-link:hover {
+  text-decoration: underline;
+}
+
 /* ── Banned Users section layout ──────────────────────────────────────── */
 .banned-users-section {
   display: grid;

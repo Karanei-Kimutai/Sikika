@@ -35,6 +35,7 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
         { path: "/moderation", label: "Moderation Desk" },
         { path: "/community", label: "Community Chat" },
         { path: "/chat", label: "Staffing" },
+        { path: "/ussd-callbacks", label: "USSD Callbacks" },
         { path: "/profile", label: "Profile" },
         { path: "/library", label: "Resources" }
       ];

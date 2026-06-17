@@ -35,7 +35,12 @@ export default function UssdCallbacksSection({ ussdCallbacks, updatingCallbackId
               {ussdCallbacks.map((cb) => (
                 <tr key={cb.callbackRequestId}>
                   <td>{formatDate(cb.callbackRequestTimestamp)}</td>
-                  <td>{cb.requesterPhoneNumber}</td>
+                  <td>
+                    {/* tel: link lets the admin initiate a call directly from the dashboard */}
+                    <a href={`tel:${cb.requesterPhoneNumber}`} className="phone-link">
+                      {cb.requesterPhoneNumber}
+                    </a>
+                  </td>
                   <td>
                     <span className={
                       cb.callbackFulfillmentStatus === "COMPLETED"

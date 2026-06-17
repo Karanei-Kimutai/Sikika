@@ -57,6 +57,7 @@ const ngoAdminRoutes = {
   "/chat": (props) => <NgoAdminDashboardPage {...props} initialSection="team-capacity" />,
   "/community": CommunityPage,
   "/moderation": (props) => <NgoAdminDashboardPage {...props} initialSection="moderation-desk" />,
+  "/ussd-callbacks": (props) => <NgoAdminDashboardPage {...props} initialSection="ussd-callbacks" />,
   "/library": LibraryPage,
   "/profile": ManageProfilePage,
   "/join": AuthPage
