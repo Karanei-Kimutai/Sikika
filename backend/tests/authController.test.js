@@ -149,20 +149,19 @@ describe('Auth Controller', () => {
         expect(UserAccount.create).toHaveBeenCalled();
     });
 
-    test('blocks OTP sign-in when account is not completed', async () => {
-        UserAccount.findOne.mockResolvedValue(null);
+    test('blocks signup OTP request when account already has a password', async () => {
+        UserAccount.findOne.mockResolvedValue(buildUser({ hashedPassword: 'existing-hash' }));
 
         const response = await request(app)
             .post('/api/auth/request-otp')
-            .send({ phoneNumber: '+254711000999', authIntent: 'SIGNIN_OTP' });
+            .send({ phoneNumber: '+254711000999', authIntent: 'SIGNUP_OTP' });
 
         expect(response.status).toBe(409);
-        expect(response.body.authStage).toBe('SIGNUP_REQUIRED');
-        expect(response.body.suggestedAuthIntent).toBe('SIGNUP_OTP');
+        expect(response.body.authStage).toBe('SIGNIN_REQUIRED');
     });
 
-    // First-time signup must stop at PASSWORD_SETUP_REQUIRED when password omitted.
-    test('requires password setup after signup OTP verification when password missing', async () => {
+    // Verifying the signup OTP issues a one-time signup ticket — no password yet.
+    test('issues a signup ticket after signup OTP verification', async () => {
         const user = buildUser({
             hashedPassword: null,
             otpHash: '1234',
@@ -174,36 +173,37 @@ describe('Auth Controller', () => {
 
         const response = await request(app)
             .post('/api/auth/verify-otp')
-            .send({ phoneNumber: '+254711000001', otp: '1234', authIntent: 'SIGNUP_OTP' });
+            .send({ phoneNumber: '+254711000001', otp: '1234' });
 
-        expect(response.status).toBe(400);
-        expect(response.body.authStage).toBe('PASSWORD_SETUP_REQUIRED');
-        expect(response.body.authIntent).toBe('SIGNUP_OTP');
+        expect(response.status).toBe(200);
+        expect(response.body.authStage).toBe('DETAILS_REQUIRED');
+        expect(response.body.signupTicket).toBeTruthy();
+        expect(user.isOtpVerified).toBe(true);
     });
 
-    // End-to-end OTP signup success: verifies OTP, hashes password, issues token.
-    test('completes signup after OTP verification with a valid password', async () => {
+    // End-to-end signup success: verifies ticket, hashes password, issues token.
+    test('completes signup with a valid ticket and password', async () => {
         const user = buildUser({
             hashedPassword: null,
-            otpHash: '1234',
-            otpPurpose: 'SIGNUP_OTP',
+            isOtpVerified: true,
+            otpHash: 'hashed-ticket',
+            otpPurpose: 'SIGNUP_TICKET',
             otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000)
         });
 
         UserAccount.findOne.mockResolvedValue(user);
 
         const response = await request(app)
-            .post('/api/auth/verify-otp')
+            .post('/api/auth/complete-signup')
             .send({
                 phoneNumber: '+254711000001',
-                otp: '1234',
-                authIntent: 'SIGNUP_OTP',
+                signupTicket: 'some-ticket',
                 password: 'StrongPass!123'
             });
 
         expect(response.status).toBe(200);
         expect(response.body.authStage).toBe('AUTHENTICATED');
-        expect(response.body.authMethod).toBe('OTP');
+        expect(response.body.authMethod).toBe('SIGNUP');
         expect(response.body.token).toBe('mock-jwt-token');
         expect(bcrypt.hash).toHaveBeenCalledWith('StrongPass!123', 10);
         expect(SurvivorProfile.create).toHaveBeenCalled();
@@ -211,10 +211,11 @@ describe('Auth Controller', () => {
     });
 
     // Wrong OTP should not authenticate and must increment per-account OTP failure state.
-    test('rejects invalid OTP during sign-in and records failure', async () => {
+    test('rejects invalid OTP during signup verification and records failure', async () => {
         const user = buildUser({
+            hashedPassword: null,
             otpHash: 'bcrypt-hash-of-1234', // stored as bcrypt hash
-            otpPurpose: 'SIGNIN_OTP',
+            otpPurpose: 'SIGNUP_OTP',
             otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
             otpAttemptCount: 0
         });
@@ -226,15 +227,15 @@ describe('Auth Controller', () => {
 
         const response = await request(app)
             .post('/api/auth/verify-otp')
-            .send({ phoneNumber: '+254711000001', otp: '9999', authIntent: 'SIGNIN_OTP' });
+            .send({ phoneNumber: '+254711000001', otp: '9999' });
 
         expect(response.status).toBe(401);
         expect(response.body.error).toBe('Invalid OTP.');
         expect(user.save).toHaveBeenCalled();
     });
 
-    // Password flow happy path for existing users with hashed credentials.
-    test('logs in with password when credentials are valid', async () => {
+    // Password flow happy path: a successful password match defers to 2FA instead of issuing a token.
+    test('sends a 2FA OTP after a valid password match', async () => {
         const user = buildUser({ hashedPassword: 'stored-hash' });
 
         UserAccount.findOne.mockResolvedValue(user);
@@ -245,8 +246,30 @@ describe('Auth Controller', () => {
             .send({ phoneNumber: '+254711000001', password: 'StrongPass!123' });
 
         expect(response.status).toBe(200);
-        expect(response.body.authMethod).toBe('PASSWORD');
+        expect(response.body.authStage).toBe('OTP_2FA_REQUIRED');
+        expect(response.body.authIntent).toBe('SIGNIN_2FA');
+        expect(response.body.token).toBeUndefined();
+    });
+
+    // Second factor: valid 2FA OTP after password match issues the JWT.
+    test('issues a token after a valid 2FA OTP', async () => {
+        const user = buildUser({
+            hashedPassword: 'stored-hash',
+            otpHash: 'bcrypt-hash-of-1234',
+            otpPurpose: 'SIGNIN_2FA',
+            otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000)
+        });
+
+        UserAccount.findOne.mockResolvedValue(user);
+        bcrypt.compare.mockResolvedValue(true);
+
+        const response = await request(app)
+            .post('/api/auth/verify-2fa')
+            .send({ phoneNumber: '+254711000001', otp: '1234' });
+
+        expect(response.status).toBe(200);
         expect(response.body.authStage).toBe('AUTHENTICATED');
+        expect(response.body.authMethod).toBe('PASSWORD_2FA');
         expect(response.body.token).toBe('mock-jwt-token');
     });
 

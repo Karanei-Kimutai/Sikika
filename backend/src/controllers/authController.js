@@ -77,7 +77,11 @@ const LOCKOUT_MS = Number(process.env.AUTH_LOCKOUT_MS || 15 * 60 * 1000);
  * can branch without inspecting error messages or HTTP status codes.
  *
  * - OTP_VERIFICATION_REQUIRED   : OTP has been sent; frontend should show the OTP input.
- * - PASSWORD_SETUP_REQUIRED     : OTP verified for first-time signup; frontend must collect password.
+ * - DETAILS_REQUIRED            : Signup OTP verified; frontend must collect password + profile
+ *                                 details and call complete-signup (a signup ticket is returned
+ *                                 alongside this stage and must be echoed back).
+ * - OTP_2FA_REQUIRED            : Password matched on signin; a 2FA OTP has been sent and the
+ *                                 frontend must collect it and call verify-2fa to receive a JWT.
  * - PASSWORD_RESET_REQUIRED     : Account flagged for forced reset (staff provisioned by admin).
  * - SIGNUP_REQUIRED             : Phone has no completed account; user must sign up.
  * - SIGNIN_REQUIRED             : Account already exists; user should sign in, not sign up.
@@ -86,7 +90,8 @@ const LOCKOUT_MS = Number(process.env.AUTH_LOCKOUT_MS || 15 * 60 * 1000);
  */
 const AUTH_STAGES = {
     OTP_VERIFICATION_REQUIRED: 'OTP_VERIFICATION_REQUIRED',
-    PASSWORD_SETUP_REQUIRED: 'PASSWORD_SETUP_REQUIRED',
+    DETAILS_REQUIRED: 'DETAILS_REQUIRED',
+    OTP_2FA_REQUIRED: 'OTP_2FA_REQUIRED',
     PASSWORD_RESET_REQUIRED: 'PASSWORD_RESET_REQUIRED',
     SIGNUP_REQUIRED: 'SIGNUP_REQUIRED',
     SIGNIN_REQUIRED: 'SIGNIN_REQUIRED',
@@ -97,17 +102,22 @@ const AUTH_STAGES = {
 /**
  * AUTH_INTENTS
  * ------------
- * Caller-supplied intent values that tell the OTP endpoints which flow is being
- * executed. They are also stored as `otpPurpose` on the account so that verify-otp
- * can confirm the OTP is being consumed in the same flow it was issued for.
+ * Purpose values stored as `otpPurpose` on the account so OTP/ticket verification
+ * can confirm a code is being consumed in the same flow it was issued for
+ * (cross-flow replay prevention).
  *
- * - SIGNUP_OTP      : OTP requested as part of new-account creation.
- * - SIGNIN_OTP      : OTP requested as an alternative to password login.
- * - PASSWORD_RESET  : OTP requested to authorize a forgotten-password reset.
+ * - SIGNUP_OTP     : OTP requested as part of new-account phone verification. Caller-supplied.
+ * - SIGNUP_TICKET  : Short-lived ticket issued after SIGNUP_OTP succeeds, authorizing the
+ *                    one remaining step (password + profile details) without re-sending an OTP.
+ *                    Never caller-supplied as an intent — only ever set server-side.
+ * - SIGNIN_2FA     : OTP sent automatically after a successful password match on signin.
+ *                    Never caller-supplied as an intent — only ever set server-side.
+ * - PASSWORD_RESET : OTP requested to authorize a forgotten-password reset. Caller-supplied.
  */
 const AUTH_INTENTS = {
-    SIGNIN_OTP: 'SIGNIN_OTP',
     SIGNUP_OTP: 'SIGNUP_OTP',
+    SIGNUP_TICKET: 'SIGNUP_TICKET',
+    SIGNIN_2FA: 'SIGNIN_2FA',
     PASSWORD_RESET: 'PASSWORD_RESET'
 };
 
@@ -299,16 +309,18 @@ function normalizePhoneNumber(phoneNumber) {
 /**
  * resolveAuthIntent
  * -----------------
- * Validates the caller-supplied authIntent string against known AUTH_INTENTS
- * constants and returns the canonical value. Returns null for any unrecognised
- * or missing value so callers can apply a safe default.
+ * Validates the caller-supplied authIntent string against the subset of
+ * AUTH_INTENTS that clients are allowed to request directly. SIGNUP_TICKET
+ * and SIGNIN_2FA are deliberately excluded — those are only ever set
+ * server-side as part of the signup-completion and signin-2FA steps, never
+ * requested by a caller. Returns null for any unrecognised or missing value
+ * so callers can apply a safe default.
  *
  * @param {string} value - Raw authIntent string from the request body.
- * @returns {string|null} A known AUTH_INTENTS value, or null.
+ * @returns {string|null} A known client-facing AUTH_INTENTS value, or null.
  */
 function resolveAuthIntent(value) {
     const raw = String(value || '').trim().toUpperCase();
-    if (raw === AUTH_INTENTS.SIGNIN_OTP) return AUTH_INTENTS.SIGNIN_OTP;
     if (raw === AUTH_INTENTS.SIGNUP_OTP) return AUTH_INTENTS.SIGNUP_OTP;
     if (raw === AUTH_INTENTS.PASSWORD_RESET) return AUTH_INTENTS.PASSWORD_RESET;
     return null;
@@ -740,26 +752,22 @@ async function ensureSurvivorStaffAutoAssignment(user, profileOverrides = null) 
 /**
  * POST /api/auth/request-otp
  * --------------------------
- * Entry point for both OTP-based signup and OTP-based signin. The caller
- * supplies an `authIntent` to indicate which flow they are starting; the
- * server validates this against the account state and rejects mismatches
- * (e.g. trying to sign up with a phone that already has an account).
+ * Entry point for OTP-based signup phone verification — the first step of the
+ * signup flow (phone → OTP verify → password + profile details). Signin no
+ * longer has a standalone OTP path; OTP there is sent automatically as a 2FA
+ * step after a successful password check (see loginWithPassword/verify2FA).
  *
- * Signup path (SIGNUP_OTP):
+ * Signup path (SIGNUP_OTP, the only intent this endpoint accepts):
  * - If no account exists for the phone, a shell UserAccount is created
  *   immediately (role: SURVIVOR, status: ACTIVE, no password yet).
  * - If an account already has a password, returns 409 SIGNIN_REQUIRED.
  *
- * Signin path (SIGNIN_OTP):
- * - If no completed account exists (no hashedPassword), returns 409 SIGNUP_REQUIRED.
+ * - Checks for an active lockout before generating a new OTP.
+ * - Generates a 4-digit OTP, bcrypt-hashes it, and stores it with purpose + expiry.
+ * - Sends the plaintext OTP via SMS (or exposes it in response body in dev mode).
+ * - Returns authStage: OTP_VERIFICATION_REQUIRED so the frontend shows the OTP input.
  *
- * Both paths:
- * - Check for an active lockout before generating a new OTP.
- * - Generate a 4-digit OTP, bcrypt-hash it, and store it with purpose + expiry.
- * - Send the plaintext OTP via SMS (or expose it in response body in dev mode).
- * - Return authStage: OTP_VERIFICATION_REQUIRED so the frontend shows the OTP input.
- *
- * @param {import('express').Request}  req - Body: { phoneNumber, authIntent }
+ * @param {import('express').Request}  req - Body: { phoneNumber, authIntent? }
  * @param {import('express').Response} res
  */
 const requestOTP = async (req, res) => {
@@ -775,21 +783,10 @@ const requestOTP = async (req, res) => {
         // Fetch account once so we can gate intent-specific behavior.
         let user = await UserAccount.findOne({ where: { phoneNumber: normalizedPhone } });
 
-        if (resolvedIntent === AUTH_INTENTS.SIGNIN_OTP) {
-            if (!user || !user.hashedPassword) {
-                return res.status(409).json({
-                    error: 'No completed account found for OTP sign in. Please create your account first.',
-                    authStage: AUTH_STAGES.SIGNUP_REQUIRED,
-                    suggestedAuthIntent: AUTH_INTENTS.SIGNUP_OTP
-                });
-            }
-        }
-
-        if (resolvedIntent === AUTH_INTENTS.SIGNUP_OTP && user?.hashedPassword) {
+        if (user?.hashedPassword) {
             return res.status(409).json({
-                error: 'Account already has a password. Use sign in with OTP or password.',
-                authStage: AUTH_STAGES.SIGNIN_REQUIRED,
-                suggestedAuthIntent: AUTH_INTENTS.SIGNIN_OTP
+                error: 'Account already has a password. Please sign in instead.',
+                authStage: AUTH_STAGES.SIGNIN_REQUIRED
             });
         }
 
@@ -813,10 +810,7 @@ const requestOTP = async (req, res) => {
         }
 
         const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
-
-        // If intent was not supplied, infer it from account state:
-        // accounts without a password are in the signup flow; those with one are signing in.
-        const effectiveIntent = resolvedIntent || (user.hashedPassword ? AUTH_INTENTS.SIGNIN_OTP : AUTH_INTENTS.SIGNUP_OTP);
+        const effectiveIntent = resolvedIntent || AUTH_INTENTS.SIGNUP_OTP;
 
         await setOtpForUser(user, otpCode, effectiveIntent);
         const warning = await sendOtpSms(phoneNumber, otpCode);
@@ -838,42 +832,28 @@ const requestOTP = async (req, res) => {
 /**
  * POST /api/auth/verify-otp
  * -------------------------
- * Second step for both the signup and OTP-signin flows. Validates the submitted
- * OTP and, on success, either completes signup or issues an auth token.
+ * Second step of the signup flow: phone → OTP verify (this step) → details.
+ * Validates the submitted SIGNUP_OTP and, on success, issues a short-lived
+ * signup ticket instead of a JWT — the account isn't complete yet, since
+ * password + profile details are still to come in complete-signup.
  *
- * Signup completion (SIGNUP_OTP, first-time account):
- * - Requires `password` (min 8 chars) in the body — this is the moment the
- *   survivor sets their password.
- * - Calls ensureSurvivorStaffAutoAssignment to create the SurvivorProfile,
- *   auto-assign counsellor and legal counsel, and write the assignment history
- *   record — all in a single transaction.
- * - Calls ensureAutoChannelsForSurvivor to eagerly provision direct chat
- *   channels to both assigned staff so they are immediately visible.
+ * - Auto-lifts expired temporary bans before any access check.
+ * - Rejects BANNED / SUSPENDED / DEACTIVATED accounts (with reason for BANNED).
+ * - Enforces lockout: rejects if authLockUntil is still in the future.
+ * - Validates OTP purpose is SIGNUP_OTP (cross-flow replay prevention) and expiry.
+ * - bcrypt.compares the submitted OTP against the stored hash.
+ * - On failure: increments attempt counter; locks and voids OTP at exhaustion.
+ * - On success: clears the OTP, sets isOtpVerified, and stores a fresh bcrypt-hashed
+ *   signup ticket (purpose SIGNUP_TICKET) reusing the same OTP storage fields —
+ *   the plaintext ticket is returned once in the response and must be echoed back
+ *   to complete-signup.
  *
- * OTP signin (SIGNIN_OTP, existing account):
- * - No profile creation or staff assignment; those already exist.
- * - Clears OTP state and issues a JWT directly.
- *
- * Both paths:
- * - Auto-lift expired temporary bans before any access check.
- * - Reject BANNED / SUSPENDED / DEACTIVATED accounts (with reason for BANNED).
- * - Enforce lockout: reject if authLockUntil is still in the future.
- * - Validate OTP purpose matches the active intent (cross-flow replay prevention).
- * - Validate OTP expiry (10 minutes from issue).
- * - bcrypt.compare the submitted OTP against the stored hash.
- * - On failure: increment attempt counter; lock and void OTP at exhaustion.
- * - On success: clear OTP state, reset failure counters, issue 2-hour JWT.
- * - If account.status === 'password_reset_required': return
- *   authStage: PASSWORD_RESET_REQUIRED with the token; frontend must call
- *   POST /api/auth/set-password before normal navigation is permitted.
- *
- * @param {import('express').Request}  req - Body: { phoneNumber, otp, password?, authIntent?, profileDetails? }
+ * @param {import('express').Request}  req - Body: { phoneNumber, otp }
  * @param {import('express').Response} res
  */
 const verifyOTP = async (req, res) => {
-    const { phoneNumber, otp, password, authIntent, profileDetails } = req.body;
+    const { phoneNumber, otp } = req.body;
     const normalizedPhone = normalizePhoneNumber(phoneNumber);
-    const resolvedIntent = resolveAuthIntent(authIntent);
 
     try {
         const user = await UserAccount.findOne({ where: { phoneNumber: normalizedPhone } });
@@ -902,10 +882,15 @@ const verifyOTP = async (req, res) => {
             });
         }
 
-        const effectiveIntent = resolvedIntent || (user.hashedPassword ? AUTH_INTENTS.SIGNIN_OTP : AUTH_INTENTS.SIGNUP_OTP);
+        if (user.hashedPassword) {
+            return res.status(409).json({
+                error: 'This account already has a password. Please sign in instead.',
+                authStage: AUTH_STAGES.SIGNIN_REQUIRED
+            });
+        }
 
         // OTP must match both value and purpose to prevent cross-flow replay.
-        if (!user.otpHash || !user.otpPurpose || user.otpPurpose !== effectiveIntent) {
+        if (!user.otpHash || user.otpPurpose !== AUTH_INTENTS.SIGNUP_OTP) {
             return res.status(401).json({ error: 'Invalid or expired OTP.' });
         }
 
@@ -924,82 +909,20 @@ const verifyOTP = async (req, res) => {
             return res.status(401).json({ error: 'Invalid OTP.' });
         }
 
-        // Catch intent/state mismatches that could arise from concurrent requests.
-        if (effectiveIntent === AUTH_INTENTS.SIGNUP_OTP && user.hashedPassword) {
-            await clearOtpForUser(user);
-            return res.status(409).json({
-                error: 'This account already has a password. Use OTP sign in or password sign in.',
-                authStage: AUTH_STAGES.SIGNIN_REQUIRED,
-                suggestedAuthIntent: AUTH_INTENTS.SIGNIN_OTP
-            });
-        }
-
-        if (effectiveIntent === AUTH_INTENTS.SIGNIN_OTP && !user.hashedPassword) {
-            await clearOtpForUser(user);
-            return res.status(409).json({
-                error: 'This account has not completed signup. Verify OTP and create a password first.',
-                authStage: AUTH_STAGES.SIGNUP_REQUIRED,
-                suggestedAuthIntent: AUTH_INTENTS.SIGNUP_OTP
-            });
-        }
-
-        const isFirstTimeSignup = !user.hashedPassword;
-
-        if (isFirstTimeSignup) {
-            // Signup path: OTP verification must include initial password setup.
-            if (!password || password.length < 8) {
-                return res.status(400).json({
-                    error: 'Password is required and must be at least 8 characters for first-time setup.',
-                    requiresPasswordSetup: true,
-                    authStage: AUTH_STAGES.PASSWORD_SETUP_REQUIRED,
-                    authIntent: AUTH_INTENTS.SIGNUP_OTP
-                });
-            }
-
-            user.hashedPassword = await bcrypt.hash(password, 10);
-        }
-
         user.isOtpVerified = true;
         user.authLockUntil = null;
         user.authFailedAttempts = 0;
-        await clearOtpForUser(user); // also calls user.save()
         await user.save();
 
-        if (effectiveIntent === AUTH_INTENTS.SIGNUP_OTP && isFirstTimeSignup) {
-            // Signup completion bundles three side effects:
-            // 1) sanitize/persist survivor profile fields from the onboarding UI
-            // 2) auto-assign least-loaded counsellor and legal counsel
-            // 3) pre-create direct chat channels for immediate visibility on the chat page
-            const sanitizedProfileInput = sanitizeSignupSurvivorProfileInput(profileDetails, user);
-            const survivorProfile = await ensureSurvivorStaffAutoAssignment(user, sanitizedProfileInput);
-            await ensureAutoChannelsForSurvivor(survivorProfile);
-        }
-
-        const token = issueAuthToken(user);
-
-        // Staff accounts provisioned by an admin arrive here with status='password_reset_required'.
-        // Return the token but signal that the frontend must enforce a password change before
-        // allowing normal navigation.
-        if (String(user.status || '').toLowerCase() === 'password_reset_required') {
-            return res.status(200).json({
-                message: 'Password reset is required before first access.',
-                token,
-                userId: user.userId,
-                authStage: AUTH_STAGES.PASSWORD_RESET_REQUIRED,
-                authIntent: effectiveIntent,
-                authMethod: 'OTP',
-                role: getCanonicalRole(user)
-            });
-        }
+        // Issue a one-time signup ticket so the details step doesn't need the OTP again.
+        const signupTicket = randomUUID();
+        await setOtpForUser(user, signupTicket, AUTH_INTENTS.SIGNUP_TICKET);
 
         return res.status(200).json({
-            message: 'Login successful!',
-            token,
-            userId: user.userId,
-            authStage: AUTH_STAGES.AUTHENTICATED,
-            authIntent: effectiveIntent,
-            authMethod: 'OTP',
-            role: getCanonicalRole(user)
+            message: 'Phone number verified. Continue to set your password and profile details.',
+            authStage: AUTH_STAGES.DETAILS_REQUIRED,
+            authIntent: AUTH_INTENTS.SIGNUP_OTP,
+            signupTicket
         });
     } catch (error) {
         console.error('Verification Error:', error);
@@ -1008,10 +931,115 @@ const verifyOTP = async (req, res) => {
 };
 
 /**
+ * POST /api/auth/complete-signup
+ * -------------------------------
+ * Third and final step of the signup flow: phone → OTP verify → details (this
+ * step). Validates the signup ticket issued by verify-otp, sets the password,
+ * creates the survivor profile + staff auto-assignment, and issues a JWT.
+ *
+ * - Validates the ticket purpose is SIGNUP_TICKET (cross-flow replay prevention) and expiry.
+ * - bcrypt.compares the submitted ticket against the stored hash.
+ * - On failure: increments the same attempt counter used by OTP verification;
+ *   locks and voids the ticket at exhaustion.
+ * - On success:
+ *   1. Hashes and stores the password.
+ *   2. Calls ensureSurvivorStaffAutoAssignment to create the SurvivorProfile,
+ *      auto-assign counsellor and legal counsel, and write the assignment history
+ *      record — all in a single transaction.
+ *   3. Calls ensureAutoChannelsForSurvivor to eagerly provision direct chat
+ *      channels to both assigned staff so they are immediately visible.
+ *   4. Clears ticket state and issues a 2-hour JWT.
+ *
+ * @param {import('express').Request}  req - Body: { phoneNumber, signupTicket, password, profileDetails? }
+ * @param {import('express').Response} res
+ */
+const completeSignup = async (req, res) => {
+    const { phoneNumber, signupTicket, password, profileDetails } = req.body;
+    const normalizedPhone = normalizePhoneNumber(phoneNumber);
+
+    try {
+        if (!password || password.length < 8) {
+            return res.status(400).json({ error: 'Password is required and must be at least 8 characters.' });
+        }
+
+        const user = await UserAccount.findOne({ where: { phoneNumber: normalizedPhone } });
+        if (!user) {
+            return res.status(401).json({ error: 'Invalid or expired signup ticket.' });
+        }
+
+        await liftExpiredBan(user);
+
+        if (!isAccountActive(user)) {
+            return res.status(403).json({ error: 'This account is suspended or deactivated.' });
+        }
+
+        if (isLocked(user)) {
+            return res.status(423).json({
+                error: 'Account temporarily locked due to repeated failed attempts.',
+                retryAfterSeconds: getLockoutSecondsRemaining(user)
+            });
+        }
+
+        if (user.hashedPassword) {
+            return res.status(409).json({
+                error: 'This account already has a password. Please sign in instead.',
+                authStage: AUTH_STAGES.SIGNIN_REQUIRED
+            });
+        }
+
+        if (!user.isOtpVerified || !user.otpHash || user.otpPurpose !== AUTH_INTENTS.SIGNUP_TICKET) {
+            return res.status(401).json({ error: 'Invalid or expired signup ticket. Please verify your phone number again.' });
+        }
+
+        if (!user.otpExpiresAt || new Date(user.otpExpiresAt).getTime() <= Date.now()) {
+            await clearOtpForUser(user);
+            return res.status(401).json({ error: 'Signup ticket has expired. Please verify your phone number again.' });
+        }
+
+        const ticketMatches = await bcrypt.compare(String(signupTicket || ''), user.otpHash);
+        if (!ticketMatches) {
+            const failure = await registerOtpFailure(user);
+            if (failure.exhausted) {
+                return res.status(429).json({ error: 'Too many invalid attempts. Please verify your phone number again.' });
+            }
+
+            return res.status(401).json({ error: 'Invalid signup ticket.' });
+        }
+
+        user.hashedPassword = await bcrypt.hash(password, 10);
+        await clearOtpForUser(user); // also calls user.save()
+
+        // Signup completion bundles three side effects:
+        // 1) sanitize/persist survivor profile fields from the onboarding UI
+        // 2) auto-assign least-loaded counsellor and legal counsel
+        // 3) pre-create direct chat channels for immediate visibility on the chat page
+        const sanitizedProfileInput = sanitizeSignupSurvivorProfileInput(profileDetails, user);
+        const survivorProfile = await ensureSurvivorStaffAutoAssignment(user, sanitizedProfileInput);
+        await ensureAutoChannelsForSurvivor(survivorProfile);
+
+        const token = issueAuthToken(user);
+
+        return res.status(200).json({
+            message: 'Signup complete!',
+            token,
+            userId: user.userId,
+            authStage: AUTH_STAGES.AUTHENTICATED,
+            authMethod: 'SIGNUP',
+            role: getCanonicalRole(user)
+        });
+    } catch (error) {
+        console.error('Complete Signup Error:', error);
+        return res.status(500).json({ error: 'Server error while completing signup.' });
+    }
+};
+
+/**
  * POST /api/auth/login-password
  * -----------------------------
- * Password-based signin. An alternative to OTP signin for users who prefer
- * to authenticate with their password directly.
+ * Primary signin entry point: phone + password, with OTP as a mandatory 2FA
+ * step rather than a separate alternative login method. A successful password
+ * match does NOT issue a JWT directly — it sends a SIGNIN_2FA OTP and returns
+ * authStage: OTP_2FA_REQUIRED; the frontend must then call verify-2fa.
  *
  * Flow:
  * - Normalizes phone number and fetches the account.
@@ -1022,9 +1050,11 @@ const verifyOTP = async (req, res) => {
  * - Rejects accounts under an active lockout (returns seconds remaining).
  * - bcrypt.compare against hashedPassword.
  * - On failure: calls registerPasswordFailure (increments counter, locks at threshold).
- * - On success: calls clearPasswordFailureState, issues a 2-hour JWT.
- * - If account.status === 'password_reset_required': returns
- *   authStage: PASSWORD_RESET_REQUIRED; frontend must call POST /api/auth/set-password.
+ * - On success: calls clearPasswordFailureState, then either:
+ *   - if account.status === 'password_reset_required': issues the JWT immediately
+ *     with authStage PASSWORD_RESET_REQUIRED (the staff member must set a real
+ *     password before normal navigation anyway, so 2FA is deferred to their next login), or
+ *   - otherwise: sends a SIGNIN_2FA OTP and returns authStage OTP_2FA_REQUIRED (no token yet).
  *
  * @param {import('express').Request}  req - Body: { phoneNumber, password }
  * @param {import('express').Response} res
@@ -1075,9 +1105,8 @@ const loginWithPassword = async (req, res) => {
 
         await clearPasswordFailureState(user);
 
-        const token = issueAuthToken(user);
-
         if (String(user.status || '').toLowerCase() === 'password_reset_required') {
+            const token = issueAuthToken(user);
             return res.status(200).json({
                 message: 'Password reset is required before first access.',
                 token,
@@ -1088,17 +1117,108 @@ const loginWithPassword = async (req, res) => {
             });
         }
 
-        return res.status(200).json({
-            message: 'Password login successful!',
-            token,
-            userId: user.userId,
-            authStage: AUTH_STAGES.AUTHENTICATED,
-            authMethod: 'PASSWORD',
-            role: getCanonicalRole(user)
-        });
+        const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
+        await setOtpForUser(user, otpCode, AUTH_INTENTS.SIGNIN_2FA);
+        const warning = await sendOtpSms(phoneNumber, otpCode);
+
+        return res.status(200).json(buildOtpResponse({
+            otpCode,
+            warning,
+            authStage: AUTH_STAGES.OTP_2FA_REQUIRED,
+            authIntent: AUTH_INTENTS.SIGNIN_2FA,
+            message: 'Password verified. Enter the OTP sent to your phone to finish signing in.'
+        }));
     } catch (error) {
         console.error('Password Login Error:', error);
         return res.status(500).json({ error: 'Server error during password login.' });
+    }
+};
+
+/**
+ * POST /api/auth/verify-2fa
+ * --------------------------
+ * Second factor for signin: validates the SIGNIN_2FA OTP sent by
+ * loginWithPassword and, on success, issues the JWT that login-password
+ * deferred.
+ *
+ * - Auto-lifts expired temporary bans before any access check.
+ * - Rejects BANNED / SUSPENDED / DEACTIVATED accounts (with reason for BANNED).
+ * - Enforces lockout: rejects if authLockUntil is still in the future.
+ * - Validates OTP purpose is SIGNIN_2FA (cross-flow replay prevention) and expiry.
+ * - bcrypt.compares the submitted OTP against the stored hash.
+ * - On failure: increments attempt counter; locks and voids OTP at exhaustion.
+ * - On success: clears OTP state, issues a 2-hour JWT.
+ *
+ * @param {import('express').Request}  req - Body: { phoneNumber, otp }
+ * @param {import('express').Response} res
+ */
+const verify2FA = async (req, res) => {
+    const { phoneNumber, otp } = req.body;
+    const normalizedPhone = normalizePhoneNumber(phoneNumber);
+
+    try {
+        const user = await UserAccount.findOne({ where: { phoneNumber: normalizedPhone } });
+        if (!user || !user.hashedPassword) {
+            return res.status(401).json({ error: 'Invalid or expired OTP.' });
+        }
+
+        await liftExpiredBan(user);
+
+        if (!isAccountActive(user)) {
+            const isBanned = String(user.accountStatus).toUpperCase() === 'BANNED';
+            return res.status(403).json({
+                error: isBanned
+                    ? 'This account has been suspended from the platform.'
+                    : 'This account is suspended or deactivated.',
+                ...(isBanned && user.banReason ? { reason: user.banReason } : {}),
+                ...(isBanned && user.banExpiresAt ? { expiresAt: user.banExpiresAt } : {})
+            });
+        }
+
+        if (isLocked(user)) {
+            return res.status(423).json({
+                error: 'Account temporarily locked due to repeated failed attempts.',
+                retryAfterSeconds: getLockoutSecondsRemaining(user)
+            });
+        }
+
+        if (!user.otpHash || user.otpPurpose !== AUTH_INTENTS.SIGNIN_2FA) {
+            return res.status(401).json({ error: 'Invalid or expired OTP.' });
+        }
+
+        if (!user.otpExpiresAt || new Date(user.otpExpiresAt).getTime() <= Date.now()) {
+            await clearOtpForUser(user);
+            return res.status(401).json({ error: 'OTP has expired. Please sign in again.' });
+        }
+
+        const otpMatches = await bcrypt.compare(String(otp), user.otpHash);
+        if (!otpMatches) {
+            const failure = await registerOtpFailure(user);
+            if (failure.exhausted) {
+                return res.status(429).json({ error: 'Too many invalid OTP attempts. Please sign in again.' });
+            }
+
+            return res.status(401).json({ error: 'Invalid OTP.' });
+        }
+
+        user.isOtpVerified = true;
+        user.authLockUntil = null;
+        user.authFailedAttempts = 0;
+        await clearOtpForUser(user); // also calls user.save()
+
+        const token = issueAuthToken(user);
+
+        return res.status(200).json({
+            message: 'Login successful!',
+            token,
+            userId: user.userId,
+            authStage: AUTH_STAGES.AUTHENTICATED,
+            authMethod: 'PASSWORD_2FA',
+            role: getCanonicalRole(user)
+        });
+    } catch (error) {
+        console.error('2FA Verification Error:', error);
+        return res.status(500).json({ error: 'Server error during 2FA verification.' });
     }
 };
 
@@ -1278,12 +1398,16 @@ const setPassword = async (req, res) => {
 module.exports = {
     requestOTP,
     verifyOTP,
+    completeSignup,
     loginWithPassword,
+    verify2FA,
     requestPasswordReset,
     resetPasswordWithOtp,
     setPassword,
     AUTH_STAGES,
     AUTH_INTENTS,
     // Exported for use in authMiddleware and other auth-adjacent flows.
-    liftExpiredBan
+    liftExpiredBan,
+    // Exported for reuse by admin/USSD auto-routing (least-loaded-staff suggestion).
+    pickLeastLoadedStaff
 };
