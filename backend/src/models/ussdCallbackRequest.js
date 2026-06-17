@@ -42,8 +42,21 @@ const UssdCallbackRequest = sequelize.define('ussdCallbackRequest', {
     type:         DataTypes.ENUM('PENDING', 'COMPLETED', 'CANCELLED'),
     defaultValue: 'PENDING',
     comment:      'Callback status — updated by staff when fulfilled or cancelled'
+  },
+
+  /**
+   * Auto-assigned at creation time to the least-loaded available counsellor
+   * (see ussdController.pickLeastLoadedCounsellor), so NGO Admin doesn't have
+   * to manually triage every incoming callback. No FK constraint — mirrors
+   * this model's existing no-FK pattern, and the counsellor profile may later
+   * be removed/reassigned independently of this historical record.
+   */
+  assignedCounsellorId: {
+    type:      DataTypes.STRING(36),
+    allowNull: true,
+    comment:   'CounsellorProfile.counsellorId auto-assigned at creation — admin may still reassign'
   }
- 
+
 }, {
   tableName: 'ussdCallbackRequest',
   comment:   'Callback request from USSD — no account required, phone number only'

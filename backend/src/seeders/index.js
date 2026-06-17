@@ -5,7 +5,7 @@
  * for development and testing purposes.
  *
  * This seeder creates:
- *   - 2 system administrators
+ *   - 1 moderator
  *   - 2 NGO administrators
  *   - 3 counsellors
  *   - 3 legal counsel
@@ -48,7 +48,7 @@ const {
   CounsellorProfile,
   LegalCounselProfile,
   NgoAdministratorProfile,
-  SystemAdministratorProfile,
+  ModeratorProfile,
   IncidentReport,
   EvidenceFile,
   LegalCaseFile,
@@ -107,40 +107,23 @@ async function seed() {
     console.log('✅ Tables reset and recreated.');
 
 
-    // ── 1. SYSTEM ADMINISTRATORS ─────────────────────────────────────────
+    // ── 1. MODERATORS ─────────────────────────────────────────────────────
 
-    console.log('🌱 Seeding system administrators...');
+    console.log('🌱 Seeding moderators...');
 
-    const sysAdminUserId1 = id();
+    const moderatorUserId1 = id();
     await UserAccount.create({
-      userId:        sysAdminUserId1,
+      userId:        moderatorUserId1,
       phoneNumber:   '+254700000001',
-      hashedPassword: await hash('SysAdmin@2026!'),
-      userRole:      'SYSTEM_ADMIN',
+      hashedPassword: await hash('Moderator@2026!'),
+      userRole:      'MODERATOR',
       accountStatus: 'ACTIVE',
       isOtpVerified: true
     });
-    await SystemAdministratorProfile.create({
-      systemAdminId:         id(),
-      userId:                sysAdminUserId1,
-      maintenancePrivileges: 'server_restart,log_access,backup_management',
-      systemAccessLevel:     3
-    });
-
-    const sysAdminUserId2 = id();
-    await UserAccount.create({
-      userId:        sysAdminUserId2,
-      phoneNumber:   '+254700000002',
-      hashedPassword: await hash('SysAdmin2@2026!'),
-      userRole:      'SYSTEM_ADMIN',
-      accountStatus: 'ACTIVE',
-      isOtpVerified: true
-    });
-    await SystemAdministratorProfile.create({
-      systemAdminId:         id(),
-      userId:                sysAdminUserId2,
-      maintenancePrivileges: 'log_access,backup_management',
-      systemAccessLevel:     2
+    await ModeratorProfile.create({
+      moderatorId:           id(),
+      userId:                moderatorUserId1,
+      currentWorkloadScore:  0
     });
 
 
@@ -845,7 +828,7 @@ async function seed() {
 
     console.log('\n✅ Database seeded successfully.');
     console.log('─────────────────────────────────────────');
-    console.log('  System Admins:         2');
+    console.log('  Moderators:            1');
     console.log('  NGO Admins:            2');
     console.log('  Counsellors:           3');
     console.log('  Legal Counsel:         3');
@@ -863,7 +846,7 @@ async function seed() {
     console.log('    Counsellor:     +254700000020 / Counsellor@2026!');
     console.log('    Legal Counsel:  +254700000030 / LegalCounsel@2026!');
     console.log('    NGO Admin:      +254700000010 / NgoAdmin@2026!');
-    console.log('    System Admin:   +254700000001 / SysAdmin@2026!');
+    console.log('    Moderator:      +254700000001 / Moderator@2026!');
     console.log('─────────────────────────────────────────\n');
 
   } catch (error) {

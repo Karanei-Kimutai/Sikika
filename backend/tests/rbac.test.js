@@ -42,7 +42,7 @@ jest.mock("../src/models", () => ({
   DirectChatChannel: {},
   DirectChatMessage: {},
   LegalCaseFile: {},
-  SystemAdministratorProfile: {},
+  ModeratorProfile: {},
   AuditLog: {},
   SupportResource: {},
   StaffAssignmentHistory: {},

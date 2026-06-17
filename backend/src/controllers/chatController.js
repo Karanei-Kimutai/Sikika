@@ -75,7 +75,7 @@ const getChannels = async (req, res) => {
       return res.status(401).json({ error: 'Invalid token payload.' });
     }
 
-    if (actor.role === 'SYSTEM_ADMIN' || actor.role === 'NGO_ADMIN') {
+    if (actor.role === 'NGO_ADMIN' || actor.role === 'MODERATOR') {
       return res.status(403).json({ error: 'Direct chat is available only for survivors and assigned support staff.' });
     }
 

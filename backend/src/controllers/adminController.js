@@ -16,8 +16,8 @@ const {
   DirectChatChannel,
   DirectChatMessage,
   LegalCaseFile,
-  SystemAdministratorProfile,
   NgoAdministratorProfile,
+  ModeratorProfile,
   AuditLog,
   ModerationActionLog,
   SupportResource,
@@ -40,13 +40,8 @@ const { normalizeRole, BANNABLE_ROLES } = require('../utils/roles');
  * - system dashboard telemetry
  * - maintenance mode state management + enforcement helpers
  * - runtime actions (clear cache / restart request)
- * - system audit log streaming
  * - staff onboarding and staff account lifecycle status updates
  */
-
-// Runtime-only state (resets on restart — intentional for non-durable items).
-let lastCacheClearAt = null;
-let lastRestartRequestAt = null;
 
 /**
  * Maintenance mode cache — loaded from DB at boot via loadMaintenanceStateFromDb().
@@ -71,7 +66,7 @@ function compatibilityRoleForUserRole(role) {
   const normalized = normalizeRole(role);
   if (normalized === 'LEGAL_COUNSEL') return 'legal_counsel';
   if (normalized === 'NGO_ADMIN') return 'ngo_admin';
-  if (normalized === 'SYSTEM_ADMIN') return 'system_admin';
+  if (normalized === 'MODERATOR') return 'moderator';
   if (normalized === 'COUNSELLOR') return 'counsellor';
   return 'survivor';
 }
@@ -256,6 +251,77 @@ async function refreshWorkloadScores() {
     ...counsellors.map((profile) => profile.update({ currentWorkloadScore: counsellorCountMap.get(profile.counsellorId) || 0 })),
     ...legalCounsel.map((profile) => profile.update({ currentWorkloadScore: legalCountMap.get(profile.legalCounselId) || 0 }))
   ]);
+}
+
+/**
+ * getLeastLoadedStaff
+ * --------------------
+ * Selects the staff profile with the lowest currentWorkloadScore, preferring
+ * AVAILABLE staff and excluding a given profile id (e.g. the staff member
+ * being banned, or a survivor's current assignee when suggesting a change).
+ *
+ * Shared by cascadeReassignOnStaffBan (auto-reassignment on staff ban) and
+ * getReassignmentSuggestions (admin-facing "Recommended" suggestion in the
+ * Team Capacity manual reassignment form).
+ *
+ * @param {Model}  ProfileModel - CounsellorProfile or LegalCounselProfile.
+ * @param {string} idField      - PK field name ('counsellorId' / 'legalCounselId').
+ * @param {string|null} excludeId - Profile id to exclude from candidates, if any.
+ * @returns {Promise<Model|null>} The recommended staff profile, or null if none exist.
+ */
+async function getLeastLoadedStaff(ProfileModel, idField, excludeId = null) {
+  const candidates = await ProfileModel.findAll({
+    attributes: [idField, 'currentWorkloadScore', 'availabilityStatus'],
+    order: [['currentWorkloadScore', 'ASC'], [idField, 'ASC']]
+  });
+
+  const pool = excludeId ? candidates.filter((c) => c[idField] !== excludeId) : candidates;
+  const available = pool.filter((c) => c.availabilityStatus === 'AVAILABLE');
+  return available[0] || pool[0] || null;
+}
+
+/**
+ * getReassignmentSuggestions
+ * ---------------------------
+ * GET /api/admin/ngo/reassignments/suggestions?survivorId=...
+ *
+ * Returns the recommended (least-loaded, available-preferred) counsellor and
+ * legal counsel for a given survivor, excluding their currently assigned
+ * staff. Used by the Team Capacity manual reassignment form to pre-highlight
+ * a "Recommended" candidate so the admin isn't picking blind — they can still
+ * override and pick someone else.
+ */
+async function getReassignmentSuggestions(req, res) {
+  try {
+    const actor = await getActor(req);
+    if (!actor) return res.status(401).json({ error: 'Authentication required.' });
+    if (actor.role !== 'NGO_ADMIN') return roleForbidden(res, ['NGO_ADMIN']);
+
+    const survivorId = String(req.query.survivorId || '').trim();
+    if (!survivorId) {
+      return res.status(400).json({ error: 'survivorId is required.' });
+    }
+
+    const survivor = await SurvivorProfile.findByPk(survivorId, {
+      attributes: ['survivorId', 'assignedCounsellorId', 'assignedLegalCounselId']
+    });
+    if (!survivor) {
+      return res.status(404).json({ error: 'Survivor not found.' });
+    }
+
+    const [suggestedCounsellor, suggestedLegalCounsel] = await Promise.all([
+      getLeastLoadedStaff(CounsellorProfile, 'counsellorId', survivor.assignedCounsellorId),
+      getLeastLoadedStaff(LegalCounselProfile, 'legalCounselId', survivor.assignedLegalCounselId)
+    ]);
+
+    return res.json({
+      suggestedCounsellorId: suggestedCounsellor?.counsellorId || null,
+      suggestedLegalCounselId: suggestedLegalCounsel?.legalCounselId || null
+    });
+  } catch (error) {
+    console.error('getReassignmentSuggestions error:', error);
+    return res.status(500).json({ error: 'Failed to compute reassignment suggestion.' });
+  }
 }
 
 /**
@@ -924,8 +990,8 @@ async function globalSearch(req, res) {
   try {
     const actor = await getActor(req);
     if (!actor) return res.status(401).json({ error: 'Authentication required.' });
-    if (!['NGO_ADMIN', 'SYSTEM_ADMIN'].includes(actor.role)) {
-      return roleForbidden(res, ['NGO_ADMIN', 'SYSTEM_ADMIN']);
+    if (actor.role !== 'NGO_ADMIN') {
+      return roleForbidden(res, ['NGO_ADMIN']);
     }
 
     const q = String(req.query.q || '').trim();
@@ -972,125 +1038,18 @@ async function globalSearch(req, res) {
 }
 
 /**
- * getSystemDashboard
- * ------------------
- * Returns the consolidated System Admin control-plane payload.
- */
-async function getSystemDashboard(req, res) {
-  try {
-    const actor = await getActor(req);
-    if (!actor) return res.status(401).json({ error: 'Authentication required.' });
-    if (actor.role !== 'SYSTEM_ADMIN') return roleForbidden(res, ['SYSTEM_ADMIN']);
-
-    // Lightweight DB latency check for infrastructure visibility in UI.
-    const started = Date.now();
-    let databaseStatus = 'DOWN';
-    let dbLatencyMs = null;
-
-    try {
-      await sequelize.authenticate();
-      databaseStatus = 'UP';
-      dbLatencyMs = Date.now() - started;
-    } catch {
-      databaseStatus = 'DOWN';
-    }
-
-    const smsConfigured = Boolean(process.env.AFRICASTALKING_API_KEY && process.env.AFRICASTALKING_USERNAME);
-
-    const [adminDirectory, recentAuditLogs, profile] = await Promise.all([
-      SystemAdministratorProfile.findAll({
-        attributes: ['systemAdminId', 'systemAccessLevel', 'maintenancePrivileges'],
-        include: [{ model: UserAccount, attributes: ['userId', 'phoneNumber', 'accountStatus'] }],
-        order: [['systemAccessLevel', 'DESC']]
-      }),
-      AuditLog.findAll({
-        attributes: ['actionType', 'actionTimestamp', 'targetEntity'],
-        order: [['actionTimestamp', 'DESC']],
-        limit: 25,
-        raw: true
-      }),
-      SystemAdministratorProfile.findOne({
-        where: { userId: actor.userId },
-        attributes: ['systemAccessLevel', 'maintenancePrivileges']
-      })
-    ]);
-
-    const staffUsers = await UserAccount.findAll({
-      attributes: ['userId', 'phoneNumber', 'userRole', 'accountStatus', 'status', 'accountCreationTimestamp'],
-      where: {
-        userRole: { [Op.in]: ['COUNSELLOR', 'LEGAL_COUNSEL', 'NGO_ADMIN', 'SYSTEM_ADMIN'] }
-      },
-      order: [['accountCreationTimestamp', 'DESC']],
-      raw: true
-    });
-
-    const uptimeSeconds = Math.floor(process.uptime());
-
-    return res.json({
-      statusBadge: databaseStatus === 'UP' ? 'ALL_SYSTEMS_OPERATIONAL' : 'DEGRADED_PERFORMANCE',
-      maintenanceMode: {
-        enabled: _maintenanceCache.enabled,
-        updatedAt: _maintenanceCache.updatedAt,
-        reason: _maintenanceCache.reason,
-        expectedUntil: _maintenanceCache.expectedUntil
-      },
-      runtimeActions: {
-        lastCacheClearAt,
-        lastRestartRequestAt
-      },
-      metrics: {
-        serverUptimeSeconds: uptimeSeconds,
-        databaseConnectionStatus: databaseStatus,
-        databaseLatencyMs: dbLatencyMs,
-        otpGatewayStatus: smsConfigured ? 'CONFIGURED' : 'MISSING_CONFIGURATION'
-      },
-      errorLogs: recentAuditLogs.map((log) => ({
-        timestamp: log.actionTimestamp,
-        faultCode: 'AUDIT_EVENT',
-        module: log.actionType || 'SYSTEM',
-        description: log.targetEntity
-          ? `Action target: ${log.targetEntity}`
-          : 'No target entity provided.'
-      })),
-      adminDirectory: adminDirectory.map((entry) => ({
-        id: entry.systemAdminId,
-        userId: entry.userAccount?.userId,
-        phoneNumber: entry.userAccount?.phoneNumber,
-        accountStatus: entry.userAccount?.accountStatus,
-        systemAccessLevel: entry.systemAccessLevel,
-        maintenancePrivileges: entry.maintenancePrivileges
-      })),
-      staffDirectory: staffUsers.map((staff) => ({
-        userId: staff.userId,
-        phoneNumber: staff.phoneNumber,
-        role: staff.userRole,
-        accountStatus: staff.accountStatus,
-        passwordResetRequired: String(staff.status || '').toLowerCase() === 'password_reset_required',
-        createdAt: staff.accountCreationTimestamp
-      })),
-      profile: {
-        role: actor.role,
-        userId: actor.userId,
-        systemAccessLevel: profile?.systemAccessLevel || 1
-      }
-    });
-  } catch (error) {
-    console.error('System dashboard error:', error);
-    return res.status(500).json({ error: 'Failed to load system admin dashboard.' });
-  }
-}
-
-/**
  * setMaintenanceMode
  * ------------------
  * Toggles global maintenance mode and stores optional public-facing metadata
- * (reason and expected completion time).
+ * (reason and expected completion time). NGO_ADMIN-gated — System Admin and
+ * its standalone infrastructure dashboard have been removed; maintenance mode
+ * is the one System-Admin capability retained, folded into the NGO Admin dashboard.
  */
 async function setMaintenanceMode(req, res) {
   try {
     const actor = await getActor(req);
     if (!actor) return res.status(401).json({ error: 'Authentication required.' });
-    if (actor.role !== 'SYSTEM_ADMIN') return roleForbidden(res, ['SYSTEM_ADMIN']);
+    if (actor.role !== 'NGO_ADMIN') return roleForbidden(res, ['NGO_ADMIN']);
 
     const { enabled, reason, expectedUntil } = req.body || {};
     const updatedAt = new Date().toISOString();
@@ -1131,120 +1090,6 @@ async function setMaintenanceMode(req, res) {
   } catch (error) {
     console.error('Maintenance mode update error:', error);
     return res.status(500).json({ error: 'Failed to update maintenance mode.' });
-  }
-}
-
-/**
- * getSystemLogs
- * -------------
- * Returns audit events shaped as "live logs" for the System Admin dashboard.
- *
- * The `since` query parameter is optional and allows incremental polling.
- */
-async function getSystemLogs(req, res) {
-  try {
-    const actor = await getActor(req);
-    if (!actor) return res.status(401).json({ error: 'Authentication required.' });
-    if (actor.role !== 'SYSTEM_ADMIN') return roleForbidden(res, ['SYSTEM_ADMIN']);
-
-    // Optional incremental polling support via `since` query parameter.
-    const since = req.query.since ? new Date(String(req.query.since)) : null;
-    const where = {};
-    if (since && !Number.isNaN(since.getTime())) {
-      where.actionTimestamp = { [Op.gt]: since };
-    }
-
-    const logs = await AuditLog.findAll({
-      attributes: ['actionType', 'actionTimestamp', 'targetEntity'],
-      where,
-      order: [['actionTimestamp', 'DESC']],
-      limit: 40,
-      raw: true
-    });
-
-    return res.json({
-      generatedAt: new Date().toISOString(),
-      logs: logs.map((log) => ({
-        timestamp: log.actionTimestamp,
-        faultCode: 'AUDIT_EVENT',
-        module: log.actionType || 'SYSTEM',
-        description: log.targetEntity ? `Action target: ${log.targetEntity}` : 'No target entity provided.'
-      }))
-    });
-  } catch (error) {
-    console.error('System logs fetch error:', error);
-    return res.status(500).json({ error: 'Failed to load live logs.' });
-  }
-}
-
-/**
- * performRuntimeAction
- * --------------------
- * Supports two controlled runtime operations:
- * - CLEAR_CACHE: writes an operation marker and audit entry
- * - RESTART_SERVER: records a restart request; optional process exit is env-gated
- */
-async function performRuntimeAction(req, res) {
-  try {
-    const actor = await getActor(req);
-    if (!actor) return res.status(401).json({ error: 'Authentication required.' });
-    if (actor.role !== 'SYSTEM_ADMIN') return roleForbidden(res, ['SYSTEM_ADMIN']);
-
-    const action = String(req.body?.action || '').trim().toUpperCase();
-    if (!['CLEAR_CACHE', 'RESTART_SERVER'].includes(action)) {
-      return res.status(400).json({ error: 'action must be CLEAR_CACHE or RESTART_SERVER.' });
-    }
-
-    if (action === 'CLEAR_CACHE') {
-      // Runtime cache clear is represented as an auditable operation marker.
-      lastCacheClearAt = new Date().toISOString();
-      await AuditLog.create({
-        auditId: randomUUID(),
-        actorUserId: actor.userId,
-        actionType: 'SYSTEM_CACHE_CLEAR',
-        targetEntity: 'runtime_cache'
-      });
-
-      return res.json({
-        message: 'System cache cleared successfully.',
-        runtimeActions: {
-          lastCacheClearAt,
-          lastRestartRequestAt
-        }
-      });
-    }
-
-    lastRestartRequestAt = new Date().toISOString();
-    await AuditLog.create({
-      auditId: randomUUID(),
-      actorUserId: actor.userId,
-      actionType: 'SYSTEM_RESTART_REQUESTED',
-      targetEntity: 'node_runtime'
-    });
-
-    // Auto-exit restart is intentionally opt-in to avoid accidental downtime.
-    const restartEnabled = process.env.ALLOW_ADMIN_RESTART === 'true';
-    if (restartEnabled) {
-      setTimeout(() => process.exit(0), 250);
-      return res.json({
-        message: 'Restart requested. Server will stop and rely on the process manager to restart it.',
-        runtimeActions: {
-          lastCacheClearAt,
-          lastRestartRequestAt
-        }
-      });
-    }
-
-    return res.json({
-      message: 'Restart request recorded. Set ALLOW_ADMIN_RESTART=true to enable auto-exit based restart.',
-      runtimeActions: {
-        lastCacheClearAt,
-        lastRestartRequestAt
-      }
-    });
-  } catch (error) {
-    console.error('Runtime action error:', error);
-    return res.status(500).json({ error: 'Failed to execute runtime action.' });
   }
 }
 
@@ -1293,12 +1138,12 @@ async function createStaffAccount(req, res) {
       return res.status(400).json({ error: 'password must be at least 6 characters.' });
     }
 
-    // Intentionally limited to frontline staff roles only.
-    // NGO_ADMIN/SYSTEM_ADMIN accounts are out of scope for this provisioning path.
-    const allowedRoles = ['COUNSELLOR', 'LEGAL_COUNSEL'];
+    // Intentionally limited to frontline staff + moderator roles only.
+    // NGO_ADMIN accounts are out of scope for this provisioning path.
+    const allowedRoles = ['COUNSELLOR', 'LEGAL_COUNSEL', 'MODERATOR'];
     if (!allowedRoles.includes(role)) {
       await transaction.rollback();
-      return res.status(400).json({ error: 'role must be COUNSELLOR or LEGAL_COUNSEL.' });
+      return res.status(400).json({ error: 'role must be COUNSELLOR, LEGAL_COUNSEL, or MODERATOR.' });
     }
 
     const existing = await UserAccount.findOne({ where: { phoneNumber }, transaction });
@@ -1342,6 +1187,15 @@ async function createStaffAccount(req, res) {
         professionalSpecialization: String(req.body?.specialization || '').trim() || 'General Legal Support',
         currentWorkloadScore: 0,
         availabilityStatus: String(req.body?.availabilityStatus || 'AVAILABLE').trim().toUpperCase()
+      }, { transaction });
+    }
+
+    if (role === 'MODERATOR') {
+      // Moderator profile has no availability/specialization — just a workload counter.
+      await ModeratorProfile.create({
+        moderatorId: randomUUID(),
+        userId: user.userId,
+        currentWorkloadScore: 0
       }, { transaction });
     }
 
@@ -1409,9 +1263,9 @@ async function updateStaffAccountStatus(req, res) {
       return res.status(404).json({ error: 'Staff account not found.' });
     }
 
-    // Restricting status actions to frontline staff avoids cross-admin role tampering.
-    if (!['COUNSELLOR', 'LEGAL_COUNSEL'].includes(targetUser.userRole)) {
-      return res.status(400).json({ error: 'Only counsellor and legal-counsel accounts can be set active or inactive.' });
+    // Restricting status actions to frontline staff + moderators avoids cross-admin role tampering.
+    if (!['COUNSELLOR', 'LEGAL_COUNSEL', 'MODERATOR'].includes(targetUser.userRole)) {
+      return res.status(400).json({ error: 'Only counsellor, legal-counsel, and moderator accounts can be set active or inactive.' });
     }
 
     // Banned accounts must be restored via the dedicated unban endpoint, not the
@@ -1461,7 +1315,7 @@ async function updateStaffAccountStatus(req, res) {
  * Policy guardrails enforced here:
  *  - Only NGO_ADMIN callers may ban.
  *  - Only SURVIVOR, COUNSELLOR, and LEGAL_COUNSEL accounts may be targeted.
- *    Admin accounts (NGO_ADMIN, SYSTEM_ADMIN) are never bannable.
+ *    Admin/staff-lifecycle accounts (NGO_ADMIN, MODERATOR) are never bannable.
  *  - Self-ban is explicitly rejected.
  *  - A ban reason is mandatory (reason is surfaced in audit records).
  *  - Optional banExpiresAt enables temporary bans; must be a future date.
@@ -1726,26 +1580,21 @@ function maintenanceGuard(req, res, next) {
   if (!_maintenanceCache.enabled) return next();
 
   // Permit minimal auth recovery paths so operators can sign in to disable
-  // maintenance mode after being signed out.
+  // maintenance mode after being signed out. Signup-only endpoints
+  // (request-otp, verify-otp, complete-signup) stay blocked so maintenance
+  // windows cannot create fresh accounts while the system is restricted.
   const normalizedPath = String(req.path || '').toLowerCase();
-  // Password sign-in remains available so system admins are never trapped.
+  // Password sign-in remains available so NGO admins are never trapped.
   if (normalizedPath === '/api/auth/login-password') return next();
-  // OTP verification remains available for users who already requested a code.
-  if (normalizedPath === '/api/auth/verify-otp') return next();
-  if (normalizedPath === '/api/auth/request-otp') {
-    // Intentionally allow only sign-in OTP issuance during maintenance.
-    // Signup OTP requests stay blocked so maintenance windows cannot create
-    // fresh accounts while the system is in restricted mode.
-    const intent = String(req.body?.authIntent || '').trim().toLowerCase();
-    if (!intent || intent === 'signin_otp' || intent === 'signin') return next();
-  }
+  // 2FA verification remains available to complete an in-progress signin.
+  if (normalizedPath === '/api/auth/verify-2fa') return next();
 
   if (req.path === '/api/system/public-status') return next();
   if (req.path.startsWith('/api/admin')) return next();
   if (req.path.startsWith('/api/health')) return next();
 
   const role = getRoleFromAuthHeader(req);
-  if (role === 'SYSTEM_ADMIN') return next();
+  if (role === 'NGO_ADMIN') return next();
 
   return res.status(503).json({
     error: 'System is currently under maintenance. Please try again later.',
@@ -1789,13 +1638,8 @@ async function cascadeReassignOnStaffBan(bannedUserId, targetRole, reason) {
       if (affectedSurvivors.length === 0) return;
 
       // Pick replacement: AVAILABLE counsellor with lowest workload, excluding the banned one.
-      const candidates = await CounsellorProfile.findAll({
-        attributes: ['counsellorId', 'currentWorkloadScore', 'availabilityStatus'],
-        order: [['currentWorkloadScore', 'ASC'], ['counsellorId', 'ASC']]
-      });
-      const available = candidates.filter((c) => c.availabilityStatus === 'AVAILABLE' && c.counsellorId !== bannedProfile.counsellorId);
-      const fallback = candidates.filter((c) => c.counsellorId !== bannedProfile.counsellorId);
-      const replacementId = (available[0] || fallback[0])?.counsellorId || null;
+      const replacement = await getLeastLoadedStaff(CounsellorProfile, 'counsellorId', bannedProfile.counsellorId);
+      const replacementId = replacement?.counsellorId || null;
 
       for (const survivor of affectedSurvivors) {
         if (!replacementId) {
@@ -1825,13 +1669,8 @@ async function cascadeReassignOnStaffBan(bannedUserId, targetRole, reason) {
 
       if (affectedSurvivors.length === 0) return;
 
-      const candidates = await LegalCounselProfile.findAll({
-        attributes: ['legalCounselId', 'currentWorkloadScore', 'availabilityStatus'],
-        order: [['currentWorkloadScore', 'ASC'], ['legalCounselId', 'ASC']]
-      });
-      const available = candidates.filter((c) => c.availabilityStatus === 'AVAILABLE' && c.legalCounselId !== bannedProfile.legalCounselId);
-      const fallback = candidates.filter((c) => c.legalCounselId !== bannedProfile.legalCounselId);
-      const replacementId = (available[0] || fallback[0])?.legalCounselId || null;
+      const replacement = await getLeastLoadedStaff(LegalCounselProfile, 'legalCounselId', bannedProfile.legalCounselId);
+      const replacementId = replacement?.legalCounselId || null;
 
       for (const survivor of affectedSurvivors) {
         if (!replacementId) {
@@ -1910,14 +1749,12 @@ async function listBannedUsers(req, res) {
 
 module.exports = {
   getNgoDashboard,
-  getSystemDashboard,
   globalSearch,
   setMaintenanceMode,
   createNgoResource,
   updateNgoResource,
   reassignSurvivor,
-  getSystemLogs,
-  performRuntimeAction,
+  getReassignmentSuggestions,
   createStaffAccount,
   updateStaffAccountStatus,
   banUser,

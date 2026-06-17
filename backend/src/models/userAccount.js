@@ -12,7 +12,7 @@
  *   - userAccount.hasOne(counsellorProfile)
  *   - userAccount.hasOne(legalCounselProfile)
  *   - userAccount.hasOne(ngoAdministratorProfile)
- *   - userAccount.hasOne(systemAdministratorProfile)
+ *   - userAccount.hasOne(moderatorProfile)
  *   - userAccount.hasMany(inAppNotification)
  *   - userAccount.hasMany(directChatMessage)
  *   - userAccount.hasMany(communityMessage)
@@ -70,7 +70,7 @@ const UserAccount = sequelize.define('userAccount', {
    * permissions the RBAC middleware grants them.
    */
   userRole: {
-    type:      DataTypes.ENUM('SURVIVOR', 'COUNSELLOR', 'LEGAL_COUNSEL', 'NGO_ADMIN', 'SYSTEM_ADMIN'),
+    type:      DataTypes.ENUM('SURVIVOR', 'COUNSELLOR', 'LEGAL_COUNSEL', 'NGO_ADMIN', 'MODERATOR'),
     allowNull: false,
     defaultValue: 'SURVIVOR',
     comment:   'Role-based access control role — drives permissions across all modules'

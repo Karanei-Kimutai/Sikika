@@ -24,7 +24,7 @@
  *    - COUNSELLOR + includeDeleted=true → active only (not exposed)
  *    - LEGAL_COUNSEL + includeDeleted=true → active only
  *    - NGO_ADMIN → 403
- *    - SYSTEM_ADMIN → 403
+ *    - MODERATOR → 403
  */
 
 const request = require('supertest');
@@ -474,16 +474,16 @@ describe('C. getChannels includeDeleted contract', () => {
     expect(res.status).toBe(403);
   });
 
-  test('C7: SYSTEM_ADMIN → 403 (direct chat not available to admins)', async () => {
+  test('C7: MODERATOR → 403 (direct chat not available to admins)', async () => {
     getActorContextByUserId.mockResolvedValueOnce({
-      userId:         'sys-admin',
-      role:           'SYSTEM_ADMIN',
+      userId:         'moderator-1',
+      role:           'MODERATOR',
       survivorId:     null,
       counsellorId:   null,
       legalCounselId: null
     });
 
-    const token = makeToken({ userId: 'sys-admin', id: 'sys-admin' });
+    const token = makeToken({ userId: 'moderator-1', id: 'moderator-1' });
     const res = await request(app)
       .get('/api/chat/channels')
       .set('Authorization', `Bearer ${token}`);

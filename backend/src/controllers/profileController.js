@@ -3,8 +3,7 @@ const {
   SurvivorProfile,
   CounsellorProfile,
   LegalCounselProfile,
-  NgoAdministratorProfile,
-  SystemAdministratorProfile
+  NgoAdministratorProfile
 } = require('../models');
 
 function getUserIdFromRequest(req) {
@@ -83,10 +82,6 @@ async function getProfile(req, res) {
 
     if (actor.role === 'NGO_ADMIN') {
       profile = await NgoAdministratorProfile.findOne({ where: { userId: actor.user.userId } });
-    }
-
-    if (actor.role === 'SYSTEM_ADMIN') {
-      profile = await SystemAdministratorProfile.findOne({ where: { userId: actor.user.userId } });
     }
 
     return res.json({
@@ -205,22 +200,6 @@ async function updateProfile(req, res) {
         const value = String(req.body.administrativeDepartment || '').trim();
         if (!value) return res.status(400).json({ error: 'administrativeDepartment cannot be empty.' });
         updates.administrativeDepartment = value.slice(0, 100);
-      }
-
-      await profile.update(updates);
-      return res.json({ message: 'Profile updated successfully.', profile: profile.toJSON() });
-    }
-
-    if (actor.role === 'SYSTEM_ADMIN') {
-      const profile = await SystemAdministratorProfile.findOne({ where: { userId: actor.user.userId } });
-      if (!profile) return res.status(404).json({ error: 'System admin profile not found.' });
-
-      const updates = {};
-
-      if (req.body.maintenancePrivileges !== undefined) {
-        const value = String(req.body.maintenancePrivileges || '').trim();
-        if (!value) return res.status(400).json({ error: 'maintenancePrivileges cannot be empty.' });
-        updates.maintenancePrivileges = value.slice(0, 255);
       }
 
       await profile.update(updates);
