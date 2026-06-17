@@ -6,7 +6,8 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000
 /**
  * Admin API service
  * -----------------
- * Centralized axios wrappers for NGO and system admin features.
+ * Centralized axios wrappers for NGO admin features (the only admin role —
+ * System Admin and its infrastructure dashboard have been removed).
  * Each request uses the bearer token from sessionStorage via getToken().
  */
 function getAuthHeaders() {
@@ -22,14 +23,6 @@ export async function getNgoAdminDashboard() {
   return response.data;
 }
 
-// System workspace aggregate payload (infra + logs + maintenance + staff directory).
-export async function getSystemAdminDashboard() {
-  const response = await axios.get(`${API_BASE_URL}/api/admin/system/dashboard`, {
-    headers: getAuthHeaders()
-  });
-  return response.data;
-}
-
 // Cross-entity admin lookup used by triage workflows.
 export async function runAdminSearch(query) {
   const response = await axios.get(`${API_BASE_URL}/api/admin/search`, {
@@ -40,6 +33,7 @@ export async function runAdminSearch(query) {
 }
 
 // Toggle maintenance mode with optional reason and expected return timestamp.
+// NGO_ADMIN-gated — the one System-Admin capability retained, folded into the NGO dashboard.
 export async function setMaintenanceMode(enabled, options = {}) {
   const payload = {
     enabled,
@@ -55,31 +49,12 @@ export async function setMaintenanceMode(enabled, options = {}) {
   return response.data;
 }
 
-// Pulls latest system audit entries; optional incremental fetch by `since`.
-export async function getSystemLogs(since) {
-  const response = await axios.get(`${API_BASE_URL}/api/admin/system/logs`, {
-    headers: getAuthHeaders(),
-    params: since ? { since } : undefined
-  });
-  return response.data;
-}
-
-// Runtime actions: CLEAR_CACHE or RESTART_SERVER.
-export async function performSystemRuntimeAction(action) {
-  const response = await axios.post(
-    `${API_BASE_URL}/api/admin/system/runtime-action`,
-    { action },
-    { headers: getAuthHeaders() }
-  );
-  return response.data;
-}
-
-// NGO-admin staff onboarding entrypoint for counsellor/legal counsel accounts.
+// NGO-admin staff onboarding entrypoint for counsellor/legal counsel/moderator accounts.
 // Request contract (backend-enforced):
 // - phoneNumber: required
 // - password: required temporary credential
-// - role: COUNSELLOR | LEGAL_COUNSEL
-// - specialization, availabilityStatus: optional role metadata
+// - role: COUNSELLOR | LEGAL_COUNSEL | MODERATOR
+// - specialization, availabilityStatus: optional role metadata (ignored for MODERATOR)
 // Response includes created staff summary used for success toasts and refresh.
 export async function createNgoStaffAccount(payload) {
   const response = await axios.post(
@@ -184,6 +159,15 @@ export async function updateNgoResource(resourceId, payload) {
 export async function reassignSurvivorCase(payload) {
   const response = await axios.patch(`${API_BASE_URL}/api/admin/ngo/reassignments`, payload, {
     headers: getAuthHeaders()
+  });
+  return response.data;
+}
+
+// Recommended (least-loaded) counsellor/legal-counsel for a survivor's manual reassignment.
+export async function getReassignmentSuggestions(survivorId) {
+  const response = await axios.get(`${API_BASE_URL}/api/admin/ngo/reassignments/suggestions`, {
+    headers: getAuthHeaders(),
+    params: { survivorId }
   });
   return response.data;
 }

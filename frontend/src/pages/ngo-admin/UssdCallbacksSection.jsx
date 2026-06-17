@@ -18,8 +18,8 @@ export default function UssdCallbacksSection({ ussdCallbacks, updatingCallbackId
         <h2>USSD Callback Requests</h2>
         <p className="admin-note">
           These are callback requests submitted by callers via the USSD interface (*384#).
-          Mark each request completed once your team has followed up, or cancelled if the
-          number is unreachable.
+          Each request is auto-assigned to the least-loaded available counsellor on creation —
+          mark it completed once your team has followed up, or cancelled if the number is unreachable.
         </p>
         <div className="admin-table-wrap">
           <table className="admin-table">
@@ -27,6 +27,7 @@ export default function UssdCallbacksSection({ ussdCallbacks, updatingCallbackId
               <tr>
                 <th>Requested</th>
                 <th>Phone number</th>
+                <th>Assigned To</th>
                 <th>Status</th>
                 <th>Actions</th>
               </tr>
@@ -41,6 +42,7 @@ export default function UssdCallbacksSection({ ussdCallbacks, updatingCallbackId
                       {cb.requesterPhoneNumber}
                     </a>
                   </td>
+                  <td>{cb.assignedCounsellorPhone || "Unassigned"}</td>
                   <td>
                     <span className={
                       cb.callbackFulfillmentStatus === "COMPLETED"

@@ -22,6 +22,8 @@ import { formatNumber, formatDate, prettifyLabel, availabilityClass } from "./he
  * @param {object}   props.assignmentForm         - Controlled reassignment form state.
  * @param {Function} props.setAssignmentForm      - Setter for assignmentForm.
  * @param {object|null} props.selectedSurvivor    - Survivor object matching assignmentForm.survivorId.
+ * @param {object|null} props.reassignmentSuggestion - { suggestedCounsellorId, suggestedLegalCounselId } for the selected survivor.
+ * @param {Function} props.onApplyReassignmentSuggestion - () => void; fills the form with the suggestion.
  * @param {object}   props.staffForm              - Controlled staff onboarding form state.
  * @param {Function} props.setStaffForm           - Setter for staffForm.
  * @param {string|null} props.togglingStaffId     - userId of the staff whose status is toggling.
@@ -43,6 +45,8 @@ export default function TeamCapacitySection({
   assignmentForm,
   setAssignmentForm,
   selectedSurvivor,
+  reassignmentSuggestion,
+  onApplyReassignmentSuggestion,
   staffForm,
   setStaffForm,
   togglingStaffId,
@@ -246,28 +250,33 @@ export default function TeamCapacitySection({
             >
               <option value="COUNSELLOR">Counsellor</option>
               <option value="LEGAL_COUNSEL">Legal Counsel</option>
+              <option value="MODERATOR">Moderator</option>
             </select>
           </label>
-          <label>
-            Specialization
-            <input
-              type="text"
-              value={staffForm.specialization}
-              onChange={(event) => setStaffForm((prev) => ({ ...prev, specialization: event.target.value }))}
-              placeholder={staffForm.role === "COUNSELLOR" ? "Trauma support" : "Family law"}
-            />
-          </label>
-          <label>
-            Availability
-            <select
-              value={staffForm.availabilityStatus}
-              onChange={(event) => setStaffForm((prev) => ({ ...prev, availabilityStatus: event.target.value }))}
-            >
-              <option value="AVAILABLE">Available</option>
-              <option value="BUSY">Busy</option>
-              <option value="OFFLINE">Offline</option>
-            </select>
-          </label>
+          {staffForm.role !== "MODERATOR" && (
+            <>
+              <label>
+                Specialization
+                <input
+                  type="text"
+                  value={staffForm.specialization}
+                  onChange={(event) => setStaffForm((prev) => ({ ...prev, specialization: event.target.value }))}
+                  placeholder={staffForm.role === "COUNSELLOR" ? "Trauma support" : "Family law"}
+                />
+              </label>
+              <label>
+                Availability
+                <select
+                  value={staffForm.availabilityStatus}
+                  onChange={(event) => setStaffForm((prev) => ({ ...prev, availabilityStatus: event.target.value }))}
+                >
+                  <option value="AVAILABLE">Available</option>
+                  <option value="BUSY">Busy</option>
+                  <option value="OFFLINE">Offline</option>
+                </select>
+              </label>
+            </>
+          )}
           <button type="submit" className="admin-action-btn">Create Staff</button>
         </form>
       </article>
@@ -281,6 +290,23 @@ export default function TeamCapacitySection({
           <p><strong>Survivor:</strong> {selectedSurvivor ? `${selectedSurvivor.nickname} (${selectedSurvivor.county || "Unknown"})` : "Not selected"}</p>
           <p><strong>Counsellor:</strong> {assignmentForm.counsellorId ? (staffLabelById.get(assignmentForm.counsellorId) || assignmentForm.counsellorId) : "No change"}</p>
           <p><strong>Legal Counsel:</strong> {assignmentForm.legalCounselId ? (staffLabelById.get(assignmentForm.legalCounselId) || assignmentForm.legalCounselId) : "No change"}</p>
+
+          {selectedSurvivor && reassignmentSuggestion && (reassignmentSuggestion.suggestedCounsellorId || reassignmentSuggestion.suggestedLegalCounselId) && (
+            <div className="reassignment-suggestion">
+              <span className="reassignment-suggestion-badge">Recommended</span>
+              <span>
+                {reassignmentSuggestion.suggestedCounsellorId && (
+                  <>Counsellor: {staffLabelById.get(reassignmentSuggestion.suggestedCounsellorId) || reassignmentSuggestion.suggestedCounsellorId}{" "}</>
+                )}
+                {reassignmentSuggestion.suggestedLegalCounselId && (
+                  <>Legal Counsel: {staffLabelById.get(reassignmentSuggestion.suggestedLegalCounselId) || reassignmentSuggestion.suggestedLegalCounselId}</>
+                )}
+              </span>
+              <button type="button" className="link-btn" onClick={onApplyReassignmentSuggestion}>
+                Use Recommended
+              </button>
+            </div>
+          )}
         </div>
         <form className="reassignment-form" onSubmit={onReassign}>
           <label>

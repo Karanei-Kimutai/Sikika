@@ -10,7 +10,6 @@ import ReportingPage from "./pages/ReportingPage";
 import CommunityPage from "./pages/CommunityPage";
 import ModerationDashboardPage from "./pages/ModerationDashboardPage";
 import NgoAdminDashboardPage from "./pages/NgoAdminDashboardPage";
-import SystemAdminDashboardPage from "./pages/SystemAdminDashboardPage";
 import ManageProfilePage from "./pages/ManageProfilePage";
 import "./App.css";
 
@@ -43,8 +42,7 @@ const publicRoutes = {
   "/community": CommunityPage,
   "/profile": ManageProfilePage,
   "/moderation": ModerationDashboardPage,
-  "/ngo-admin": NgoAdminDashboardPage,
-  "/system-admin": SystemAdminDashboardPage
+  "/ngo-admin": NgoAdminDashboardPage
 };
 
 // Role-specific route remapping used after successful authentication.
@@ -61,15 +59,13 @@ const ngoAdminRoutes = {
   "/join": AuthPage
 };
 
-const systemAdminRoutes = {
-  "/": (props) => <SystemAdminDashboardPage {...props} initialSection="infrastructure" />,
-  "/home": (props) => <SystemAdminDashboardPage {...props} initialSection="infrastructure" />,
-  // System admins are intentionally granted report/evidence read navigation.
-  // Backend remains source-of-truth for read-only enforcement.
-  "/reports": ReportingPage,
-  "/chat": (props) => <SystemAdminDashboardPage {...props} initialSection="maintenance" />,
-  "/community": (props) => <SystemAdminDashboardPage {...props} initialSection="ops-logs" />,
-  "/library": (props) => <SystemAdminDashboardPage {...props} initialSection="admin-access" />,
+// Moderator scope is intentionally narrow — Moderation Desk + Community Chat
+// oversight only, reusing the same pages NGO Admin uses for those features.
+const moderatorRoutes = {
+  "/": ModerationDashboardPage,
+  "/home": ModerationDashboardPage,
+  "/moderation": ModerationDashboardPage,
+  "/community": CommunityPage,
   "/profile": ManageProfilePage,
   "/join": AuthPage
 };
@@ -79,15 +75,14 @@ const systemAdminRoutes = {
 const knownPaths = new Set([
   ...Object.keys(publicRoutes),
   ...Object.keys(ngoAdminRoutes),
-  ...Object.keys(systemAdminRoutes),
+  ...Object.keys(moderatorRoutes),
 ]);
 
 function getRoutesForRole(role, isAuthenticated) {
   if (!isAuthenticated) return publicRoutes;
   if (role === "NGO_ADMIN") return ngoAdminRoutes;
-  // Role-specific app mapping mirrors backend governance model:
-  // NGO admins run operations, system admins monitor infrastructure and oversight views.
-  if (role === "SYSTEM_ADMIN") return systemAdminRoutes;
+  if (role === "MODERATOR") return moderatorRoutes;
+  // NGO_ADMIN is the only admin role — System Admin has been removed.
   return publicRoutes;
 }
 
@@ -138,7 +133,7 @@ function App() {
 
     async function refreshPublicStatus() {
       try {
-        // Used by global maintenance banner/screen for non-system-admin users.
+        // Used by global maintenance banner/screen for non-admin users.
         const response = await axios.get(`${API_BASE_URL}/api/system/public-status`);
         setMaintenanceMode(response.data?.maintenanceMode || { enabled: false, updatedAt: null });
       } catch {
@@ -214,10 +209,10 @@ function App() {
   // /reports is intentionally excluded from this set — unauthenticated users who navigate
   // there receive a purpose-built emergency intercept screen inside ReportingPage rather
   // than a silent redirect, so they can access crisis contacts without creating an account.
-  const protectedPaths = new Set(["/chat", "/community", "/profile", "/moderation", "/ngo-admin", "/system-admin"]);
+  const protectedPaths = new Set(["/chat", "/community", "/profile", "/moderation", "/ngo-admin"]);
   const resolvedPath = protectedPaths.has(currentPath) && !isAuthenticated ? "/join" : currentPath;
   const roleResolvedPath = (() => {
-    if (["/ngo-admin", "/system-admin"].includes(resolvedPath)) {
+    if (resolvedPath === "/ngo-admin") {
       return "/home";
     }
 
@@ -228,20 +223,20 @@ function App() {
   const finalPath = activeRoutes[roleResolvedPath] ? roleResolvedPath : fallbackPath;
   const Page = activeRoutes[finalPath] || LandingPage;
 
-  // During active maintenance, non-system-admin sessions are redirected to a
+  // During active maintenance, non-admin sessions are redirected to a
   // read-only status card instead of normal app pages.
   // Exception: keep /join reachable so signed-out operators can still recover
-  // access by authenticating as SYSTEM_ADMIN.
+  // access by authenticating as NGO_ADMIN.
   const shouldShowMaintenanceScreen =
     maintenanceMode.enabled &&
-    role !== "SYSTEM_ADMIN" &&
+    role !== "NGO_ADMIN" &&
     finalPath !== "/join";
 
   if (shouldShowMaintenanceScreen) {
     return (
       <div className="app-shell">
         {/*
-          Dedicated maintenance surface for non-system-admin sessions.
+          Dedicated maintenance surface for non-admin sessions.
           This keeps users informed while backend maintenance guard returns 503s.
         */}
         <main className="maintenance-page" role="main" aria-label="Maintenance status page">

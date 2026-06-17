@@ -40,8 +40,7 @@ function ManageProfilePage() {
           notificationsEnabled: Boolean(profile.privacyPreferencesJson?.notificationsEnabled),
           professionalSpecialization: profile.professionalSpecialization || "",
           availabilityStatus: profile.availabilityStatus || "AVAILABLE",
-          administrativeDepartment: profile.administrativeDepartment || "",
-          maintenancePrivileges: profile.maintenancePrivileges || ""
+          administrativeDepartment: profile.administrativeDepartment || ""
         });
       } catch (error) {
         setErrorMessage(error.response?.data?.error || "Failed to load profile.");
@@ -81,12 +80,6 @@ function ManageProfilePage() {
       if (role === "NGO_ADMIN") {
         payload = {
           administrativeDepartment: formValues.administrativeDepartment
-        };
-      }
-
-      if (role === "SYSTEM_ADMIN") {
-        payload = {
-          maintenancePrivileges: formValues.maintenancePrivileges
         };
       }
 
@@ -212,17 +205,6 @@ function ManageProfilePage() {
                 type="text"
                 value={formValues.administrativeDepartment || ""}
                 onChange={(event) => setFormValues((prev) => ({ ...prev, administrativeDepartment: event.target.value }))}
-              />
-            </label>
-          )}
-
-          {role === "SYSTEM_ADMIN" && (
-            <label>
-              Maintenance Privileges
-              <input
-                type="text"
-                value={formValues.maintenancePrivileges || ""}
-                onChange={(event) => setFormValues((prev) => ({ ...prev, maintenancePrivileges: event.target.value }))}
               />
             </label>
           )}
