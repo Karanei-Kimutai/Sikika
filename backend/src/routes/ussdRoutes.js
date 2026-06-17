@@ -1,6 +1,6 @@
 const express = require('express');
 const authMiddleware = require('../middleware/authMiddleware');
-const { handleCallback, listCallbackRequests, updateCallbackRequest } = require('../controllers/ussdController');
+const { handleCallback, listCallbackRequests, getMyCallbackRequests, updateCallbackRequest } = require('../controllers/ussdController');
 
 /**
  * ussdRoutes.js
@@ -13,9 +13,12 @@ const { handleCallback, listCallbackRequests, updateCallbackRequest } = require(
  *   IP allowlist (AT IP ranges) is recommended in production.
  *
  * GET  /callback-requests
+ *   NGO admin endpoint — the full callback queue across all counsellors.
+ * GET  /my-callback-requests
+ *   Counsellor endpoint — only the requests auto-assigned to the caller.
  * PATCH /callback-requests/:requestId
- *   NGO admin endpoints to view and fulfil callback requests that
- *   originated from USSD sessions.
+ *   NGO admin can fulfil any request; a counsellor can only fulfil one
+ *   that is auto-assigned to them (enforced in the controller).
  */
 
 const router = express.Router();
@@ -25,6 +28,7 @@ router.post('/callback', handleCallback);
 
 // NGO admin management endpoints
 router.get('/callback-requests', authMiddleware, listCallbackRequests);
+router.get('/my-callback-requests', authMiddleware, getMyCallbackRequests);
 router.patch('/callback-requests/:requestId', authMiddleware, updateCallbackRequest);
 
 module.exports = router;

@@ -228,8 +228,22 @@ export async function getUssdCallbackRequests() {
 }
 
 /**
+ * Fetch the USSD callback requests auto-assigned to the calling counsellor,
+ * newest first. Counsellor only.
+ *
+ * @returns {Promise<{requests: Array}>}
+ */
+export async function getMyCallbackRequests() {
+  const response = await axios.get(`${API_BASE_URL}/api/ussd/my-callback-requests`, {
+    headers: getAuthHeaders()
+  });
+  return response.data;
+}
+
+/**
  * Update the fulfillment status of a USSD callback request.
- * NGO admin only.
+ * NGO admin can update any request; a counsellor can only update one
+ * auto-assigned to them (enforced server-side).
  *
  * @param {string} requestId
  * @param {'COMPLETED'|'CANCELLED'} status

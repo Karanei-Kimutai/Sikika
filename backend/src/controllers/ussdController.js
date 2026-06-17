@@ -2,7 +2,7 @@ const { v4: uuidv4 } = require('uuid');
 const { Op } = require('sequelize');
 const db = require('../models');
 const { UssdCallbackRequest, UserAccount, CounsellorProfile } = db;
-const { createNotificationsBulk } = require('../services/notificationService');
+const { createNotification, createNotificationsBulk } = require('../services/notificationService');
 
 /**
  * pickLeastLoadedCounsellor
@@ -149,6 +149,19 @@ async function handleCallback(req, res) {
           console.error('[USSD] Failed to notify NGO admins of callback request:', err.message);
         });
 
+        // Notify the auto-assigned counsellor directly so they have visibility
+        // into the callback without relying on the NGO admin to relay it.
+        // Best-effort — notification failure must not break the USSD flow.
+        if (assignedCounsellor?.userId) {
+          createNotification({
+            recipientUserId: assignedCounsellor.userId,
+            message: 'A new callback request has been assigned to you.',
+            category: 'CALLBACK_REQUEST'
+          }).catch((err) => {
+            console.error('[USSD] Failed to notify assigned counsellor of callback request:', err.message);
+          });
+        }
+
       } catch (err) {
         console.error('[USSD] Failed to save callback request:', err.message);
         return res.type('text/plain').send(
@@ -232,18 +245,59 @@ async function listCallbackRequests(req, res) {
 }
 
 /**
+ * GET /api/ussd/my-callback-requests
+ *
+ * Returns the USSD callback requests auto-assigned to the calling counsellor,
+ * newest first. Restricted to COUNSELLOR role — gives the assigned counsellor
+ * visibility into their own queue without the NGO-admin-wide view.
+ *
+ * @param {import('express').Request}  req  - Must have req.user from authMiddleware.
+ * @param {import('express').Response} res
+ */
+async function getMyCallbackRequests(req, res) {
+  if (req.user?.role !== 'COUNSELLOR') {
+    return res.status(403).json({ error: 'Counsellor access required.' });
+  }
+
+  try {
+    const counsellorProfile = await CounsellorProfile.findOne({
+      where: { userId: req.user.userId },
+      attributes: ['counsellorId']
+    });
+
+    if (!counsellorProfile) {
+      return res.status(404).json({ error: 'Counsellor profile not found.' });
+    }
+
+    const requests = await UssdCallbackRequest.findAll({
+      where: { assignedCounsellorId: counsellorProfile.counsellorId },
+      order: [['callbackRequestTimestamp', 'DESC']]
+    });
+
+    return res.json({ requests });
+  } catch (err) {
+    console.error('[USSD] getMyCallbackRequests error:', err.message);
+    return res.status(500).json({ error: 'Could not retrieve your callback requests.' });
+  }
+}
+
+/**
  * PATCH /api/ussd/callback-requests/:requestId
  *
  * Updates the fulfillment status of a USSD callback request.
  * Only COMPLETED and CANCELLED are valid next states from PENDING.
- * Restricted to NGO_ADMIN role.
+ * NGO_ADMIN may update any request; a COUNSELLOR may only update a request
+ * that is auto-assigned to them.
  *
  * @param {import('express').Request}  req  - body: { callbackFulfillmentStatus }
  * @param {import('express').Response} res
  */
 async function updateCallbackRequest(req, res) {
-  if (req.user?.role !== 'NGO_ADMIN') {
-    return res.status(403).json({ error: 'NGO admin access required.' });
+  const isAdmin = req.user?.role === 'NGO_ADMIN';
+  const isCounsellor = req.user?.role === 'COUNSELLOR';
+
+  if (!isAdmin && !isCounsellor) {
+    return res.status(403).json({ error: 'NGO admin or assigned counsellor access required.' });
   }
 
   const { requestId } = req.params;
@@ -263,6 +317,19 @@ async function updateCallbackRequest(req, res) {
       return res.status(404).json({ error: 'Callback request not found.' });
     }
 
+    if (isCounsellor) {
+      // A counsellor may only act on a request auto-assigned to them — not
+      // the NGO-admin-wide queue.
+      const counsellorProfile = await CounsellorProfile.findOne({
+        where: { userId: req.user.userId },
+        attributes: ['counsellorId']
+      });
+
+      if (!counsellorProfile || record.assignedCounsellorId !== counsellorProfile.counsellorId) {
+        return res.status(403).json({ error: 'This callback request is not assigned to you.' });
+      }
+    }
+
     if (record.callbackFulfillmentStatus !== 'PENDING') {
       return res.status(409).json({
         error: `Cannot update a request that is already ${record.callbackFulfillmentStatus}.`
@@ -278,4 +345,4 @@ async function updateCallbackRequest(req, res) {
   }
 }
 
-module.exports = { handleCallback, listCallbackRequests, updateCallbackRequest };
+module.exports = { handleCallback, listCallbackRequests, getMyCallbackRequests, updateCallbackRequest };
