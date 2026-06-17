@@ -31,16 +31,16 @@ const { normalizeRole, BANNABLE_ROLES } = require('../utils/roles');
 /**
  * Admin Controller
  * ----------------
- * Centralized controller for NGO and system administration features.
+ * Centralized controller for NGO administration features. NGO Admin is the
+ * only admin role — System Admin was removed; its one capability still
+ * needed (maintenance mode) lives here, re-gated to NGO_ADMIN.
  *
  * Responsibilities covered here:
  * - NGO operations dashboard aggregates
  * - staff reassignment and workload recalculation
  * - NGO resource create/update and resource analytics
- * - system dashboard telemetry
  * - maintenance mode state management + enforcement helpers
- * - runtime actions (clear cache / restart request)
- * - staff onboarding and staff account lifecycle status updates
+ * - staff onboarding (counsellor/legal counsel/moderator) and staff account lifecycle status updates
  */
 
 /**
@@ -413,6 +413,7 @@ async function getNgoDashboard(req, res) {
       reportsOverTimeRows,
       counsellorWorkload,
       legalWorkload,
+      moderatorWorkload,
       urgentCases,
       moderationQueue,
       urgentNotifications,
@@ -480,6 +481,11 @@ async function getNgoDashboard(req, res) {
       }),
       LegalCounselProfile.findAll({
         attributes: ['legalCounselId', 'professionalSpecialization', 'currentWorkloadScore', 'availabilityStatus'],
+        include: [{ model: UserAccount, attributes: ['userId', 'phoneNumber', 'accountStatus', 'banReason', 'banExpiresAt'] }],
+        order: [['currentWorkloadScore', 'DESC']]
+      }),
+      ModeratorProfile.findAll({
+        attributes: ['moderatorId', 'currentWorkloadScore'],
         include: [{ model: UserAccount, attributes: ['userId', 'phoneNumber', 'accountStatus', 'banReason', 'banExpiresAt'] }],
         order: [['currentWorkloadScore', 'DESC']]
       }),
@@ -731,6 +737,16 @@ async function getNgoDashboard(req, res) {
           activeCases: legalCountMap.get(row.legalCounselId) || 0,
           availability: row.availabilityStatus,
           userId: row.userAccount?.userId
+        })),
+        // Moderators have no per-item assignment (shared pull queue), so there's
+        // no "activeCases"/"availability" equivalent — workload is a pure count
+        // of moderation actions taken, for capacity visibility only.
+        moderators: moderatorWorkload.map((row) => ({
+          id: row.moderatorId,
+          role: 'MODERATOR',
+          label: `Moderator ${shortCode(row.moderatorId)}`,
+          workload: Number(row.currentWorkloadScore || 0),
+          userId: row.userAccount?.userId
         }))
       },
       staffDirectory: [
@@ -754,6 +770,24 @@ async function getNgoDashboard(req, res) {
           specialization: row.professionalSpecialization || 'General Legal Support',
           activeCases: legalCountMap.get(row.legalCounselId) || 0,
           availability: row.availabilityStatus,
+          userId: row.userAccount?.userId,
+          accountStatus: row.userAccount?.accountStatus || 'ACTIVE',
+          banReason: row.userAccount?.banReason || null,
+          banExpiresAt: row.userAccount?.banExpiresAt || null
+        })),
+        // Moderators have no caseload/availability concept (shared pull queue),
+        // so specialization/activeCases/availability are left null — the
+        // frontend renders "—" for those columns. workload is the moderation
+        // action count, shown separately from the COUNSELLOR/LEGAL_COUNSEL
+        // "activeCases" semantics.
+        ...moderatorWorkload.map((row) => ({
+          id: row.moderatorId,
+          type: 'MODERATOR',
+          label: `Moderator ${shortCode(row.moderatorId)}`,
+          specialization: null,
+          activeCases: null,
+          availability: null,
+          workload: Number(row.currentWorkloadScore || 0),
           userId: row.userAccount?.userId,
           accountStatus: row.userAccount?.accountStatus || 'ACTIVE',
           banReason: row.userAccount?.banReason || null,
@@ -1096,19 +1130,17 @@ async function setMaintenanceMode(req, res) {
 /**
  * createStaffAccount
  * ------------------
- * NGO-admin onboarding endpoint for counsellor/legal-counsel staff roles.
+ * NGO-admin onboarding endpoint for counsellor/legal-counsel/moderator staff roles.
  *
  * Security/operations notes:
  * - caller must be an ACTIVE NGO_ADMIN account
- * - role is strictly allow-listed
+ * - role is strictly allow-listed (COUNSELLOR, LEGAL_COUNSEL, MODERATOR)
  * - account starts in `password_reset_required` status
  * - profile rows are created according to role
  * - action is audit-logged
  *
- * Why this endpoint exists under NGO governance:
- * - NGO admins own frontline staffing operations
- * - system admins retain infra/runtime controls only
- * - separating these concerns narrows accidental privilege overlap
+ * NGO Admin is the only admin role (System Admin was removed) — frontline
+ * staffing operations, including moderator onboarding, are owned entirely here.
  */
 async function createStaffAccount(req, res) {
   // Transaction guarantees user + profile + audit log are either all committed or all rolled back.
@@ -1323,7 +1355,7 @@ async function updateStaffAccountStatus(req, res) {
  *
  * A dual audit trail is written:
  *  - ModerationActionLog (type: 'BAN') for moderation review workflows.
- *  - AuditLog (type: 'ACCOUNT_BANNED') which surfaces in System Admin logs.
+ *  - AuditLog (type: 'ACCOUNT_BANNED') for the general platform audit trail.
  *
  * Known limitation: banning a COUNSELLOR or LEGAL_COUNSEL does NOT
  * automatically reassign their active survivor caseload. NGO admins should
@@ -1398,7 +1430,7 @@ async function banUser(req, res) {
     await targetUser.save();
 
     // Dual audit trail: moderation log (community moderation flows) +
-    // AuditLog (surfaces in System Admin logs feed automatically).
+    // AuditLog (general platform audit trail).
     await Promise.all([
       ModerationActionLog.create({
         moderationActionId: randomUUID(),
@@ -1457,8 +1489,8 @@ async function banUser(req, res) {
  *
  * Policy guardrails:
  *  - Only NGO_ADMIN callers may unban.
- *  - Self-unban is permitted (e.g. system admin accidentally banned a peer;
- *    the NGO admin cleans up their own mistake).
+ *  - Self-unban is permitted (e.g. an NGO admin accidentally banned a peer
+ *    admin account; they can clean up their own mistake).
  *  - Unbanning an already-ACTIVE account is a no-op (returns 200).
  *
  * @param {import('express').Request}  req

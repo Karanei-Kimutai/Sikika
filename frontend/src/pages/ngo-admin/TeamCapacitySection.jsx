@@ -118,7 +118,7 @@ export default function TeamCapacitySection({
                 <th>Staff ID</th>
                 <th>Role</th>
                 <th>Specialization</th>
-                <th>Active Cases</th>
+                <th>Active Cases / Workload</th>
                 <th>Availability</th>
                 <th>Account Status</th>
                 <th>Actions</th>
@@ -141,13 +141,27 @@ export default function TeamCapacitySection({
                 return (
                   <tr key={`${staff.type}-${staff.id}`}>
                     <td>{staff.label}</td>
-                    <td>{staff.type === "COUNSELLOR" ? "Counsellor" : "Legal Counsel"}</td>
-                    <td>{staff.specialization}</td>
-                    <td>{formatNumber(staff.activeCases)}</td>
                     <td>
-                      <span className={availabilityClass(staff.availability)}>
-                        {prettifyLabel(staff.availability)}
-                      </span>
+                      {staff.type === "COUNSELLOR"
+                        ? "Counsellor"
+                        : staff.type === "LEGAL_COUNSEL"
+                          ? "Legal Counsel"
+                          : "Moderator"}
+                    </td>
+                    <td>{staff.specialization || "—"}</td>
+                    <td>
+                      {/* Moderators have no caseload — their "workload" is a
+                          moderation-action count, not an assigned-case count. */}
+                      {staff.type === "MODERATOR" ? formatNumber(staff.workload) : formatNumber(staff.activeCases)}
+                    </td>
+                    <td>
+                      {staff.availability ? (
+                        <span className={availabilityClass(staff.availability)}>
+                          {prettifyLabel(staff.availability)}
+                        </span>
+                      ) : (
+                        <span>—</span>
+                      )}
                     </td>
                     <td>
                       {/* Badge uses CSS class for colour; label maps SUSPENDED → "Inactive" */}
@@ -218,11 +232,7 @@ export default function TeamCapacitySection({
       {/* ── Create staff account ───────────────────────────────────────── */}
       <article className="admin-panel full-span">
         <h2>Create Staff Account</h2>
-        <p className="admin-empty">
-          This panel reflects the branch governance change: NGO admins now own
-          counsellor/legal-counsel onboarding, while system admins focus on infrastructure.
-        </p>
-        <p className="admin-empty">NGO admins can onboard counsellors and legal counsel. New staff must change the temporary password on first login.</p>
+        <p className="admin-empty">NGO admins can onboard counsellors, legal counsel, and moderators. New staff must change the temporary password on first login.</p>
         <form className="reassignment-form" onSubmit={onStaffCreate}>
           <label>
             Phone Number
