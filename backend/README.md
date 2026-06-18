@@ -1,6 +1,6 @@
 # Backend
 
-Express + Sequelize (MySQL) backend for the GBV Support Platform. Handles authentication, incident reporting, direct chat, community rooms, USSD, moderation, notifications, legal case management, and websocket relay.
+Express + Sequelize (MySQL) backend for Sikika, a GBV support platform. Handles authentication, incident reporting, direct chat, community rooms, USSD, moderation, notifications, legal case management, and websocket relay.
 
 - OTP and password authentication with lockout, ban enforcement, and forced-reset flows
 - Role-aware operations for Survivors, Counsellors, Legal Counsel, NGO Admins, and System Admins

@@ -1,6 +1,6 @@
-# GBV Support Platform — Project Analysis
+# Sikika — Project Analysis
 
-**Project:** Gender-Based Violence (GBV) Support Platform for Kenya
+**Project:** Sikika, a Gender-Based Violence (GBV) Support Platform for Kenya
 **Stack:** React 19 (frontend) · Node.js + Express 5 + Socket.io (backend) · MySQL + Sequelize · Africa's Talking (USSD + SMS OTP) · Cloudinary (file storage)
 **Methodology:** Agile Scrum + OOAD
 **Last updated:** 2026-06-16

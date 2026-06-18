@@ -455,15 +455,13 @@ button {
   justify-self: start;
 }
 
+/* Sikika logo mark — flex-shrink:0 keeps it from squashing in the narrow
+   header grid column; the icon's own shape supplies the rounded silhouette,
+   so (unlike the old letter-avatar square it replaced) no background/radius
+   is applied here. */
 .brand-symbol {
-  display: grid;
-  place-items: center;
-  width: 2.55rem;
-  height: 2.55rem;
-  border-radius: 0.55rem;
-  color: #ffffff;
-  background: var(--brown);
-  font-weight: 800;
+  display: block;
+  flex-shrink: 0;
 }
 
 .brand-mark strong {
@@ -673,6 +671,115 @@ button {
   box-shadow: 0 10px 24px rgba(159, 45, 45, 0.2);
 }
 
+/**
+ * .profile-dropdown
+ * Wrapper that establishes the positioning context for the account popover,
+ * mirroring .notification-bell-container so the two header controls line up.
+ * width: fit-content guards against the ≤900px header-actions breakpoint
+ * (.header-actions switches to display:grid there) stretching this wrapper
+ * full-width, which would detach the popover's right-anchored position from
+ * the avatar button sitting at the wrapper's left edge.
+ */
+.profile-dropdown {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+}
+
+/**
+ * .profile-avatar-btn
+ * Circular avatar button that opens the account popover. Replaces the old
+ * standalone "Profile" nav tab + "Sign Out" button — both now live inside
+ * the popover this toggles.
+ */
+.profile-avatar-btn {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border: 1px solid rgba(139, 94, 60, 0.2);
+  border-radius: 50%;
+  background: var(--surface);
+  transition: box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.profile-avatar-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(139, 94, 60, 0.15);
+}
+
+/**
+ * .profile-menu
+ * Popover panel anchored below the avatar button: profile summary first,
+ * then Manage Profile, then Sign Out pinned at the bottom.
+ */
+.profile-menu {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  width: 15.5rem;
+  max-width: calc(100vw - 2rem);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid rgba(139, 94, 60, 0.15);
+  border-radius: 0.85rem;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+  z-index: 200;
+  overflow: hidden;
+}
+
+.profile-menu-summary {
+  padding: 0.9rem 1rem;
+  border-bottom: 1px solid rgba(139, 94, 60, 0.12);
+}
+
+.profile-menu-role {
+  font-weight: 800;
+  color: var(--brown-dark);
+}
+
+.profile-menu-phone,
+.profile-menu-status {
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.profile-menu-loading {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.profile-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  padding: 0.75rem 1rem;
+  color: var(--body);
+  background: transparent;
+  font-weight: 700;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+
+.profile-menu-item:hover {
+  background: rgba(139, 94, 60, 0.08);
+}
+
+.profile-menu-signout {
+  color: var(--danger);
+  border-top: 1px solid rgba(139, 94, 60, 0.12);
+}
+
+.profile-menu-signout:hover {
+  background: rgba(159, 45, 45, 0.08);
+}
+
 .primary-btn,
 .tile-action {
   border: 0;
@@ -738,6 +845,13 @@ button {
   font-weight: 800;
 }
 
+/* Eyebrow variant that pairs the Sikika logo mark with the wordmark text. */
+.auth-brand-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
 h1,
 h2,
 h3,
@@ -752,6 +866,17 @@ p {
   color: var(--brown-dark);
   font-size: clamp(2.35rem, 6vw, 5rem);
   line-height: 1;
+}
+
+/* Landing hero heading variant: pairs the Sikika logo mark with the wordmark. */
+.hero-brand-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.hero-brand-heading svg {
+  flex-shrink: 0;
 }
 
 .hero-text,
@@ -1439,6 +1564,31 @@ input:focus {
   background: transparent;
   font-weight: 900;
   text-decoration: underline;
+}
+
+/* Icon-only variant of .link-btn (e.g. Direct Chat archive/trash toggles) —
+   drop the underline, give the icon a tappable square, and show a filled
+   state when the toggle it controls is active. */
+.link-btn.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border-radius: 0.5rem;
+  text-decoration: none;
+  color: var(--muted);
+}
+
+.link-btn.icon-btn:hover {
+  color: var(--brown);
+  background: rgba(139, 94, 60, 0.1);
+}
+
+.link-btn.icon-btn.active {
+  color: var(--brown-dark);
+  background: rgba(139, 94, 60, 0.16);
 }
 
 .feedback {

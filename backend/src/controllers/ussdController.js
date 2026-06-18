@@ -92,7 +92,7 @@ async function handleCallback(req, res) {
   // ── Level 0: welcome screen ──────────────────────────────────────────────
   if (steps.length === 0) {
     return res.type('text/plain').send(
-      'CON Welcome to GBV Support\n' +
+      'CON Welcome to Sikika\n' +
       '1. Request a callback\n' +
       '2. Emergency contacts'
     );

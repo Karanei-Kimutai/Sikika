@@ -1,11 +1,6 @@
 import { useEffect, useState } from "react";
 import { getMyCallbackRequests, updateUssdCallbackRequest } from "../services/admin";
-
-/** @param {*} value @returns {string} */
-function formatDate(value) {
-  if (!value) return "-";
-  return new Date(value).toLocaleString();
-}
+import { formatDate, prettifyLabel } from "./ngo-admin/helpers";
 
 /**
  * MyCallbacksPage
@@ -60,20 +55,20 @@ export default function MyCallbacksPage() {
 
   return (
     <main className="library-page">
-      <section className="library-intro">
-        <h1>My Callback Requests</h1>
-        <p>
-          Callback requests submitted via the USSD interface (*384#) that have been
-          auto-assigned to you. Mark a request completed once you've followed up, or
-          cancelled if the number is unreachable.
-        </p>
-      </section>
-
       {errorMessage && <p className="status-message warning" role="alert">{errorMessage}</p>}
       {successMessage && <p className="status-message" role="status">{successMessage}</p>}
 
+      {/* Header chrome (h2 + admin-note inside the panel) intentionally mirrors
+          the NGO Admin's UssdCallbacksSection.jsx so the two queues look like
+          the same feature, just scoped to "my" requests vs. all requests. */}
       <section className="admin-module-grid" aria-label="My callback requests">
         <article className="admin-panel full-span">
+          <h2>My Callback Requests</h2>
+          <p className="admin-note">
+            Callback requests submitted via the USSD interface (*384#) that have been
+            auto-assigned to you. Mark a request completed once you've followed up, or
+            cancelled if the number is unreachable.
+          </p>
           <div className="admin-table-wrap">
             <table className="admin-table">
               <thead>
@@ -101,7 +96,7 @@ export default function MyCallbacksPage() {
                             ? "pill priority-medium"
                             : "pill priority-high"
                       }>
-                        {cb.callbackFulfillmentStatus}
+                        {prettifyLabel(cb.callbackFulfillmentStatus)}
                       </span>
                     </td>
                     <td>
