@@ -150,7 +150,9 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
       const response = await axios.get(`${API_BASE_URL}/api/profile/me`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
-      setProfileSummary(response.data?.user || null);
+      // Keep the full payload (user + assignedStaff), not just `user` — survivors
+      // need assignedStaff (their counsellor/legal counsel contact numbers) below.
+      setProfileSummary(response.data || null);
     } catch {
       // Silent failure — the popover falls back to showing just the role prop.
       setProfileSummary(null);
@@ -322,10 +324,24 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
                     <p className="profile-menu-loading">Loading profile...</p>
                   ) : (
                     <>
-                      <p className="profile-menu-role">{prettifyLabel(profileSummary?.role || role)}</p>
-                      <p className="profile-menu-phone">{profileSummary?.phoneNumber || ""}</p>
-                      {profileSummary?.accountStatus && (
-                        <p className="profile-menu-status">{prettifyLabel(profileSummary.accountStatus)}</p>
+                      <p className="profile-menu-role">{prettifyLabel(profileSummary?.user?.role || role)}</p>
+                      {/* Survivors reach out to their assigned support staff directly,
+                          so show those two numbers instead of their own. Every other
+                          role just sees their own contact number. */}
+                      {(profileSummary?.user?.role || role) === "SURVIVOR" ? (
+                        <>
+                          <p className="profile-menu-phone">
+                            Counsellor: {profileSummary?.assignedStaff?.counsellor?.phoneNumber || "Not assigned"}
+                          </p>
+                          <p className="profile-menu-phone">
+                            Legal Counsel: {profileSummary?.assignedStaff?.legalCounsel?.phoneNumber || "Not assigned"}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="profile-menu-phone">{profileSummary?.user?.phoneNumber || ""}</p>
+                      )}
+                      {profileSummary?.user?.accountStatus && (
+                        <p className="profile-menu-status">{prettifyLabel(profileSummary.user.accountStatus)}</p>
                       )}
                     </>
                   )}
