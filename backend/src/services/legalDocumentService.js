@@ -51,7 +51,7 @@ function buildLegalCasePdfBuffer(legalCase, report) {
     doc.fillColor(PRIMARY)
        .fontSize(18)
        .font('Helvetica-Bold')
-       .text('GBV Support Platform Kenya', { align: 'center' });
+       .text('Sikika Kenya', { align: 'center' });
 
     doc.moveDown(0.3)
        .fillColor(MUTED)
@@ -129,7 +129,7 @@ function buildLegalCasePdfBuffer(legalCase, report) {
        .font('Helvetica-Oblique')
        .text(
          'DISCLAIMER: This document is a draft handover artifact prepared by the assigned legal counsel ' +
-         'using the GBV Support Platform. It does not constitute a legal opinion issued by the platform ' +
+         'using Sikika. It does not constitute a legal opinion issued by the platform ' +
          'or its operators. The platform does not contact law enforcement, courts, or any external party ' +
          'on behalf of a survivor — all handover and submission is performed manually by legal counsel ' +
          'in accordance with survivor consent.',

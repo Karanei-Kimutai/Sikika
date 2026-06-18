@@ -272,10 +272,15 @@ async function refreshWorkloadScores() {
 async function getLeastLoadedStaff(ProfileModel, idField, excludeId = null) {
   const candidates = await ProfileModel.findAll({
     attributes: [idField, 'currentWorkloadScore', 'availabilityStatus'],
+    include: [{ model: UserAccount, attributes: ['accountStatus'] }],
     order: [['currentWorkloadScore', 'ASC'], [idField, 'ASC']]
   });
 
-  const pool = excludeId ? candidates.filter((c) => c[idField] !== excludeId) : candidates;
+  // Suspending/banning a staff member only flips UserAccount.accountStatus — their
+  // profile's availabilityStatus is left untouched, so it must be cross-checked here
+  // to avoid recommending or auto-reassigning survivors to staff who can no longer work.
+  const activeOnly = candidates.filter((c) => c.userAccount?.accountStatus === 'ACTIVE');
+  const pool = excludeId ? activeOnly.filter((c) => c[idField] !== excludeId) : activeOnly;
   const available = pool.filter((c) => c.availabilityStatus === 'AVAILABLE');
   return available[0] || pool[0] || null;
 }
@@ -1795,5 +1800,8 @@ module.exports = {
   applySurvivorReassignment,
   getMaintenanceModeState,
   loadMaintenanceStateFromDb,
-  maintenanceGuard
+  maintenanceGuard,
+  // Exported so other ban entry points (e.g. community moderation's ban_user
+  // action) can trigger the same survivor-continuity cascade.
+  cascadeReassignOnStaffBan
 };

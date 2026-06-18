@@ -3,6 +3,7 @@ import { ShieldCheck, CheckCircle2, AlertTriangle } from "lucide-react";
 import { getToken, setToken, setUserId } from "../utils/auth";
 import SignInFlow from "./auth/SignInFlow";
 import SignUpFlow from "./auth/SignUpFlow";
+import SikikaLogo from "../components/SikikaLogo";
 
 /**
  * AuthPage
@@ -107,7 +108,10 @@ function AuthPage({ onNavigate }) {
         </div>
 
         <div className="form-panel">
-          <p className="eyebrow">GBV Support Platform</p>
+          <p className="eyebrow auth-brand-eyebrow">
+            <SikikaLogo size={22} decorative />
+            <span>Sikika</span>
+          </p>
           <h2>{authMode === "signin" ? "Sign In" : "Create Account"}</h2>
           <p className="subtext">
             Sign in with password or OTP, or sign up by verifying an OTP then creating your password.

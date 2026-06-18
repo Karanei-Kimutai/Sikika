@@ -1,5 +1,6 @@
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 import heroArtwork from "../assets/hero.png";
+import SikikaLogo from "../components/SikikaLogo";
 
 /**
  * Public landing page for unregistered visitors.
@@ -34,9 +35,12 @@ function LandingPage({ onNavigate }) {
       <section className="hero-section">
         <div className="hero-copy">
           <p className="eyebrow">Safe access to support</p>
-          <h1>GBV Support Platform</h1>
+          <h1 className="hero-brand-heading">
+            <SikikaLogo size={48} decorative />
+            <span>Sikika</span>
+          </h1>
           <p className="hero-text">
-            We are building a discreet digital space where survivors and community members can find reliable
+            A discreet digital space where survivors and community members can find reliable
             resources, understand support options, and reach safer channels for help.
           </p>
           <div className="hero-actions">

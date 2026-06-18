@@ -1,6 +1,6 @@
-# GBV Support Platform
+# Sikika
 
-This repository contains the full project workspace for the GBV Support Platform.
+This repository contains the full project workspace for Sikika, a Gender-Based Violence (GBV) support platform for Kenya.
 
 ## Repository Structure
 

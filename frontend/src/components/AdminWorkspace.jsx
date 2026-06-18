@@ -1,3 +1,5 @@
+import SikikaLogo from "./SikikaLogo";
+
 /**
  * AdminWorkspace
  * --------------
@@ -32,7 +34,7 @@ function AdminWorkspace({
         {showSidebar && (
           <aside className="admin-sidebar" aria-label="Admin navigation">
             <button type="button" className="admin-brand" onClick={() => onSelectSection(menuItems[0]?.id)}>
-              <span aria-hidden="true">GS</span>
+              <SikikaLogo size={32} />
               <div>
                 <strong>Admin Control</strong>
                 <small>{roleLabel}</small>

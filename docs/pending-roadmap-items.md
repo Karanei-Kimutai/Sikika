@@ -217,11 +217,16 @@ Status: Done
 
 `cascadeReassignOnStaffBan()` in `adminController.js` is called (via `setImmediate`) whenever a
 COUNSELLOR or LEGAL_COUNSEL is banned — through either the admin ban endpoint or the community
-moderation `ban_user` path. It resolves the banned staff member's profile, finds all survivors
-currently assigned to them, picks the least-loaded available replacement (excluding the banned
-member), and calls `applySurvivorReassignment` for each affected survivor. That helper writes
-`StaffAssignmentHistory`, resyncs direct-chat channels, and refreshes workload scores.
-If no replacement exists, the survivors are left in place and the event is logged.
+moderation `ban_user` path (the latter imports `cascadeReassignOnStaffBan` from `adminController.js`
+and fires it post-commit alongside the socket eviction). It resolves the banned staff member's
+profile, finds all survivors currently assigned to them, picks the least-loaded **active**
+replacement (excluding the banned member — `getLeastLoadedStaff` inner-joins `UserAccount` and
+requires `accountStatus = 'ACTIVE'`, so a different staff member who happens to also be
+suspended/banned is never picked), and calls `applySurvivorReassignment` for each affected
+survivor. That helper writes `StaffAssignmentHistory`, resyncs direct-chat channels, and
+refreshes workload scores. If no active replacement exists, the survivors are left in place and
+the event is logged. Covered by `backend/tests/banCascade.test.js`, including a regression test
+asserting the community moderation path triggers the cascade.
 
 ### Notification real-time push
 Status: Done
@@ -325,7 +330,10 @@ Addressed eight items of panel feedback from a progress presentation:
   actually reaches every component. No manual toggle added (kept OS-driven, per decision).
 - **Auto-suggested staff reassignment**: `getLeastLoadedStaff` helper (shared with the ban
   cascade) backs `GET /api/admin/ngo/reassignments/suggestions`; Team Capacity's manual
-  reassignment form shows a "Recommended" badge the admin can apply or ignore.
+  reassignment form shows a "Recommended" badge the admin can apply or ignore. The helper
+  (and signup's `pickLeastLoadedStaff`) requires `UserAccount.accountStatus = 'ACTIVE'`, since
+  suspending/banning a staff member only flips that field and leaves the profile's
+  `availabilityStatus` untouched.
 - **USSD callback auto-routing**: `ussdCallbackRequest.assignedCounsellorId` is set at
   creation time via `pickLeastLoadedCounsellor`; the NGO dashboard's USSD Callbacks table
   shows "Assigned To" instead of requiring manual triage.

@@ -5,7 +5,7 @@ test('public navigation renders landing and library', async ({ page }) => {
   await installBaseApiMocks(page);
 
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'GBV Support Platform' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Sikika' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Browse Resources' }).click();
   await expect(page).toHaveURL(/\/library$/);

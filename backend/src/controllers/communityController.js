@@ -13,6 +13,7 @@ const {
 } = require("../models");
 const { normalizeRole, BANNABLE_ROLES } = require("../utils/roles");
 const { createNotification } = require("../services/notificationService");
+const { cascadeReassignOnStaffBan } = require("./adminController");
 
 /**
  * Community controller
@@ -688,9 +689,13 @@ async function reviewReport(req, res) {
         await incrementModeratorWorkload(actor.userId, transaction);
       }
 
-      // Force-revoke live sockets immediately after committing the ban.
-      // Stored on a local variable so we can call it after transaction.commit().
+      // Force-revoke live sockets immediately after committing the ban, and (for
+      // frontline staff) cascade-reassign their survivors — same post-commit
+      // side effects as the admin ban endpoint. Stashed on req since they must
+      // run after transaction.commit().
       req._banTargetUserId = message.senderUserId;
+      req._banTargetUserRole = targetAccount?.userRole || null;
+      req._banReason = banReason;
     }
 
     if (action === "issue_warning") {
@@ -718,6 +723,13 @@ async function reviewReport(req, res) {
   // Post-commit side-effects (socket push + cascade) run outside the transaction.
   if (req._banTargetUserId) {
     req.app.locals.io?.in(`user:${req._banTargetUserId}`).disconnectSockets(true);
+
+    if (["COUNSELLOR", "LEGAL_COUNSEL"].includes(req._banTargetUserRole)) {
+      setImmediate(() =>
+        cascadeReassignOnStaffBan(req._banTargetUserId, req._banTargetUserRole, req._banReason)
+          .catch((err) => console.error("[reviewReport] cascade error:", err))
+      );
+    }
   }
 
   if (req._warnTargetUserId) {

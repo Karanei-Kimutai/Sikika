@@ -575,27 +575,33 @@ const DirectChatPage = () => {
             <span>{channels.length}</span>
             {currentUserRole === 'survivor' && (
               <>
-                {/* Archive toggle — mutually exclusive with Trash view */}
+                {/* Archive toggle — mutually exclusive with Trash view. Icon-only, label moved to title/aria-label. */}
                 <button
                   type="button"
-                  className="link-btn"
+                  className={`link-btn icon-btn${showArchivedChannels ? ' active' : ''}`}
                   onClick={() => {
                     setShowDeletedChannels(false);
                     setShowArchivedChannels((v) => !v);
                   }}
+                  title={showArchivedChannels ? 'Hide archived chats' : 'Show archived chats'}
+                  aria-label={showArchivedChannels ? 'Hide archived chats' : 'Show archived chats'}
+                  aria-pressed={showArchivedChannels}
                 >
-                  {showArchivedChannels ? 'Hide Archived' : 'Show Archived'}
+                  <Archive size={16} aria-hidden="true" />
                 </button>
-                {/* Trash toggle — shows only deleted channels so survivors can restore */}
+                {/* Trash toggle — shows only deleted channels so survivors can restore. Icon-only. */}
                 <button
                   type="button"
-                  className="link-btn"
+                  className={`link-btn icon-btn${showDeletedChannels ? ' active' : ''}`}
                   onClick={() => {
                     setShowArchivedChannels(false);
                     setShowDeletedChannels((v) => !v);
                   }}
+                  title={showDeletedChannels ? 'Hide Trash' : 'Show Trash'}
+                  aria-label={showDeletedChannels ? 'Hide Trash' : 'Show Trash'}
+                  aria-pressed={showDeletedChannels}
                 >
-                  {showDeletedChannels ? 'Hide Trash' : 'Trash'}
+                  <Trash2 size={16} aria-hidden="true" />
                 </button>
               </>
             )}

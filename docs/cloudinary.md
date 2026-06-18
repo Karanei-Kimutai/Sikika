@@ -1,6 +1,6 @@
 # Cloudinary
 
-This document covers how Cloudinary is used on the GBV Support Platform — what gets stored, which storage profiles are used for each asset type, how files are uploaded and retrieved, and how the proxy-based delivery model works.
+This document covers how Cloudinary is used on Sikika — what gets stored, which storage profiles are used for each asset type, how files are uploaded and retrieved, and how the proxy-based delivery model works.
 
 All Cloudinary logic lives in `backend/src/config/cloudinary.js`.
 

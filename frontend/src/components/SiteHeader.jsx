@@ -1,6 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { LogOut, Menu, X } from "lucide-react";
+import axios from "axios";
+import { LogOut, Menu, User, X } from "lucide-react";
 import NotificationBell from "./NotificationBell";
+import SikikaLogo from "./SikikaLogo";
+import { getToken } from "../utils/auth";
+import { prettifyLabel } from "../pages/ngo-admin/helpers";
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
 /**
  * SiteHeader
@@ -10,7 +16,9 @@ import NotificationBell from "./NotificationBell";
  * Important behavior:
  * - primary nav tabs are role-aware
  * - admins do not use quick action buttons; they navigate via section tabs/routes
- * - sign-out is always available for authenticated sessions
+ * - the Profile nav tab and standalone Sign Out button have been folded into
+ *   a single circular avatar dropdown (see "Profile dropdown" below) to keep
+ *   the nav and header-actions row uncluttered
  * - notification bell is shown for all authenticated users; polling and
  *   panel state are encapsulated inside NotificationBell
  * - hamburger drawer activates on narrow viewports (≤ 680px)
@@ -23,6 +31,16 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
   const toggleRef = useRef(null);
   // Tracks the rAF handle so scroll animation can be cancelled cleanly.
   const scrollRafRef = useRef(null);
+
+  // --- Profile dropdown state ---------------------------------------
+  // Replaces the old standalone Profile nav tab + Sign Out button with a
+  // single circular avatar that opens a popover: profile summary on top,
+  // Sign Out pinned at the bottom.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [profileSummary, setProfileSummary] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const menuRef = useRef(null);
+  const menuToggleRef = useRef(null);
 
   const navItems = (() => {
     if (!isAuthenticated) {
@@ -40,7 +58,6 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
         { path: "/community", label: "Community Chat" },
         { path: "/staff", label: "Staffing" },
         { path: "/ussd-callbacks", label: "USSD Callbacks" },
-        { path: "/profile", label: "Profile" },
         { path: "/library", label: "Resources" }
       ];
     }
@@ -53,8 +70,7 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
       // role), so a dedicated Home link would just duplicate this one.
       return [
         { path: "/moderation", label: "Moderation Desk" },
-        { path: "/community", label: "Community Chat" },
-        { path: "/profile", label: "Profile" }
+        { path: "/community", label: "Community Chat" }
       ];
     }
 
@@ -66,8 +82,7 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
       { path: "/community", label: "Community" },
       // USSD callback auto-routing only ever assigns COUNSELLOR — survivors
       // and legal counsel have no callbacks to manage here.
-      ...(role === "COUNSELLOR" ? [{ path: "/callbacks", label: "My Callbacks" }] : []),
-      { path: "/profile", label: "Profile" }
+      ...(role === "COUNSELLOR" ? [{ path: "/callbacks", label: "My Callbacks" }] : [])
     ];
   })();
 
@@ -95,6 +110,74 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [navOpen]);
+
+  /** Close the profile popover on click outside it or its toggle button. */
+  useEffect(() => {
+    if (!menuOpen) return;
+
+    const handleOutsideClick = (e) => {
+      if (
+        menuRef.current && !menuRef.current.contains(e.target) &&
+        menuToggleRef.current && !menuToggleRef.current.contains(e.target)
+      ) {
+        setMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [menuOpen]);
+
+  /** Close the profile popover on Escape key. */
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleKeyDown = (e) => { if (e.key === "Escape") setMenuOpen(false); };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [menuOpen]);
+
+  /**
+   * Lazily loads the signed-in user's profile summary (phone, role, status)
+   * the first time the popover is opened, reusing the same `/api/profile/me`
+   * endpoint ManageProfilePage.jsx uses. Cheap one-shot fetch — no need to
+   * refetch on every open since these fields rarely change mid-session.
+   */
+  const loadProfileSummary = useCallback(async () => {
+    if (profileSummary || profileLoading) return;
+    setProfileLoading(true);
+    try {
+      const token = getToken();
+      const response = await axios.get(`${API_BASE_URL}/api/profile/me`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      // Keep the full payload (user + assignedStaff), not just `user` — survivors
+      // need assignedStaff (their counsellor/legal counsel contact numbers) below.
+      setProfileSummary(response.data || null);
+    } catch {
+      // Silent failure — the popover falls back to showing just the role prop.
+      setProfileSummary(null);
+    } finally {
+      setProfileLoading(false);
+    }
+  }, [profileSummary, profileLoading]);
+
+  const handleAvatarClick = () => {
+    setMenuOpen((open) => {
+      const next = !open;
+      if (next) loadProfileSummary();
+      return next;
+    });
+  };
+
+  const handleManageProfile = () => {
+    setMenuOpen(false);
+    onNavigate("/profile");
+  };
+
+  const handleMenuSignOut = () => {
+    setMenuOpen(false);
+    onSignOut();
+  };
 
   /**
    * Edge-hover auto-scroll for the nav pill.
@@ -154,9 +237,9 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
   return (
     <header className="site-header">
       <button type="button" className="brand-mark" onClick={() => onNavigate("/")}>
-        <span className="brand-symbol" aria-hidden="true">G</span>
+        <SikikaLogo size={40} className="brand-symbol" decorative />
         <span>
-          <strong>GBV Support Platform</strong>
+          <strong>Sikika</strong>
           <small>Private help, clear resources</small>
         </span>
       </button>
@@ -221,10 +304,64 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
             Encapsulates its own polling and panel state. */}
         <NotificationBell isAuthenticated={isAuthenticated} />
         {isAuthenticated && (
-          <button type="button" className="header-signout" onClick={onSignOut} aria-label="Sign out">
-            <LogOut size={16} aria-hidden="true" />
-            <span className="header-signout-label">Sign Out</span>
-          </button>
+          <div className="profile-dropdown">
+            <button
+              ref={menuToggleRef}
+              type="button"
+              className="profile-avatar-btn"
+              aria-haspopup="true"
+              aria-expanded={menuOpen}
+              aria-label="Account menu"
+              onClick={handleAvatarClick}
+            >
+              <User size={20} aria-hidden="true" />
+            </button>
+
+            {menuOpen && (
+              <div ref={menuRef} className="profile-menu" role="menu">
+                <div className="profile-menu-summary">
+                  {profileLoading ? (
+                    <p className="profile-menu-loading">Loading profile...</p>
+                  ) : (
+                    <>
+                      <p className="profile-menu-role">{prettifyLabel(profileSummary?.user?.role || role)}</p>
+                      {/* Survivors reach out to their assigned support staff directly,
+                          so show those two numbers instead of their own. Every other
+                          role just sees their own contact number. */}
+                      {(profileSummary?.user?.role || role) === "SURVIVOR" ? (
+                        <>
+                          <p className="profile-menu-phone">
+                            Counsellor: {profileSummary?.assignedStaff?.counsellor?.phoneNumber || "Not assigned"}
+                          </p>
+                          <p className="profile-menu-phone">
+                            Legal Counsel: {profileSummary?.assignedStaff?.legalCounsel?.phoneNumber || "Not assigned"}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="profile-menu-phone">{profileSummary?.user?.phoneNumber || ""}</p>
+                      )}
+                      {profileSummary?.user?.accountStatus && (
+                        <p className="profile-menu-status">{prettifyLabel(profileSummary.user.accountStatus)}</p>
+                      )}
+                    </>
+                  )}
+                </div>
+                <button type="button" className="profile-menu-item" role="menuitem" onClick={handleManageProfile}>
+                  <User size={16} aria-hidden="true" />
+                  <span>Manage Profile</span>
+                </button>
+                <button
+                  type="button"
+                  className="profile-menu-item profile-menu-signout"
+                  role="menuitem"
+                  onClick={handleMenuSignOut}
+                >
+                  <LogOut size={16} aria-hidden="true" />
+                  <span>Sign Out</span>
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </header>
