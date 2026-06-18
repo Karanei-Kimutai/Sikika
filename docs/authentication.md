@@ -1,6 +1,6 @@
 # Authentication
 
-This document covers how authentication works on the GBV Support Platform — sign-up, sign-in, password reset, forced password reset for provisioned staff, and all the security rules that apply across those flows.
+This document covers how authentication works on Sikika — sign-up, sign-in, password reset, forced password reset for provisioned staff, and all the security rules that apply across those flows.
 
 ---
 
@@ -82,7 +82,7 @@ Sign-up is a two-step process: request an OTP, then verify it and set a password
 6. OTP state is cleared, `isOtpVerified` is set to `true`, and failure counters are reset.
 7. Three side effects fire in a single Sequelize transaction:
    - **SurvivorProfile is created** with sanitized `profileDetails` (nickname, gender, county). If `profileDetails` is missing, safe defaults are used (`Survivor-<shortId>`, `UNSPECIFIED` for gender and county).
-   - **Staff auto-assignment**: the counsellor and legal counsel with the lowest `currentWorkloadScore` are assigned. Both scores are incremented. Preference is given to staff who are `AVAILABLE` or `BUSY`; if all are `OFFLINE`, the lowest-scored staff is assigned anyway.
+   - **Staff auto-assignment**: among counsellors/legal counsel whose `UserAccount.accountStatus` is `ACTIVE` (suspended/banned staff are excluded via an inner join — their profile's `availabilityStatus` alone doesn't reflect that), the one with the lowest `currentWorkloadScore` is assigned. Both scores are incremented. Preference is given to staff who are `AVAILABLE` or `BUSY`; if all active staff are `OFFLINE`, the lowest-scored active staff member is assigned anyway.
    - **`StaffAssignmentHistory` record** is written for audit purposes.
 8. `ensureAutoChannelsForSurvivor` eagerly creates direct-chat channels to both assigned staff so they appear immediately on the survivor's chat page.
 9. A 2-hour JWT is issued containing `{ id, userId, role }`.

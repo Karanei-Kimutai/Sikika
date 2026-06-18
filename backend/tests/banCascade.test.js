@@ -305,6 +305,29 @@ describe('Ban cascade and role-guard parity', () => {
       // Self-ban rejected (actor is NGO_ADMIN — already caught by non-bannable role check)
       expect(res.status).toBe(400);
     });
+
+    it('200: banning a COUNSELLOR via community moderation triggers cascadeReassignOnStaffBan (survivor continuity parity with the admin ban endpoint)', async () => {
+      setupCommunityMocks({ targetRole: 'COUNSELLOR' });
+
+      // cascadeReassignOnStaffBan looks up the banned counsellor's profile by userId.
+      CounsellorProfile.findOne.mockResolvedValueOnce({ counsellorId: 'counsellor-profile-uuid' });
+      SurvivorProfile.findAll.mockResolvedValueOnce([]);
+
+      const app = buildCommunityApp();
+      const res = await request(app)
+        .patch(`/api/community/moderation/reports/${REPORT_ID}`)
+        .set('Authorization', 'Bearer token')
+        .send({ reviewStatus: 'APPROVED', action: 'ban_user', reason: 'Harmful content' });
+
+      expect(res.status).toBe(200);
+
+      // Cascade runs post-commit via setImmediate — flush the event loop before asserting.
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(CounsellorProfile.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { userId: 'target-uuid' } })
+      );
+    });
   });
 
   // ── listBannedUsers endpoint ────────────────────────────────────────────────

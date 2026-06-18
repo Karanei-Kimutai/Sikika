@@ -15,7 +15,7 @@ const { ensureAutoChannelsForSurvivor } = require('../services/chatAccessService
 /**
  * authController.js
  * -----------------
- * Central authentication controller for the GBV Support Platform.
+ * Central authentication controller for Sikika.
  *
  * Handles all authentication entry points:
  * - OTP-based signup (phone verification + password creation)
@@ -655,8 +655,19 @@ function sanitizeSignupSurvivorProfileInput(rawInput, user) {
  * @returns {Promise<Model|null>} The selected staff profile instance, or null if none exist.
  */
 async function pickLeastLoadedStaff(ProfileModel, idField, transaction) {
+    // Suspending/banning a staff member only flips UserAccount.accountStatus — their
+    // profile's availabilityStatus is left untouched, so an active-account join is
+    // required here to avoid auto-assigning new survivors to staff who can't work.
+    const activeAccountInclude = {
+        model: UserAccount,
+        attributes: [],
+        where: { accountStatus: 'ACTIVE' },
+        required: true
+    };
+
     const preferred = await ProfileModel.findOne({
         where: { availabilityStatus: { [Op.in]: ['AVAILABLE', 'BUSY'] } },
+        include: [activeAccountInclude],
         order: [
             ['currentWorkloadScore', 'ASC'],
             [idField, 'ASC']
@@ -667,6 +678,7 @@ async function pickLeastLoadedStaff(ProfileModel, idField, transaction) {
     if (preferred) return preferred;
 
     return ProfileModel.findOne({
+        include: [activeAccountInclude],
         order: [
             ['currentWorkloadScore', 'ASC'],
             [idField, 'ASC']
