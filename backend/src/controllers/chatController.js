@@ -234,6 +234,28 @@ const getPublicKey = async (req, res) => {
 };
 
 /**
+ * Validates that a serialized JWK is a supported ECDH P-256 public key.
+ *
+ * @param {string} jwkString
+ * @returns {boolean}
+ */
+const isValidEcdhPublicJwk = (jwkString) => {
+  if (typeof jwkString !== 'string') return false;
+
+  try {
+    const parsed = JSON.parse(jwkString);
+    if (!parsed || typeof parsed !== 'object') return false;
+
+    // Keep acceptance narrow to avoid storing malformed keys that later break
+    // counterpart key import/derivation in the browser.
+    const hasValidCoordinates = typeof parsed.x === 'string' && typeof parsed.y === 'string';
+    return parsed.kty === 'EC' && parsed.crv === 'P-256' && hasValidCoordinates;
+  } catch {
+    return false;
+  }
+};
+
+/**
  * Registers the authenticated user's ECDH public key (JWK JSON string).
  * Called by the frontend on every authenticated app load so a counterpart
  * can always derive a fresh shared key. Idempotent.
@@ -248,6 +270,10 @@ const setPublicKey = async (req, res) => {
     const ecdhPublicKey = req.body?.ecdhPublicKey;
     if (typeof ecdhPublicKey !== 'string' || !ecdhPublicKey.trim()) {
       return res.status(400).json({ error: 'ecdhPublicKey must be a non-empty string.' });
+    }
+
+    if (!isValidEcdhPublicJwk(ecdhPublicKey)) {
+      return res.status(400).json({ error: 'ecdhPublicKey must be a valid ECDH P-256 public JWK string.' });
     }
 
     await UserAccount.update({ ecdhPublicKey }, { where: { userId } });

@@ -187,6 +187,33 @@ describe('PUT /api/chat/public-key', () => {
     expect(UserAccount.update).not.toHaveBeenCalled();
   });
 
+  it('rejects malformed non-JSON ecdhPublicKey payloads', async () => {
+    const app = buildApp();
+    const token = makeToken({ userId: REQUESTER_USER_ID });
+
+    const res = await request(app)
+      .put('/api/chat/public-key')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ ecdhPublicKey: 'not-json' });
+
+    expect(res.status).toBe(400);
+    expect(UserAccount.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects JWK values with the wrong curve', async () => {
+    const app = buildApp();
+    const token = makeToken({ userId: REQUESTER_USER_ID });
+    const wrongCurve = JSON.stringify({ kty: 'EC', crv: 'P-384', x: 'abc', y: 'def' });
+
+    const res = await request(app)
+      .put('/api/chat/public-key')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ ecdhPublicKey: wrongCurve });
+
+    expect(res.status).toBe(400);
+    expect(UserAccount.update).not.toHaveBeenCalled();
+  });
+
   it('persists the public key on the caller\'s own row', async () => {
     const app = buildApp();
     const token = makeToken({ userId: REQUESTER_USER_ID });

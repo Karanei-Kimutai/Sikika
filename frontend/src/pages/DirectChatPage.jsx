@@ -342,36 +342,38 @@ const DirectChatPage = () => {
     persistPreferredChannel(activeChannelId);
 
     const setupSecureChannel = async () => {
-      const token = getToken();
-      if (!token) {
-        setErrorMessage('Session expired. Please log in again.');
-        return;
-      }
-
-      // Join the Socket room
-      socketRef.current?.emit('joinChannel', activeChannelId);
-
-      // Real E2EE key derivation: ECDH between this user's private key
-      // (IndexedDB, never leaves the browser) and the counterpart's public
-      // key (fetched from the server, which only ever brokers public keys).
-      const activeChannel = channels.find((channel) => channel.chatId === activeChannelId);
-      const counterpartUserId = activeChannel?.counterpartUserId;
-      if (!counterpartUserId) {
-        setErrorMessage('Unable to resolve the other participant for this chat.');
-        return;
-      }
-
-      const peerPublicKeyJwk = await fetchPublicKey(counterpartUserId);
-      if (!peerPublicKeyJwk) {
-        setErrorMessage('Waiting for the other participant to come online for secure key exchange.');
-        return;
-      }
-
-      const { privateKey } = await getOrCreateKeyPair(currentUserId);
-      const key = await deriveSharedKey(privateKey, peerPublicKeyJwk);
-      setCryptoKey(key);
-
       try {
+        const token = getToken();
+        if (!token) {
+          setErrorMessage('Session expired. Please log in again.');
+          return;
+        }
+
+        // Join the Socket room
+        socketRef.current?.emit('joinChannel', activeChannelId);
+
+        // Real E2EE key derivation: ECDH between this user's private key
+        // (IndexedDB, never leaves the browser) and the counterpart's public
+        // key (fetched from the server, which only ever brokers public keys).
+        const activeChannel = channels.find((channel) => channel.chatId === activeChannelId);
+        const counterpartUserId = activeChannel?.counterpartUserId;
+        if (!counterpartUserId) {
+          setCryptoKey(null);
+          setErrorMessage('Unable to resolve the other participant for this chat.');
+          return;
+        }
+
+        const peerPublicKeyJwk = await fetchPublicKey(counterpartUserId);
+        if (!peerPublicKeyJwk) {
+          setCryptoKey(null);
+          setErrorMessage('Waiting for the other participant to come online for secure key exchange.');
+          return;
+        }
+
+        const { privateKey } = await getOrCreateKeyPair(currentUserId);
+        const key = await deriveSharedKey(privateKey, peerPublicKeyJwk);
+        setCryptoKey(key);
+
         // History endpoint returns ciphertext; decrypt client-side only.
         const response = await axios.get(`${API_BASE_URL}/api/chat/${activeChannelId}/messages`, {
           headers: { Authorization: `Bearer ${token}` }
@@ -405,8 +407,9 @@ const DirectChatPage = () => {
             : decryptedHistory
         );
       } catch (error) {
+        setCryptoKey(null);
         setMessages([]);
-        setErrorMessage(error.response?.data?.error || 'Failed to load channel messages.');
+        setErrorMessage(error.response?.data?.error || 'Failed to establish secure chat session.');
       }
     };
 
