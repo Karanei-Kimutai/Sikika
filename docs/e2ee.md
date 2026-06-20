@@ -21,6 +21,7 @@ This matters specifically for a GBV survivor-support platform: a survivor's acco
 - **No safety-number / fingerprint verification.** Real E2EE systems (Signal, WhatsApp) let users manually verify their counterpart's public key out-of-band, so a compromised server can't quietly substitute its own key during the exchange and silently MITM the conversation. This platform doesn't have that step — the server is trusted *not to act maliciously during key exchange*, even though it's no longer trusted with plaintext.
 - **No multi-device support.** A user's private key lives in exactly one browser's IndexedDB. Logging in from a second device/browser generates a *new* keypair; old conversations encrypted under the first device's key become unreadable from the second device.
 - **Key loss = history loss.** Clearing browser data, using a different browser, or private/incognito mode (which discards IndexedDB on close) loses the private key permanently — there is no backup/recovery mechanism. This is an explicit dev/demo-scope tradeoff, not an oversight.
+- **No per-identity storage isolation within one browser profile.** Keypairs are stored in IndexedDB keyed by `userId` (see `keyStorage.js`), so two different users logged in via two tabs of the same browser profile each get their own row rather than colliding — useful for local testing. But IndexedDB is origin-scoped, not identity-scoped: any script running on this origin (e.g. an XSS payload) could read *any* stored user's private key, not just the currently active one. Separate devices/browser profiles are the only real isolation boundary in production use.
 
 ## How it works conceptually
 
@@ -79,12 +80,12 @@ cd backend && node src/seeders/index.js
 
 ## Testing locally
 
-You need two distinct browser **identities** (IndexedDB is origin-scoped, not tab-scoped — two tabs of the *same* browser profile share one IndexedDB store and will collide on key lookups). Use two separate browser profiles, or one normal + one incognito/private window.
+Two tabs of the same browser profile work fine — keypairs are keyed by `userId` in IndexedDB, so two different logged-in identities don't collide. Two separate browser profiles (or one normal + one incognito/private window) work too, and better reflect production (two separate devices), since each gets a fully separate IndexedDB store.
 
 1. Reseed the dev database (see above) and start both servers (`npm run dev` in `backend/` and `frontend/`).
-2. In window A, sign in as the demo Survivor (`+254711000001` / `Survivor@2026!`).
-3. In window B, sign in as the demo Counsellor (`+254700000020` / `Counsellor@2026!`).
-4. Open the shared direct-chat channel in both windows and exchange a few messages — they should render as plaintext on both sides immediately.
+2. In tab/window A, sign in as the demo Survivor (`+254711000001` / `Survivor@2026!`).
+3. In tab/window B, sign in as the demo Counsellor (`+254700000020` / `Counsellor@2026!`).
+4. Open the shared direct-chat channel in both and exchange a few messages — they should render as plaintext on both sides immediately.
 5. Optionally inspect `userAccount.ecdhPublicKey` for both rows (populated shortly after login) and `directChatMessage.encryptedMessageContent` (ciphertext, unreadable without the private keys) to confirm the server-side data is opaque.
 6. Refresh one of the windows mid-session — the channel should still decrypt without re-logging in, confirming the private key persisted in IndexedDB.
 

@@ -6,10 +6,17 @@
  * The private key is generated non-extractable, so it can never leave this
  * browser profile once created (no export path exists) — this is the root
  * of the E2EE guarantee for direct chat. IndexedDB (not sessionStorage) is
- * used because the key must survive page refreshes within a session; it is
- * origin-scoped, not tab-scoped, so two tabs of the same browser profile
- * share one IndexedDB store (relevant when testing two identities locally —
- * use two separate browser profiles, or one normal + one incognito window).
+ * used because the key must survive page refreshes within a session.
+ *
+ * Records are keyed by userId, so multiple identities' keypairs can coexist
+ * in one IndexedDB store without colliding — e.g. two tabs of the same
+ * browser profile logged in as different users will each get their own
+ * row and can hold a real E2EE conversation. The tradeoff: IndexedDB is
+ * origin-scoped, not per-identity-scoped, so any script running on this
+ * origin (e.g. an XSS payload) could read *any* stored user's private key,
+ * not just the currently logged-in one. Separate devices/browser profiles
+ * remain the only real isolation boundary; this is a convenience for local
+ * testing, not a security guarantee.
  */
 
 const DB_NAME = 'sikika-e2ee';
