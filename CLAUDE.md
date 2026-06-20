@@ -152,9 +152,9 @@ Each page owns its screen-level state (loading, errors, selected entities):
 
 Note: some API calls are inline `fetch`/`axios` within page components rather than service modules.
 
-### E2EE Chat (`frontend/src/utils/cryptoUtils.js`)
+### E2EE Chat (`frontend/src/utils/cryptoUtils.js`, `keyStorage.js`, `services/chatKeys.js`)
 
-AES-GCM 256-bit via Web Crypto API. Key derived from `chatId` via PBKDF2 (demo-grade — not a full ECDH exchange; the server could re-derive the key from the chatId). Server stores and relays only ciphertext; plaintext never leaves the client.
+Real ECDH (P-256) key agreement + AES-GCM 256-bit via Web Crypto API. Each user's private key is generated non-extractable and persisted only in this browser's IndexedDB (`keyStorage.js`); only the public key (`userAccount.ecdhPublicKey`, JWK string) is sent to the server via `GET/PUT /api/chat/public-key`. `App.jsx` registers/refreshes the local keypair's public half on every authenticated app load; `DirectChatPage.jsx` fetches the channel counterpart's public key (via the `counterpartUserId` field on `getChannels`'s response) and derives the shared AES-GCM key client-side. Server stores and relays only ciphertext and public keys; plaintext and private keys never leave the client. No safety-number verification or multi-device support — see `docs/e2ee.md` for the full design and threat model.
 
 ### Quick Exit Button
 
