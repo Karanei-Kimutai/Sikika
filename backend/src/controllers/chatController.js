@@ -149,6 +149,21 @@ const getChannels = async (req, res) => {
       ...legalPresence.map((row) => [row.userId, row.availabilityStatus])
     ]);
 
+    // E2EE key exchange needs the *other* party's UserAccount.userId regardless
+    // of which side is viewing. Survivor-side channels already carry it
+    // (supportStaffCounterpartId); staff-side channels only carry survivorId
+    // (a SurvivorProfile PK), so resolve those to UserAccount.userId here.
+    const survivorIds = [...new Set(channels.map((channel) => channel.survivorId))];
+    const survivorUserIdBySurvivorId = new Map(
+      (await Promise.all(
+        survivorIds.map((survivorId) =>
+          SurvivorProfile.findByPk(survivorId, { attributes: ['survivorId', 'userId'] })
+        )
+      ))
+        .filter(Boolean)
+        .map((row) => [row.survivorId, row.userId])
+    );
+
     const enriched = await Promise.all(
       channels.map(async (channel) => {
         const unreadCount = await DirectChatMessage.count({
@@ -172,10 +187,17 @@ const getChannels = async (req, res) => {
           ? presenceRegistry.getEffectivePresence(staffUserId, manualStatus)
           : null;
 
+        const counterpartUserId = actor.role === 'SURVIVOR'
+          ? channel.supportStaffCounterpartId
+          : survivorUserIdBySurvivorId.get(channel.survivorId) || null;
+
         return {
           ...channel.toJSON(),
           unreadCount,
           counterpartRole: counterpart?.userRole || null,
+          // UserAccount.userId of the other participant, used by the frontend to
+          // fetch their ECDH public key and derive the per-channel E2EE key.
+          counterpartUserId,
           // Effective presence is only meaningful on the survivor side of the channel.
           counterpartAvailability: effectivePresence,
           // Async copy nudges the survivor to send even if staff is offline.
@@ -190,6 +212,48 @@ const getChannels = async (req, res) => {
     res.status(200).json(enriched);
   } catch (error) {
     res.status(500).json({ error: 'Failed to retrieve chat channels.' });
+  }
+};
+
+/**
+ * Returns another user's ECDH public key so the requesting client can derive
+ * a shared E2EE key for a direct-chat channel. Public keys are not sensitive
+ * by design, so any authenticated user may look up any other user's key.
+ */
+const getPublicKey = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = await UserAccount.findByPk(userId, { attributes: ['userId', 'ecdhPublicKey'] });
+    if (!user || !user.ecdhPublicKey) {
+      return res.status(404).json({ error: 'Public key not found for this user.' });
+    }
+    return res.status(200).json({ userId: user.userId, ecdhPublicKey: user.ecdhPublicKey });
+  } catch (error) {
+    return res.status(500).json({ error: 'Failed to retrieve public key.' });
+  }
+};
+
+/**
+ * Registers the authenticated user's ECDH public key (JWK JSON string).
+ * Called by the frontend on every authenticated app load so a counterpart
+ * can always derive a fresh shared key. Idempotent.
+ */
+const setPublicKey = async (req, res) => {
+  try {
+    const userId = getUserIdFromRequest(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Invalid token payload.' });
+    }
+
+    const ecdhPublicKey = req.body?.ecdhPublicKey;
+    if (typeof ecdhPublicKey !== 'string' || !ecdhPublicKey.trim()) {
+      return res.status(400).json({ error: 'ecdhPublicKey must be a non-empty string.' });
+    }
+
+    await UserAccount.update({ ecdhPublicKey }, { where: { userId } });
+    return res.status(200).json({ message: 'Public key registered.' });
+  } catch (error) {
+    return res.status(500).json({ error: 'Failed to register public key.' });
   }
 };
 
@@ -356,4 +420,4 @@ const markChannelRead = async (req, res) => {
   }
 };
 
-module.exports = { getChannels, getMessages, markChannelRead, updateChannelStatus };
+module.exports = { getChannels, getMessages, markChannelRead, updateChannelStatus, getPublicKey, setPublicKey };

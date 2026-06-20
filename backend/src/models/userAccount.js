@@ -235,6 +235,20 @@ const UserAccount = sequelize.define('userAccount', {
     type: DataTypes.DATE,
     allowNull: true,
     comment: 'Temporary account lock timestamp after repeated auth failures'
+  },
+
+  /**
+   * The user's ECDH (P-256) public key, exported as a JWK JSON string, used to
+   * derive a per-channel AES-GCM key for direct-chat E2EE (see chatController's
+   * getPublicKey/setPublicKey and frontend/src/utils/cryptoUtils.js). Only the
+   * public key is stored server-side — the matching private key never leaves
+   * the user's browser (IndexedDB). Null until the user's client has logged in
+   * at least once since this feature shipped.
+   */
+  ecdhPublicKey: {
+    type: DataTypes.TEXT('long'),
+    allowNull: true,
+    comment: 'ECDH P-256 public key (JWK string) for direct-chat E2EE key exchange'
   }
 
 }, {

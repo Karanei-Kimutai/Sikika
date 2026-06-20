@@ -2,11 +2,11 @@
  * cryptoUtils.js
  * --------------
  * Client-side cryptographic engine for End-to-End Encryption (E2EE).
- * Uses the native Web Crypto API (AES-GCM). 
- * * NOTE: In a full production app, the shared key is generated via an ECDH 
- * (Elliptic Curve Diffie-Hellman) key exchange. For this implementation, 
- * we derive a deterministic key from the chatId to demonstrate the E2EE flow 
- * where the server remains completely blind to the plaintext.
+ * Uses the native Web Crypto API: ECDH (P-256) for key agreement and
+ * AES-GCM for message encryption. Each user's private key is generated
+ * non-extractable and stored only in this browser's IndexedDB (see
+ * keyStorage.js) — the server only ever sees public keys and ciphertext.
+ * See docs/e2ee.md for the full design and threat model.
  */
 
 // Helper: Convert string to ArrayBuffer
@@ -14,25 +14,29 @@ const enc = new TextEncoder();
 const dec = new TextDecoder();
 
 /**
- * Derives an AES-GCM CryptoKey from a given passphrase (e.g., a shared channel secret).
+ * Exports a public CryptoKey as a JWK JSON string for upload to the server.
  */
-export const getSharedKey = async (passphrase) => {
-  const keyMaterial = await window.crypto.subtle.importKey(
-    "raw",
-    enc.encode(passphrase),
-    { name: "PBKDF2" },
-    false,
-    ["deriveBits", "deriveKey"]
+export const exportPublicKeyJwk = async (publicKey) => {
+  const jwk = await window.crypto.subtle.exportKey("jwk", publicKey);
+  return JSON.stringify(jwk);
+};
+
+/**
+ * Derives the shared AES-GCM channel key via ECDH from this user's private
+ * key and the counterpart's public key (as a JWK JSON string).
+ */
+export const deriveSharedKey = async (privateKey, peerPublicKeyJwk) => {
+  const peerPublicKey = await window.crypto.subtle.importKey(
+    "jwk",
+    JSON.parse(peerPublicKeyJwk),
+    { name: "ECDH", namedCurve: "P-256" },
+    true,
+    []
   );
 
   return window.crypto.subtle.deriveKey(
-    {
-      name: "PBKDF2",
-      salt: enc.encode("gbv-platform-secure-salt"), // Fixed salt for demo
-      iterations: 100000,
-      hash: "SHA-256"
-    },
-    keyMaterial,
+    { name: "ECDH", public: peerPublicKey },
+    privateKey,
     { name: "AES-GCM", length: 256 },
     false,
     ["encrypt", "decrypt"]

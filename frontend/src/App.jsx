@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
-import { getToken, removeToken, removeUserId } from "./utils/auth";
+import { getToken, getUserId, removeToken, removeUserId } from "./utils/auth";
+import { getOrCreateKeyPair } from "./utils/keyStorage";
+import { exportPublicKeyJwk } from "./utils/cryptoUtils";
+import { registerPublicKey } from "./services/chatKeys";
 import SiteHeader from "./components/SiteHeader";
 import AuthPage from "./pages/AuthPage";
 import LandingPage from "./pages/LandingPage";
@@ -134,6 +137,24 @@ function App() {
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
+
+  // E2EE bootstrap: ensure this browser has an ECDH keypair for the current
+  // user and that the server has a fresh copy of the public key, so any
+  // counterpart can derive a shared chat key. Runs on every authenticated
+  // app load (covers fresh logins and page refreshes alike); idempotent.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const userId = getUserId();
+    if (!userId) return;
+
+    getOrCreateKeyPair(userId)
+      .then(({ publicKey }) => exportPublicKeyJwk(publicKey))
+      .then(registerPublicKey)
+      .catch(() => {
+        // Best-effort — a failed registration here just delays this user's
+        // counterparts from being able to derive a chat key until retried.
+      });
+  }, [isAuthenticated]);
 
   useEffect(() => {
     let timerId = null;

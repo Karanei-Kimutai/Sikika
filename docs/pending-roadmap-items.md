@@ -337,3 +337,34 @@ Addressed eight items of panel feedback from a progress presentation:
 - **USSD callback auto-routing**: `ussdCallbackRequest.assignedCounsellorId` is set at
   creation time via `pickLeastLoadedCounsellor`; the NGO dashboard's USSD Callbacks table
   shows "Assigned To" instead of requiring manual triage.
+
+## 11) Real ECDH E2EE Upgrade
+Status: Done
+
+Direct chat previously derived its AES-GCM key via PBKDF2 from the `chatId` itself — a value
+the server already knows, so the server could always have re-derived the key. Upgraded to
+genuine ECDH (P-256) key agreement so the server only ever brokers public keys and ciphertext.
+Full design and threat model documented in `docs/e2ee.md`.
+
+- `userAccount.ecdhPublicKey` (`TEXT('long')`, nullable) added to the Sequelize model — the
+  underlying DB column was already provisioned via `schemaCompatibility.js` from an earlier
+  pass but had never been wired into the model, a route, or the frontend.
+- `GET /api/chat/public-key/:userId` / `PUT /api/chat/public-key` (`chatController.js`,
+  `chatRoutes.js`) — authenticated lookup/registration of a user's public key.
+- `getChannels` now returns a uniform `counterpartUserId` field on every channel (resolving
+  the staff side's `survivorId` → `SurvivorProfile.userId` where needed), so the frontend
+  always knows whose public key to fetch regardless of which side is viewing.
+- Frontend: `keyStorage.js` (IndexedDB-persisted, non-extractable ECDH keypair per userId),
+  `cryptoUtils.js` (`exportPublicKeyJwk`, `deriveSharedKey` — `encryptMessage`/`decryptMessage`
+  unchanged, already key-agnostic), `services/chatKeys.js` (public-key fetch/register).
+  `App.jsx` registers the local keypair's public half on every authenticated app load
+  (covers both fresh logins and refreshes); `DirectChatPage.jsx` derives the shared key
+  per channel from the counterpart's public key instead of a passphrase.
+- Known limitation (by design, documented in `docs/e2ee.md`): no safety-number verification
+  (a malicious server could still MITM the initial key exchange) and no multi-device support
+  (private key lives in one browser's IndexedDB).
+- Migration note: switching schemes makes previously-stored ciphertext unreadable —
+  `decryptMessage` already degrades gracefully; reseed (`node src/seeders/index.js`) for a
+  clean dev DB.
+- Tests: `backend/tests/chatPublicKey.test.js` — auth requirements, validation, and
+  persistence for both public-key endpoints.

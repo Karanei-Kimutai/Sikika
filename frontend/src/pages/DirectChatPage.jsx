@@ -12,7 +12,9 @@ import { Archive, ArchiveRestore, MoreHorizontal, Send, Lock, Trash2 } from 'luc
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import { getToken } from '../utils/auth';
-import { getSharedKey, encryptMessage, decryptMessage } from '../utils/cryptoUtils';
+import { deriveSharedKey, encryptMessage, decryptMessage } from '../utils/cryptoUtils';
+import { getOrCreateKeyPair } from '../utils/keyStorage';
+import { fetchPublicKey } from '../services/chatKeys';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
@@ -349,9 +351,24 @@ const DirectChatPage = () => {
       // Join the Socket room
       socketRef.current?.emit('joinChannel', activeChannelId);
 
-      // Derive the channel key from a deterministic shared input.
-      // In a production E2EE design this should come from real key exchange.
-      const key = await getSharedKey(`shared-secret-for-${activeChannelId}`);
+      // Real E2EE key derivation: ECDH between this user's private key
+      // (IndexedDB, never leaves the browser) and the counterpart's public
+      // key (fetched from the server, which only ever brokers public keys).
+      const activeChannel = channels.find((channel) => channel.chatId === activeChannelId);
+      const counterpartUserId = activeChannel?.counterpartUserId;
+      if (!counterpartUserId) {
+        setErrorMessage('Unable to resolve the other participant for this chat.');
+        return;
+      }
+
+      const peerPublicKeyJwk = await fetchPublicKey(counterpartUserId);
+      if (!peerPublicKeyJwk) {
+        setErrorMessage('Waiting for the other participant to come online for secure key exchange.');
+        return;
+      }
+
+      const { privateKey } = await getOrCreateKeyPair(currentUserId);
+      const key = await deriveSharedKey(privateKey, peerPublicKeyJwk);
       setCryptoKey(key);
 
       try {
@@ -394,7 +411,7 @@ const DirectChatPage = () => {
     };
 
     setupSecureChannel();
-  }, [activeChannelId, currentUserId, currentUserRole]);
+  }, [activeChannelId, currentUserId, currentUserRole, channels]);
 
   /**
    * 3. Listen for Incoming Live Messages
