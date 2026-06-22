@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { getToken, getUserId, removeToken, removeUserId } from "./utils/auth";
 import { getOrCreateKeyPair } from "./utils/keyStorage";
@@ -8,15 +8,20 @@ import { fadeInUp } from "./utils/motion";
 import SiteHeader from "./components/SiteHeader";
 import AuthPage from "./pages/AuthPage";
 import LandingPage from "./pages/LandingPage";
-import LibraryPage from "./pages/LibraryPage";
-import DirectChatPage from "./pages/DirectChatPage";
 import ReportingPage from "./pages/ReportingPage";
-import CommunityPage from "./pages/CommunityPage";
 import ModerationDashboardPage from "./pages/ModerationDashboardPage";
-import NgoAdminDashboardPage from "./pages/NgoAdminDashboardPage";
 import ManageProfilePage from "./pages/ManageProfilePage";
 import MyCallbacksPage from "./pages/MyCallbacksPage";
 import "./App.css";
+
+// Code-split the heaviest route components (each pulls in its own large
+// section/sub-view tree) so the initial bundle only ships what landing/auth
+// needs. AuthPage and LandingPage stay static — they're the first paint for
+// unauthenticated visitors and have no benefit from a lazy fallback flash.
+const LibraryPage = lazy(() => import("./pages/LibraryPage"));
+const DirectChatPage = lazy(() => import("./pages/DirectChatPage"));
+const CommunityPage = lazy(() => import("./pages/CommunityPage"));
+const NgoAdminDashboardPage = lazy(() => import("./pages/NgoAdminDashboardPage"));
 
 /**
  * App.jsx
@@ -123,6 +128,29 @@ function formatMaintenanceCountdown(value) {
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   return `${hours}h ${minutes}m remaining`;
+}
+
+/**
+ * Suspense fallback shown only while one of the lazy-loaded route chunks
+ * (LibraryPage, DirectChatPage, CommunityPage, NgoAdminDashboardPage) is
+ * still downloading — typically a single fast request on a warm cache, so
+ * this is a brief skeleton rather than a full spinner page. Reuses the
+ * existing shimmer skeleton classes (already shown elsewhere, e.g. the NGO
+ * dashboard's own data-loading state) so it doesn't introduce a new visual
+ * language, and the shimmer animation itself already honors the global
+ * reduced-motion reset in App.css.
+ */
+function RouteLoadingFallback() {
+  return (
+    <div style={{ padding: "1.5rem" }} aria-busy="true" aria-label="Loading page">
+      <div className="skeleton skeleton-title" />
+      <div className="skeleton-grid">
+        <div className="skeleton skeleton-card" />
+        <div className="skeleton skeleton-card" />
+        <div className="skeleton skeleton-card" />
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -364,7 +392,9 @@ function App() {
         <span className="app-quick-exit-label">Quick Exit</span>
       </button>
       <PageTransition path={finalPath}>
-        <Page onNavigate={navigate} role={role} onSignOut={handleSignOut} />
+        <Suspense fallback={<RouteLoadingFallback />}>
+          <Page onNavigate={navigate} role={role} onSignOut={handleSignOut} />
+        </Suspense>
       </PageTransition>
     </div>
   );
