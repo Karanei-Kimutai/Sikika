@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { io } from "socket.io-client";
-import { Send } from "lucide-react";
+import { ArrowLeft, Send } from "lucide-react";
 import { getToken, getUserId } from "../utils/auth";
 import ConfirmDialog from "../components/ConfirmDialog";
+import { fadeInUp, staggerIn } from "../utils/motion";
 
 /**
  * CommunityPage
@@ -86,6 +87,9 @@ function CommunityPage() {
   const [roomQuery, setRoomQuery] = useState("");
   const activeRoomIdRef = useRef("");
   const messagesViewportRef = useRef(null);
+  const roomListRef = useRef(null);
+  const communityMainRef = useRef(null);
+  const prevMessageCountRef = useRef(0);
 
   const currentUserId = getUserId();
   const isNgoAdmin = currentUserRole === "NGO_ADMIN";
@@ -264,6 +268,36 @@ function CommunityPage() {
     viewport.scrollTop = viewport.scrollHeight;
   }, [messages, activeRoomId, canAccessActiveRoom]);
 
+  // Stagger the room list in whenever its contents change (initial load or search filter).
+  useEffect(() => {
+    if (!roomListRef.current) return;
+    const items = roomListRef.current.querySelectorAll('.community-room-item');
+    if (!items.length) return;
+    const mm = staggerIn(items, { y: 8, stagger: 0.04 });
+    return () => mm.revert();
+  }, [filteredRooms.length]);
+
+  // Cross-fade the main panel when the active room changes.
+  useEffect(() => {
+    if (!communityMainRef.current) return;
+    const mm = fadeInUp(communityMainRef.current, { y: 6, duration: 0.28 });
+    return () => mm.revert();
+  }, [activeRoomId]);
+
+  // Animate only the newest message in on append, mirroring DirectChatPage.
+  useEffect(() => {
+    if (!messagesViewportRef.current) {
+      prevMessageCountRef.current = messages.length;
+      return;
+    }
+    const rows = messagesViewportRef.current.querySelectorAll('.community-row');
+    const isAppend = messages.length > prevMessageCountRef.current && rows.length > 0;
+    prevMessageCountRef.current = messages.length;
+    if (!isAppend) return;
+    const mm = fadeInUp(rows[rows.length - 1], { y: 10, duration: 0.26 });
+    return () => mm.revert();
+  }, [messages]);
+
   async function handleCreateRoom(event) {
     event.preventDefault();
     const trimmedName = roomName.trim();
@@ -428,7 +462,10 @@ function CommunityPage() {
 
   return (
     <main className="community-page">
-      <section className="community-shell" aria-label="Community forum">
+      {/* `community-shell--room-open` drives the single-pane mobile layout
+          (App.css ≤960px): shows the active room instead of the room list.
+          Inert on wider screens, where both panes are visible. */}
+      <section className={`community-shell${activeRoomId ? ' community-shell--room-open' : ''}`} aria-label="Community forum">
         <aside className="community-sidebar">
           <div className="community-sidebar-head">
             <h2>Community</h2>
@@ -451,7 +488,7 @@ function CommunityPage() {
             onChange={(event) => setRoomQuery(event.target.value)}
           />
 
-          <div className="community-room-list" aria-label="Available rooms">
+          <div className="community-room-list" aria-label="Available rooms" ref={roomListRef}>
             {filteredRooms.map((room) => (
               <button
                 key={room.roomId}
@@ -463,7 +500,6 @@ function CommunityPage() {
                   <strong>{room.roomName}</strong>
                   <small>{formatRoomTime(room.latestMessageDispatchTimestamp || room.roomCreationTimestamp)}</small>
                 </div>
-                <small>{room.joined ? `${room.membersCount} members` : "Tap to join"}</small>
               </button>
             ))}
             {filteredRooms.length === 0 && (
@@ -472,8 +508,17 @@ function CommunityPage() {
           </div>
         </aside>
 
-        <section className="community-main">
+        <section className="community-main" ref={communityMainRef}>
           <header className="community-main-head">
+            {/* Mobile-only: returns to the room list (hidden ≥960px via App.css). */}
+            <button
+              type="button"
+              className="community-back-btn"
+              aria-label="Back to room list"
+              onClick={() => setActiveRoomId("")}
+            >
+              <ArrowLeft size={18} aria-hidden="true" />
+            </button>
             <h1>{activeRoom?.roomName || "Community Chat"}</h1>
             {activeRoom && (
               <div className="community-active-room-bar">
@@ -556,24 +601,27 @@ function CommunityPage() {
 
             {!canAccessActiveRoom && activeRoom && (
               <div className="community-empty-state">
-                <h2>Join to view messages</h2>
-                <p>This room is membership-gated. Join first, then you can read and post messages.</p>
+                <h2>Join this room to start chatting</h2>
+                <p>Messages are visible to members only — join to read and post.</p>
               </div>
             )}
           </div>
 
-          <form className="community-composer" onSubmit={handleSendMessage}>
-            <input
-              type="text"
-              placeholder="Share support, advice, or encouragement"
-              value={newMessage}
-              onChange={(event) => setNewMessage(event.target.value)}
-              disabled={!canAccessActiveRoom}
-            />
-            <button type="submit" className="wa-send-btn" aria-label="Post message" disabled={!newMessage.trim() || !canAccessActiveRoom}>
-              <Send size={14} aria-hidden="true" />
-            </button>
-          </form>
+          {/* No writing area at all until the survivor joins, rather than a
+              visibly-disabled composer. */}
+          {canAccessActiveRoom && (
+            <form className="community-composer" onSubmit={handleSendMessage}>
+              <input
+                type="text"
+                placeholder="Share support, advice, or encouragement"
+                value={newMessage}
+                onChange={(event) => setNewMessage(event.target.value)}
+              />
+              <button type="submit" className="wa-send-btn" aria-label="Post message" disabled={!newMessage.trim()}>
+                <Send size={14} aria-hidden="true" />
+              </button>
+            </form>
+          )}
         </section>
       </section>
 

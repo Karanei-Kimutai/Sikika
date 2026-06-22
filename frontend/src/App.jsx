@@ -4,6 +4,7 @@ import { getToken, getUserId, removeToken, removeUserId } from "./utils/auth";
 import { getOrCreateKeyPair } from "./utils/keyStorage";
 import { exportPublicKeyJwk } from "./utils/cryptoUtils";
 import { registerPublicKey } from "./services/chatKeys";
+import { fadeInUp } from "./utils/motion";
 import SiteHeader from "./components/SiteHeader";
 import AuthPage from "./pages/AuthPage";
 import LandingPage from "./pages/LandingPage";
@@ -122,6 +123,23 @@ function formatMaintenanceCountdown(value) {
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   return `${hours}h ${minutes}m remaining`;
+}
+
+/**
+ * Wraps the active route's page in a subtle fade/lift entrance.
+ * Keyed by `path` so every navigation (a genuine route change, not a
+ * within-page state update) replays the animation once.
+ */
+function PageTransition({ path, children }) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    const mm = fadeInUp(ref.current, { y: 10, duration: 0.4 });
+    return () => mm.revert();
+  }, [path]);
+
+  return <div ref={ref}>{children}</div>;
 }
 
 function App() {
@@ -345,7 +363,9 @@ function App() {
       >
         <span className="app-quick-exit-label">Quick Exit</span>
       </button>
-      <Page onNavigate={navigate} role={role} onSignOut={handleSignOut} />
+      <PageTransition path={finalPath}>
+        <Page onNavigate={navigate} role={role} onSignOut={handleSignOut} />
+      </PageTransition>
     </div>
   );
 }

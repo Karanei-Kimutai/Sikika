@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { staggerIn } from "../utils/motion";
 import { fallbackCategories, fallbackResources } from "../data/fallbackResources";
 import { createResource, deleteResource, getResources, trackResourceAccess, updateResource } from "../services/resources";
 import { getToken, getUserId } from "../utils/auth";
@@ -129,6 +130,7 @@ function LibraryPage() {
   // endpoint is unavailable and the fallback IDs don't exist in the DB, so we
   // must open fileUrl directly instead of going through the proxy.
   const [usingFallback, setUsingFallback] = useState(false);
+  const resourceGridRef = useRef(null);
 
   /**
    * Fires a best-effort analytics event then opens the resource file.
@@ -159,6 +161,16 @@ function LibraryPage() {
       window.open(`${apiBase}/api/resources/${resource.id}/file`, "_blank", "noreferrer");
     }
   }
+
+  // Light reveal for the resource grid whenever the visible set changes
+  // (initial load, search, or category filter).
+  useEffect(() => {
+    if (!resourceGridRef.current) return;
+    const tiles = resourceGridRef.current.querySelectorAll('.resource-tile');
+    if (!tiles.length) return;
+    const mm = staggerIn(tiles, { y: 10, stagger: 0.05 });
+    return () => mm.revert();
+  }, [resources]);
 
   useEffect(() => {
     let isMounted = true;
@@ -513,7 +525,7 @@ function LibraryPage() {
           </button>
         </section>
       ) : (
-        <section className="resource-grid" aria-label="Available resources">
+        <section className="resource-grid" aria-label="Available resources" ref={resourceGridRef}>
           {resources.map((resource) => (
             <article className="resource-tile" key={resource.id}>
               <div>

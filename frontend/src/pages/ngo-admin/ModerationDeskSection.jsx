@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Trash2, UserCheck, UserX } from "lucide-react";
 import { formatDate, prettifyLabel } from "./helpers";
 import BannedUsersSection from "./BannedUsersSection";
+import { staggerIn } from "../../utils/motion";
 
 /**
  * ModerationDeskSection
@@ -55,6 +56,16 @@ export default function ModerationDeskSection({
    * "banned"  → banned users registry
    */
   const [activeTab, setActiveTab] = useState("reports");
+  const tableRef = useRef(null);
+
+  // Stagger the reports-queue rows in once the list loads.
+  useEffect(() => {
+    if (!tableRef.current) return;
+    const rows = tableRef.current.querySelectorAll('tbody tr');
+    if (!rows.length) return;
+    const mm = staggerIn(rows, { y: 8, stagger: 0.04 });
+    return () => mm.revert();
+  }, [moderationQueue]);
 
   /**
    * Handle tab switch. When switching to the Banned Users tab for the first
@@ -99,7 +110,7 @@ export default function ModerationDeskSection({
         <section className="admin-module-grid" aria-label="Moderation desk">
           <article className="admin-panel full-span">
             <h2>Community Moderation Queue</h2>
-            <div className="admin-table-wrap">
+            <div className="admin-table-wrap" ref={tableRef}>
               <table className="admin-table">
                 <thead>
                   <tr>

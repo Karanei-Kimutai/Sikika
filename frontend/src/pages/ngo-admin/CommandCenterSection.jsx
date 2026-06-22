@@ -1,5 +1,7 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
+import { FileWarning, Users, Clock, Scale, Hash, MessagesSquare, ShieldAlert, Inbox } from "lucide-react";
 import { formatNumber, prettifyLabel, buildLineChartPoints, buildMovingAverage } from "./helpers";
+import { staggerIn, countUp } from "../../utils/motion";
 
 // ── Chart coordinate constants — must match buildLineChartPoints in helpers.js ──
 const CHART_W = 660;
@@ -125,13 +127,54 @@ export default function CommandCenterSection({ overview, reportsOverTime, commun
     return `${months[Number(month) - 1] || ""} ${day}`;
   }
 
+  const gridRef = useRef(null);
+  const totalReportsRef = useRef(null);
+  const activeSurvivorsRef = useRef(null);
+  const avgResponseRef = useRef(null);
+  const activeLegalCasesRef = useRef(null);
+  const activeRoomsRef = useRef(null);
+  const totalMessagesRef = useRef(null);
+  const harmfulReportsRef = useRef(null);
+
+  // Light reveal for KPI cards once their data has loaded.
+  useEffect(() => {
+    if (!gridRef.current || !overview) return;
+    const cards = gridRef.current.querySelectorAll('.admin-stat-card');
+    if (!cards.length) return;
+    const mm = staggerIn(cards, { y: 10, stagger: 0.06 });
+    return () => mm.revert();
+  }, [overview]);
+
+  // Counts each KPI number up from 0 on load, mirroring the stagger entrance above.
+  useEffect(() => {
+    if (!overview) return;
+    const mms = [
+      totalReportsRef.current && countUp(totalReportsRef.current, overview.totalReports),
+      activeSurvivorsRef.current && countUp(activeSurvivorsRef.current, overview.activeSurvivors),
+      avgResponseRef.current && countUp(avgResponseRef.current, overview.averageResponseMinutes),
+      activeLegalCasesRef.current && countUp(activeLegalCasesRef.current, overview.activeLegalCases)
+    ].filter(Boolean);
+    return () => mms.forEach((mm) => mm.revert());
+  }, [overview]);
+
+  useEffect(() => {
+    if (!communityMetrics) return;
+    const mms = [
+      activeRoomsRef.current && countUp(activeRoomsRef.current, communityMetrics.activeRooms),
+      totalMessagesRef.current && countUp(totalMessagesRef.current, communityMetrics.totalMessages),
+      harmfulReportsRef.current && countUp(harmfulReportsRef.current, communityMetrics.harmfulContentReports)
+    ].filter(Boolean);
+    return () => mms.forEach((mm) => mm.revert());
+  }, [communityMetrics]);
+
   return (
-    <section className="admin-module-grid" aria-label="Command center metrics">
+    <section className="admin-module-grid" aria-label="Command center metrics" ref={gridRef}>
 
       {/* ── KPI stat cards ─────────────────────────────────────────────── */}
       <article className="admin-stat-card">
+        <span className="admin-stat-icon admin-stat-icon--reports"><FileWarning size={18} aria-hidden="true" /></span>
         <h3>Total Reports</h3>
-        <p className="admin-metric">{formatNumber(overview?.totalReports)}</p>
+        <p className="admin-metric"><span ref={totalReportsRef}>0</span></p>
         <span className={`trend ${Number(overview?.reportTrendPercent || 0) >= 0 ? "up" : "down"}`}>
           {Number(overview?.reportTrendPercent || 0) >= 0 ? "▲" : "▼"}{" "}
           {Math.abs(Number(overview?.reportTrendPercent || 0))}% vs last month
@@ -139,14 +182,16 @@ export default function CommandCenterSection({ overview, reportsOverTime, commun
       </article>
 
       <article className="admin-stat-card">
+        <span className="admin-stat-icon admin-stat-icon--survivors"><Users size={18} aria-hidden="true" /></span>
         <h3>Active Survivors</h3>
-        <p className="admin-metric">{formatNumber(overview?.activeSurvivors)}</p>
+        <p className="admin-metric"><span ref={activeSurvivorsRef}>0</span></p>
         <span>Currently assigned and receiving support</span>
       </article>
 
       <article className="admin-stat-card">
+        <span className="admin-stat-icon admin-stat-icon--response"><Clock size={18} aria-hidden="true" /></span>
         <h3>Avg Response Time</h3>
-        <p className="admin-metric">{formatNumber(overview?.averageResponseMinutes)} <small style={{ fontSize: "0.9rem", fontWeight: 700 }}>min</small></p>
+        <p className="admin-metric"><span ref={avgResponseRef}>0</span> <small style={{ fontSize: "0.9rem", fontWeight: 700 }}>min</small></p>
         <span>
           First reply in direct chat
           {Number(overview?.averageResponseSampleCount || 0) > 0
@@ -156,8 +201,9 @@ export default function CommandCenterSection({ overview, reportsOverTime, commun
       </article>
 
       <article className="admin-stat-card">
+        <span className="admin-stat-icon admin-stat-icon--legal"><Scale size={18} aria-hidden="true" /></span>
         <h3>Active Legal Cases</h3>
-        <p className="admin-metric">{formatNumber(overview?.activeLegalCases)}</p>
+        <p className="admin-metric"><span ref={activeLegalCasesRef}>0</span></p>
         <span>Open and in-progress legal escalations</span>
       </article>
 
@@ -304,7 +350,7 @@ export default function CommandCenterSection({ overview, reportsOverTime, commun
         </div>
 
         {!hasTrendData && (
-          <p className="admin-empty">No report activity in the last 30 days yet.</p>
+          <p className="admin-empty"><Inbox size={18} aria-hidden="true" /> No report activity in the last 30 days yet.</p>
         )}
       </article>
 
@@ -313,16 +359,19 @@ export default function CommandCenterSection({ overview, reportsOverTime, commun
         <h2>Community Watch Metrics</h2>
         <div className="admin-panels two-col">
           <div className="admin-stat-card">
+            <span className="admin-stat-icon admin-stat-icon--community"><Hash size={18} aria-hidden="true" /></span>
             <h3>Active Rooms</h3>
-            <p className="admin-metric">{formatNumber(communityMetrics?.activeRooms)}</p>
+            <p className="admin-metric"><span ref={activeRoomsRef}>0</span></p>
           </div>
           <div className="admin-stat-card">
+            <span className="admin-stat-icon admin-stat-icon--community"><MessagesSquare size={18} aria-hidden="true" /></span>
             <h3>Total Community Messages</h3>
-            <p className="admin-metric">{formatNumber(communityMetrics?.totalMessages)}</p>
+            <p className="admin-metric"><span ref={totalMessagesRef}>0</span></p>
           </div>
           <div className="admin-stat-card">
+            <span className="admin-stat-icon admin-stat-icon--harmful"><ShieldAlert size={18} aria-hidden="true" /></span>
             <h3>Harmful Content Reports</h3>
-            <p className="admin-metric">{formatNumber(communityMetrics?.harmfulContentReports)}</p>
+            <p className="admin-metric"><span ref={harmfulReportsRef}>0</span></p>
           </div>
         </div>
       </article>

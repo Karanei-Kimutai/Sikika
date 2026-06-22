@@ -1,4 +1,7 @@
+import { useEffect, useRef } from "react";
+import { Inbox } from "lucide-react";
 import { formatDate, prettifyLabel } from "./helpers";
+import { staggerIn } from "../../utils/motion";
 
 /**
  * UssdCallbacksSection
@@ -12,6 +15,17 @@ import { formatDate, prettifyLabel } from "./helpers";
  * @param {Function} props.onUpdateCallback    - (requestId, status) → void.
  */
 export default function UssdCallbacksSection({ ussdCallbacks, updatingCallbackId, onUpdateCallback }) {
+  const tableRef = useRef(null);
+
+  // Stagger the callback rows in once the list loads.
+  useEffect(() => {
+    if (!tableRef.current) return;
+    const rows = tableRef.current.querySelectorAll('tbody tr');
+    if (!rows.length) return;
+    const mm = staggerIn(rows, { y: 8, stagger: 0.04 });
+    return () => mm.revert();
+  }, [ussdCallbacks]);
+
   return (
     <section className="admin-module-grid" aria-label="USSD callback requests">
       <article className="admin-panel full-span">
@@ -21,7 +35,7 @@ export default function UssdCallbacksSection({ ussdCallbacks, updatingCallbackId
           Each request is auto-assigned to the least-loaded available counsellor on creation —
           mark it completed once your team has followed up, or cancelled if the number is unreachable.
         </p>
-        <div className="admin-table-wrap">
+        <div className="admin-table-wrap" ref={tableRef}>
           <table className="admin-table">
             <thead>
               <tr>
@@ -85,6 +99,7 @@ export default function UssdCallbacksSection({ ussdCallbacks, updatingCallbackId
         </div>
         {ussdCallbacks.length === 0 && (
           <p className="admin-empty" style={{ marginTop: "0.8rem" }}>
+            <Inbox size={18} aria-hidden="true" />
             No USSD callback requests yet.
           </p>
         )}
