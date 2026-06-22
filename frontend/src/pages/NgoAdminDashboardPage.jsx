@@ -848,6 +848,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
           className="secondary-btn"
           onClick={handleToggleMaintenanceMode}
           disabled={maintenanceToggling}
+          data-testid="ngo-maintenance-toggle"
         >
           {maintenanceToggling
             ? "Updating..."

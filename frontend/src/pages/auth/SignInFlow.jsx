@@ -332,6 +332,7 @@ export default function SignInFlow({
             type="submit"
             className="primary-btn auth-verify-btn"
             disabled={loading || !canSubmitTwoFactorOtp}
+            data-testid="signin-2fa-submit"
           >
             {loading ? "Verifying..." : "Verify & Sign In"}
           </button>
@@ -380,6 +381,7 @@ export default function SignInFlow({
             type="submit"
             className="primary-btn auth-cta-btn"
             disabled={loading || !canSubmitSigninPhone || !canSubmitSigninPassword}
+            data-testid="signin-submit"
           >
             {loading ? "Signing in..." : "Sign In"}
           </button>

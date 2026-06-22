@@ -177,7 +177,12 @@ export default function SignUpFlow({
             name="signup-phone-input"
             data-lpignore="true"
           />
-          <button type="submit" className="primary-btn auth-cta-btn" disabled={loading || !canSubmitSignupPhone}>
+          <button
+            type="submit"
+            className="primary-btn auth-cta-btn"
+            disabled={loading || !canSubmitSignupPhone}
+            data-testid="signup-send-otp"
+          >
             {loading ? "Sending code..." : "Send OTP Code"}
           </button>
         </>
@@ -202,6 +207,7 @@ export default function SignUpFlow({
             type="submit"
             className="primary-btn auth-verify-btn"
             disabled={loading || !canSubmitSignupOtp}
+            data-testid="signup-verify-code"
           >
             {loading ? "Verifying..." : "Verify Code"}
           </button>
@@ -263,6 +269,7 @@ export default function SignUpFlow({
             type="submit"
             className="primary-btn auth-verify-btn"
             disabled={loading || !canSubmitSignupPassword}
+            data-testid="signup-create-account"
           >
             {loading ? "Creating account..." : "Create Account"}
           </button>

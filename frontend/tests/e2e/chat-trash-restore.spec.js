@@ -16,7 +16,23 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { webcrypto } from 'node:crypto';
 import { installBaseApiMocks, seedSession } from './helpers/mocks';
+
+// A real ECDH P-256 public key (JWK string), used to satisfy DirectChatPage's
+// client-side key-exchange flow in the mocked backend. Without a real,
+// importable JWK, deriveSharedKey() throws and the page sets a lingering
+// "Failed to establish secure chat session" error that masks later assertions
+// (e.g. the empty-list state after deleting the only channel).
+async function generatePeerPublicKeyJwk() {
+  const { publicKey } = await webcrypto.subtle.generateKey(
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    ['deriveKey']
+  );
+  const jwk = await webcrypto.subtle.exportKey('jwk', publicKey);
+  return JSON.stringify(jwk);
+}
 
 // ── Fixture data ──────────────────────────────────────────────────────────────
 
@@ -26,6 +42,11 @@ const baseChannel = {
   chatId:                    CHAT_ID,
   survivorId:                'survivor-profile-1',
   supportStaffCounterpartId: 'counsellor-user-1',
+  // Required for client-side ECDH key derivation (DirectChatPage fetches the
+  // counterpart's public key by this id). Without it, the page sets a
+  // lingering "Unable to resolve the other participant" error on auto-select
+  // that masks the empty-list state in later assertions.
+  counterpartUserId:         'counsellor-user-1',
   chatChannelType:           'counsellor_channel',
   chatChannelStatus:         'active',
   unreadCount:               0,
@@ -46,6 +67,17 @@ const baseChannel = {
 async function installChatMocks(page) {
   // Mutable channel state — tests read this to assert transitions.
   const channelState = { status: 'active' };
+
+  // GET /api/chat/public-key/:userId — real, importable JWK so the page's
+  // ECDH derivation actually succeeds instead of leaving an error behind.
+  const peerPublicKeyJwk = await generatePeerPublicKeyJwk();
+  await page.route('**/api/chat/public-key/**', async (route) => {
+    await route.fulfill({
+      status:      200,
+      contentType: 'application/json',
+      body:        JSON.stringify({ ecdhPublicKey: peerPublicKeyJwk })
+    });
+  });
 
   // GET /api/chat/channels — returns the channel if its status matches the query.
   await page.route('**/api/chat/channels**', async (route) => {
@@ -143,7 +175,7 @@ test.describe('Chat Trash / Restore flow', () => {
     await optionsBtn.click();
 
     // Click "Move to Trash".
-    const trashBtn = page.getByRole('button', { name: /move to trash/i });
+    const trashBtn = page.getByTestId('chat-move-to-trash');
     await expect(trashBtn).toBeVisible();
     await trashBtn.click();
 
@@ -167,8 +199,8 @@ test.describe('Chat Trash / Restore flow', () => {
     // Default view: channel not visible.
     await expect(page.locator('.wa-empty-list')).toBeVisible();
 
-    // Click "Trash" toggle.
-    await page.getByRole('button', { name: /^trash$/i }).click();
+    // Click the (icon-only) Trash toggle — accessible name is "Show Trash".
+    await page.getByTestId('chat-trash-toggle').click();
 
     // Channel should now appear.
     await expect(page.locator('.wa-chat-item')).toBeVisible();
@@ -184,7 +216,7 @@ test.describe('Chat Trash / Restore flow', () => {
     await page.goto('/chat');
 
     // Open Trash view.
-    await page.getByRole('button', { name: /^trash$/i }).click();
+    await page.getByTestId('chat-trash-toggle').click();
     const chatItem = page.locator('.wa-chat-item').first();
     await expect(chatItem).toBeVisible();
 
@@ -192,9 +224,9 @@ test.describe('Chat Trash / Restore flow', () => {
     await chatItem.locator('.wa-chat-options-btn').click();
 
     // Only "Restore Chat" should be visible (not "Move to Trash").
-    const restoreBtn = page.getByRole('button', { name: /restore chat/i });
+    const restoreBtn = page.getByTestId('chat-restore');
     await expect(restoreBtn).toBeVisible();
-    await expect(page.getByRole('button', { name: /move to trash/i })).not.toBeVisible();
+    await expect(page.getByTestId('chat-move-to-trash')).not.toBeVisible();
 
     await restoreBtn.click();
 
@@ -211,12 +243,12 @@ test.describe('Chat Trash / Restore flow', () => {
     await page.goto('/chat');
 
     // Restore via Trash view.
-    await page.getByRole('button', { name: /^trash$/i }).click();
+    await page.getByTestId('chat-trash-toggle').click();
     await page.locator('.wa-chat-item .wa-chat-options-btn').first().click();
-    await page.getByRole('button', { name: /restore chat/i }).click();
+    await page.getByTestId('chat-restore').click();
 
-    // Switch back to default view.
-    await page.getByRole('button', { name: /hide trash/i }).click();
+    // Switch back to default view — same control, now toggled to "Hide Trash".
+    await page.getByTestId('chat-trash-toggle').click();
 
     // Channel is back in the active list.
     await expect(page.locator('.wa-chat-item')).toBeVisible();
@@ -248,7 +280,7 @@ test.describe('Chat Trash / Restore flow', () => {
     await page.goto('/chat');
 
     // Trash toggle should not exist for counsellors.
-    await expect(page.getByRole('button', { name: /^trash$/i })).not.toBeVisible();
+    await expect(page.getByTestId('chat-trash-toggle')).not.toBeVisible();
 
     // No action menu (survivor-only feature) — the ⋯ button is not rendered.
     await expect(page.locator('.wa-chat-options-btn')).not.toBeVisible();

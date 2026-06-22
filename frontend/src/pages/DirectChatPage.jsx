@@ -650,6 +650,7 @@ const DirectChatPage = () => {
                   title={showArchivedChannels ? 'Hide archived chats' : 'Show archived chats'}
                   aria-label={showArchivedChannels ? 'Hide archived chats' : 'Show archived chats'}
                   aria-pressed={showArchivedChannels}
+                  data-testid="chat-archive-toggle"
                 >
                   <Archive size={16} aria-hidden="true" />
                 </button>
@@ -664,6 +665,7 @@ const DirectChatPage = () => {
                   title={showDeletedChannels ? 'Hide Trash' : 'Show Trash'}
                   aria-label={showDeletedChannels ? 'Hide Trash' : 'Show Trash'}
                   aria-pressed={showDeletedChannels}
+                  data-testid="chat-trash-toggle"
                 >
                   <Trash2 size={16} aria-hidden="true" />
                 </button>
@@ -822,16 +824,16 @@ const DirectChatPage = () => {
         <div className="wa-chat-options-menu" style={{ top: menuPosition.top, left: menuPosition.left }}>
           {actionMenuChannel.chatChannelStatus === 'deleted' ? (
             /* Trash view: only Restore is available. Delete/Archive are blocked for deleted channels. */
-            <button type="button" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'active')}>
+            <button type="button" data-testid="chat-restore" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'active')}>
               <ArchiveRestore size={14} aria-hidden="true" /> Restore Chat
             </button>
           ) : actionMenuChannel.chatChannelStatus === 'archived' ? (
             /* Archived view: Restore or Delete. */
             <>
-              <button type="button" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'active')}>
+              <button type="button" data-testid="chat-restore" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'active')}>
                 <ArchiveRestore size={14} aria-hidden="true" /> Restore Chat
               </button>
-              <button type="button" className="danger" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'deleted')}>
+              <button type="button" className="danger" data-testid="chat-move-to-trash" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'deleted')}>
                 <Trash2 size={14} aria-hidden="true" /> Move to Trash
               </button>
             </>
@@ -841,7 +843,7 @@ const DirectChatPage = () => {
               <button type="button" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'archived')}>
                 <Archive size={14} aria-hidden="true" /> Archive Chat
               </button>
-              <button type="button" className="danger" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'deleted')}>
+              <button type="button" className="danger" data-testid="chat-move-to-trash" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'deleted')}>
                 <Trash2 size={14} aria-hidden="true" /> Move to Trash
               </button>
             </>
