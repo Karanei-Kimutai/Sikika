@@ -172,12 +172,51 @@ export function countUp(element, targetValue, opts = {}) {
 }
 
 /**
+ * Reveals an SVG path (or list of paths) with a stroke "draw-in" effect —
+ * the line appears to trace itself from start to end. Used for the Command
+ * Center trend chart's area/line layers on first load.
+ *
+ * Reduced-motion fallback simply clears any dash properties so the path
+ * renders fully formed with no animation, per the platform-wide policy.
+ *
+ * @param {string|SVGPathElement|SVGPathElement[]} targets
+ * @param {object} [opts]
+ * @param {number} [opts.duration=DURATION_MED * 2]
+ * @param {number} [opts.delay=0]
+ * @returns {gsap.MatchMedia}
+ */
+export function drawIn(targets, opts = {}) {
+  const { duration = DURATION_MED * 2, delay = 0 } = opts;
+  const elements = Array.isArray(targets) ? targets : gsap.utils.toArray(targets);
+
+  return withMotionPreference(
+    () => {
+      elements.forEach((el) => {
+        if (!el || typeof el.getTotalLength !== "function") return;
+        const length = el.getTotalLength();
+        gsap.fromTo(
+          el,
+          { strokeDasharray: length, strokeDashoffset: length },
+          { strokeDashoffset: 0, duration, delay, ease: EASE, clearProps: "strokeDasharray,strokeDashoffset" }
+        );
+      });
+    },
+    () => {
+      gsap.set(elements, { clearProps: "strokeDasharray,strokeDashoffset" });
+    }
+  );
+}
+
+/**
  * A quick, calm scale-pulse for micro-interactions (e.g. send button on submit).
- * Always runs (even under reduced motion it's near-instant and non-directional),
- * but kept here for consistent easing/timing.
+ * Gated through the same reduced-motion policy as every other helper here —
+ * under reduced motion it's a true no-op rather than a "lighter" animation.
  *
  * @param {string|Element} target
+ * @returns {gsap.MatchMedia}
  */
 export function pulse(target) {
-  gsap.fromTo(target, { scale: 1 }, { scale: 1.12, duration: 0.12, ease: "power1.out", yoyo: true, repeat: 1 });
+  return withMotionPreference(() => {
+    gsap.fromTo(target, { scale: 1 }, { scale: 1.12, duration: 0.12, ease: "power1.out", yoyo: true, repeat: 1 });
+  });
 }

@@ -106,3 +106,45 @@ export function buildMovingAverage(series, windowSize = 7) {
     return { ...point, avg };
   });
 }
+
+/**
+ * Builds a smooth SVG cubic-bezier path string through a list of {x, y}
+ * points. Uses the mid-point of each segment as control-point handles, which
+ * produces a visually natural curve without any overshoot.
+ *
+ * Shared by the Command Center's main trend chart (area + average line) and
+ * its small KPI-card sparklines, so both read from one curve algorithm.
+ *
+ * @param {{ x: number, y: number }[]} pts
+ * @returns {string}
+ */
+export function smoothLinePath(pts) {
+  if (!pts.length) return "";
+  if (pts.length === 1) return `M${pts[0].x},${pts[0].y}`;
+  let d = `M${pts[0].x},${pts[0].y}`;
+  for (let i = 1; i < pts.length; i++) {
+    const cpx = (pts[i - 1].x + pts[i].x) / 2;
+    d += ` C${cpx},${pts[i - 1].y} ${cpx},${pts[i].y} ${pts[i].x},${pts[i].y}`;
+  }
+  return d;
+}
+
+/**
+ * Builds a tiny inline sparkline path (no axes/gridlines) for a KPI card,
+ * scaled independently of the main trend chart's coordinate space.
+ *
+ * @param {{ date: string, count: number }[]} series
+ * @param {number} width
+ * @param {number} height
+ * @returns {string}
+ */
+export function buildSparklinePath(series, width, height) {
+  if (!series || series.length < 2) return "";
+  const max = Math.max(...series.map((item) => Number(item.count || 0)), 1);
+  const stepX = width / (series.length - 1);
+  const pts = series.map((item, index) => ({
+    x: index * stepX,
+    y: height - (Number(item.count || 0) / max) * height
+  }));
+  return smoothLinePath(pts);
+}
