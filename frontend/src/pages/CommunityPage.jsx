@@ -91,6 +91,13 @@ function CommunityPage() {
   const communityMainRef = useRef(null);
   const prevMessageCountRef = useRef(0);
 
+  // Auto-dismiss transient success banners so they don't linger across room switches.
+  useEffect(() => {
+    if (!successMessage) return;
+    const timeoutId = setTimeout(() => setSuccessMessage(""), 4000);
+    return () => clearTimeout(timeoutId);
+  }, [successMessage]);
+
   const currentUserId = getUserId();
   const isNgoAdmin = currentUserRole === "NGO_ADMIN";
   // Moderators share Community Chat oversight (delete/moderate) with NGO admins,
@@ -494,7 +501,10 @@ function CommunityPage() {
                 key={room.roomId}
                 type="button"
                 className={`community-room-item ${activeRoomId === room.roomId ? "active" : ""}`}
-                onClick={() => setActiveRoomId(room.roomId)}
+                onClick={() => {
+                  setActiveRoomId(room.roomId);
+                  setSuccessMessage("");
+                }}
               >
                 <div className="community-room-title-row">
                   <strong>{room.roomName}</strong>
