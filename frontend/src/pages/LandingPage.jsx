@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
-import { ArrowRight, CheckCircle2 } from "lucide-react";
-import heroArtwork from "../assets/hero.png";
+import { ArrowRight, CheckCircle2, ShieldCheck, EyeOff, DoorOpen } from "lucide-react";
 import SikikaLogo from "../components/SikikaLogo";
 import { staggerIn, revealOnScroll } from "../utils/motion";
 
@@ -29,6 +28,14 @@ const steps = [
   "Browse public resources",
   "Join with a phone-based secure login",
   "Access support and community spaces"
+];
+
+// Reassurance strip shown beneath the hero actions — survivors arriving here
+// need to know immediately that looking is safe before they commit to anything.
+const trustSignals = [
+  { icon: EyeOff, text: "Browse anonymously" },
+  { icon: ShieldCheck, text: "No account needed to look around" },
+  { icon: DoorOpen, text: "Quick Exit always available" }
 ];
 
 function LandingPage({ onNavigate }) {
@@ -76,14 +83,14 @@ function LandingPage({ onNavigate }) {
               Join Community
             </button>
           </div>
-        </div>
-
-        <div className="hero-visual" aria-hidden="true">
-          <img src={heroArtwork} alt="" />
-          <div className="support-panel">
-            <span>24/7</span>
-            <strong>Emergency contacts and safety planning resources</strong>
-          </div>
+          <ul className="hero-trust-strip">
+            {trustSignals.map(({ icon: Icon, text }) => (
+              <li key={text}>
+                <Icon size={16} aria-hidden="true" />
+                <span>{text}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       </section>
 
