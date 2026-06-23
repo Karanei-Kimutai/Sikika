@@ -976,6 +976,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
             <form className="admin-search" onSubmit={handleSearch}>
               <input
                 type="search"
+                autoComplete="off"
                 placeholder="Search by case ID, user ID, or phone number"
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
@@ -1073,6 +1074,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
               <div className="report-filter-row">
                 <input
                   type="search"
+                  autoComplete="off"
                   placeholder="Search report id, category, or status"
                   value={reportFilters.query}
                   onChange={(event) => setReportFilters((prev) => ({ ...prev, query: event.target.value }))}

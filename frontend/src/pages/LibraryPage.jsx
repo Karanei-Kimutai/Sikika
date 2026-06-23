@@ -414,6 +414,7 @@ function LibraryPage() {
           <input
             id="resource-search"
             type="search"
+            autoComplete="off"
             placeholder="Search by title, topic, or category"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
