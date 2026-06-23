@@ -45,13 +45,26 @@ const server = http.createServer(app);
 /**
  * FRONTEND_ORIGIN is a backend setting even though it names the frontend:
  * Express needs it to decide which browser origin is allowed to call this API.
+ *
+ * Browsers treat "localhost" and "127.0.0.1" as distinct origins even when
+ * they resolve to the same machine/port, so the configured origin's
+ * loopback-hostname counterpart is added automatically — this lets the same
+ * dev server be reached via either hostname without a CORS rejection.
  */
 const frontendOrigin = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
+const allowedOrigins = [
+  frontendOrigin,
+  frontendOrigin.includes("://localhost")
+    ? frontendOrigin.replace("://localhost", "://127.0.0.1")
+    : frontendOrigin.includes("://127.0.0.1")
+      ? frontendOrigin.replace("://127.0.0.1", "://localhost")
+      : null
+].filter(Boolean);
 
 // Configure Socket.io with the same CORS policy as Express
 const io = new Server(server, {
   cors: {
-    origin: frontendOrigin,
+    origin: allowedOrigins,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
   }
 });
@@ -64,7 +77,7 @@ app.locals.io = io;
 setNotificationIo(io);
 // CORS is configured before routes so every endpoint receives the same policy.
 app.use(cors({
-  origin: frontendOrigin,
+  origin: allowedOrigins,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
