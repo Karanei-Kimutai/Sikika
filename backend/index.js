@@ -153,6 +153,38 @@ app.get("/api/auth/session", authMiddleware, (req, res) => {
   });
 });
 
+// Unmatched API routes get a clean 404 instead of falling through to the
+// error handler or Express's default HTML 404 page.
+app.use((req, res) => {
+  res.status(404).json({ error: "Not found." });
+});
+
+/**
+ * Centralized error-handling middleware.
+ *
+ * Express only treats a 4-arg function as error middleware, and it must be
+ * registered last. Without one, Express 5 still forwards rejected promises
+ * from async route handlers to its built-in default handler, which renders
+ * the raw error object as a string (e.g. a Cloudinary error object becomes
+ * the literal text "[object Object]") instead of a usable JSON response.
+ * This handler logs the full error server-side and returns a JSON body the
+ * frontend can actually parse and display.
+ */
+app.use((err, req, res, next) => {
+  console.error(err.stack || err);
+
+  // Multer surfaces upload constraint violations (e.g. file too large) as
+  // MulterError instances with a stable `code`/`message`, not a generic 500.
+  if (err.name === "MulterError") {
+    return res.status(400).json({ error: `Upload error: ${err.message}` });
+  }
+
+  // Cloudinary errors carry an http_code (e.g. 400 for invalid image data)
+  // that is more accurate than a blanket 500.
+  const status = err.http_code || err.status || 500;
+  res.status(status).json({ error: err.message || "Internal server error." });
+});
+
 const requiredEnv = [
   "DB_HOST",
   "DB_PORT",
