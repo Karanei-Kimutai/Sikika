@@ -13,7 +13,8 @@ function ngoDashboardFixture() {
       activeLegalCases: 1
     },
     reportsOverTime: [],
-    reportBreakdown: { byStatus: [], byCategory: [], bySeverity: [], byCounty: [] },
+    reportsBreakdown: { byStatus: [], byCategory: [], byCounty: [] },
+    communityMetrics: { activeRooms: 0, totalMessages: 0, harmfulContentReports: 0 },
     recentUrgentCases: [],
     recentReports: [],
     recentCommunityMessages: [],
@@ -35,31 +36,6 @@ function ngoDashboardFixture() {
     ],
     resources: [],
     resourceAnalytics: { topAccessedResources: [], usageByCategory: [] }
-  };
-}
-
-function systemDashboardFixture() {
-  return {
-    profile: { userId: 'sys-admin-1', systemAccessLevel: 1 },
-    statusBadge: 'ALL_SYSTEMS_OPERATIONAL',
-    metrics: {
-      serverUptimeSeconds: 3600,
-      databaseConnectionStatus: 'CONNECTED',
-      databaseLatencyMs: 21,
-      otpGatewayStatus: 'AVAILABLE'
-    },
-    maintenanceMode: {
-      enabled: false,
-      updatedAt: '2026-06-11T08:00:00.000Z',
-      reason: 'Routine checks',
-      expectedUntil: '2026-06-11T10:30:00.000Z'
-    },
-    runtimeActions: {
-      lastCacheClearAt: '2026-06-11T07:30:00.000Z',
-      lastRestartRequestAt: '2026-06-11T07:00:00.000Z'
-    },
-    errorLogs: [],
-    systemAdmins: []
   };
 }
 
@@ -96,15 +72,19 @@ test.describe('Admin Flows', () => {
     await expect(page.getByText('Moderation action completed.')).toBeVisible();
   });
 
-  test('system admin can invoke maintenance controls', async ({ page }) => {
+  // NGO Admin is the sole admin role — System Admin and its dedicated
+  // infrastructure dashboard were removed. The one System Admin capability
+  // that survived (maintenance mode) was folded into the NGO Admin dashboard
+  // as an always-visible toggle bar above every section.
+  test('ngo admin can toggle maintenance mode from the dashboard', async ({ page }) => {
     await installBaseApiMocks(page);
-    await seedSession(page, { role: 'SYSTEM_ADMIN', userId: 'sys-admin-1' });
+    await seedSession(page, { role: 'NGO_ADMIN', userId: 'ngo-admin-1' });
 
-    await page.route('**/api/admin/system/dashboard', async (route) => {
+    await page.route('**/api/admin/ngo/dashboard', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify(systemDashboardFixture())
+        body: JSON.stringify(ngoDashboardFixture())
       });
     });
 
@@ -112,25 +92,23 @@ test.describe('Admin Flows', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ message: 'Maintenance mode updated successfully.' })
+        body: JSON.stringify({
+          maintenanceMode: {
+            enabled: true,
+            updatedAt: '2026-06-11T08:00:00.000Z',
+            reason: null,
+            expectedUntil: null
+          }
+        })
       });
     });
 
-    await page.route('**/api/admin/system/runtime-action', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ message: 'Runtime action completed.' })
-      });
-    });
+    // NGO Admin's "/" resolves to the Command Center section of the
+    // consolidated NGO dashboard (App.jsx ngoAdminRoutes).
+    await page.goto('/');
+    await expect(page.getByText('Maintenance Mode:')).toBeVisible();
 
-    await page.goto('/chat');
-    await expect(page.getByRole('heading', { name: 'Maintenance and Runtime Control' })).toBeVisible();
-
-    await page.getByRole('button', { name: 'Enable Maintenance Mode' }).click();
-    await expect(page.getByText('Maintenance mode updated successfully.')).toBeVisible();
-
-    await page.getByRole('button', { name: 'Clear System Cache' }).click();
-    await expect(page.getByText('Runtime action completed.')).toBeVisible();
+    await page.getByTestId('ngo-maintenance-toggle').click();
+    await expect(page.getByText('Maintenance mode enabled.')).toBeVisible();
   });
 });

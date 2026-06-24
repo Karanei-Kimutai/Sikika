@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { io } from "socket.io-client";
 import { getToken } from "../utils/auth";
+import { staggerIn } from "../utils/motion";
 
 /**
  * ModerationDashboardPage
@@ -27,6 +28,16 @@ function ModerationDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const gridRef = useRef(null);
+
+  // Light reveal for the report queue whenever it (re)loads.
+  useEffect(() => {
+    if (!gridRef.current) return;
+    const cards = gridRef.current.querySelectorAll('.moderation-card');
+    if (!cards.length) return;
+    const mm = staggerIn(cards, { y: 10, stagger: 0.05 });
+    return () => mm.revert();
+  }, [reports]);
 
   async function loadReports() {
     setLoading(true);
@@ -106,7 +117,7 @@ function ModerationDashboardPage() {
         ) : reports.length === 0 ? (
           <p className="wa-empty-state">No reported content at the moment.</p>
         ) : (
-          <section className="moderation-grid" aria-label="Reported content queue">
+          <section className="moderation-grid" aria-label="Reported content queue" ref={gridRef}>
             {reports.map((report) => (
               <article key={report.contentReportId} className="moderation-card">
                 <div>

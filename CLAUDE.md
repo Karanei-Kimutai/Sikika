@@ -171,7 +171,7 @@ Static resource list shown in the Library when the backend is unreachable. Full 
 - **`SUSPENDED` vs `BANNED`**: `SUSPENDED` = reversible staff operational pause (no metadata); `BANNED` = moderation/safety enforcement (reason + optional expiry + dual audit trail). Both block all authenticated access immediately via `authMiddleware` DB lookup.
 - **Survivor identity in community**: survivors appear by nickname only in room timelines.
 - **Resource access tracking**: `POST /api/resources/:id/track-access` is best-effort; frontend fires and ignores failures so it never blocks resource opens.
-- **Light/dark theming**: CSS custom properties in `frontend/src/App.css` `:root`, overridden by an OS-driven `@media (prefers-color-scheme: dark)` block (no manual toggle). Use existing tokens (`--surface`, `--community-*`, `--legal-*`, `--status-*`, `--chart-*`, `--workspace-*`) rather than hardcoded hex — a hardcoded color bypasses the dark-mode override entirely.
+- **Single fixed theme**: CSS custom properties in `frontend/src/App.css` `:root` define the only theme. There is no dark mode — an earlier OS-driven `@media (prefers-color-scheme: dark)` override was removed so the UI looks identical regardless of the visitor's browser/OS preference; `index.html` pins `<meta name="color-scheme" content="light">` so native form controls/scrollbars don't switch either. Use existing tokens (`--surface`, `--community-*`, `--legal-*`, `--status-*`, `--chart-*`, `--workspace-*`) rather than hardcoded hex for consistency, not for dark-mode support.
 
 ## Incomplete Features
 

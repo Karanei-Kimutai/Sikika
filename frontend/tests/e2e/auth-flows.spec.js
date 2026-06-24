@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { buildToken, installBaseApiMocks, expectSignedInShell } from './helpers/mocks';
 
 test.describe('Auth Flows', () => {
-  test('signup OTP flow creates account and signs in', async ({ page }) => {
+  test('signup flow (OTP verification then password/profile details) creates account and signs in', async ({ page }) => {
     await installBaseApiMocks(page);
 
     await page.route('**/api/auth/request-otp', async (route) => {
@@ -13,7 +13,19 @@ test.describe('Auth Flows', () => {
       });
     });
 
+    // Step 2: verify-otp now only confirms the code and issues a short-lived
+    // signup ticket — it does NOT authenticate the user yet.
     await page.route('**/api/auth/verify-otp', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ authStage: 'DETAILS_REQUIRED', signupTicket: 'ticket-abc123' })
+      });
+    });
+
+    // Step 3: complete-signup carries the ticket + password + profile details
+    // and is what actually issues the JWT.
+    await page.route('**/api/auth/complete-signup', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -27,31 +39,40 @@ test.describe('Auth Flows', () => {
 
     await page.goto('/join');
     await page.getByRole('tab', { name: 'Sign Up', exact: true }).click();
-    await page.fill('#signupPhone', '+254711000001');
-    await page.getByRole('button', { name: 'Send OTP Code' }).click();
 
+    // Step 1: phone -> send OTP
+    await page.fill('#signupPhone', '+254711000001');
+    await page.getByTestId('signup-send-otp').click();
+
+    // Step 2: OTP only (no password field on this step anymore)
     await page.fill('#signupOtp', '1234');
+    await page.getByTestId('signup-verify-code').click();
+
+    // Step 3: password + profile details
     await page.fill('#signupPassword', 'StrongPass!123');
     await page.fill('#signupNickname', 'Amina');
     await page.fill('#signupCounty', 'Nairobi');
-    await page.getByRole('button', { name: 'Verify OTP & Create Password' }).click();
+    await page.getByTestId('signup-create-account').click();
 
     await expect(page).toHaveURL(/\/home$/);
     await expectSignedInShell(page);
   });
 
-  test('otp sign-in flow authenticates existing user', async ({ page }) => {
+  test('password sign-in flow with mandatory OTP 2FA authenticates existing user', async ({ page }) => {
     await installBaseApiMocks(page);
 
-    await page.route('**/api/auth/request-otp', async (route) => {
+    // login-password validates the password but does NOT issue a JWT — it
+    // always advances to the mandatory OTP 2FA step.
+    await page.route('**/api/auth/login-password', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ authStage: 'OTP_VERIFICATION_REQUIRED', developmentOtp: '5678' })
+        body: JSON.stringify({ authStage: 'OTP_2FA_REQUIRED', developmentOtp: '5678' })
       });
     });
 
-    await page.route('**/api/auth/verify-otp', async (route) => {
+    // verify-2fa is the endpoint that actually issues the JWT.
+    await page.route('**/api/auth/verify-2fa', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -64,11 +85,14 @@ test.describe('Auth Flows', () => {
     });
 
     await page.goto('/join');
+    // Sign In is the default tab — no separate "OTP" tab exists; OTP is
+    // enforced as 2FA after a successful password match.
     await page.fill('#signinPhone', '+254711000002');
-    await page.getByRole('tab', { name: 'OTP', exact: true }).click();
-    await page.getByRole('button', { name: 'Send Sign-In OTP' }).click();
-    await page.fill('#signinOtp', '5678');
-    await page.getByRole('button', { name: 'Verify OTP & Sign In' }).click();
+    await page.fill('#signinPassword', 'StrongPass!123');
+    await page.getByTestId('signin-submit').click();
+
+    await page.fill('#signinTwoFactorOtp', '5678');
+    await page.getByTestId('signin-2fa-submit').click();
 
     await expect(page).toHaveURL(/\/home$/);
     await expectSignedInShell(page);

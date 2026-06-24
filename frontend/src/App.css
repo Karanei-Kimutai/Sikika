@@ -9,6 +9,13 @@
   --font-body: 'Nunito Sans', 'Trebuchet MS', Verdana, sans-serif;
   --font-heading: 'Fraunces', Georgia, serif;
 
+  /* Tracking scale — deliberate spacing contrast between the Fraunces
+     display face (tight, large) and Nunito Sans UI labels (wide, small-caps-ish) */
+  --tracking-tight: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.08em;
+  --tracking-wider: 0.12em;
+
   /* Primary color palette — warm earth tones (WCAG AA contrast adjusted) */
   --warm-white: #fdfaf6;
   --surface: #ffffff;
@@ -72,12 +79,24 @@
   --color-action:          var(--brown);
   --color-action-hover:    var(--brown-hover);
 
-  /* Community / moderation palette — secondary blue */
-  --community-border: rgba(91, 141, 239, 0.22);
-  --community-bg:     #f8fbff;
-  --community-title:  #163c73;
-  --community-text:   #395a83;
-  --community-muted:  #60789c;
+  /* Community Chat palette — now mapped onto the main warm palette so the
+     page matches the rest of the app instead of its old standalone blue. */
+  --community-border: var(--color-border);
+  --community-bg:     var(--cream);
+  --community-title:  var(--brown-dark);
+  --community-text:   var(--body);
+  --community-muted:  var(--muted);
+
+  /* Admin workspace palette — fallback values so .admin-panel/.admin-table/
+     .admin-stat-card/etc render correctly anywhere they're reused outside
+     .admin-workspace.ngo (e.g. MyCallbacksPage.jsx, SurvivorReportView.jsx),
+     which only defines its own richer override for the NGO dashboard itself. */
+  --workspace-bg:      var(--warm-white);
+  --workspace-surface: var(--surface);
+  --workspace-border:  var(--color-border);
+  --workspace-accent:  var(--clay);
+  --workspace-title:   var(--brown-dark);
+  --workspace-text:    var(--muted);
 
   /* Legal drafting palette — secondary purple */
   --legal-border:  #d6b8e8;
@@ -94,6 +113,22 @@
   --chart-peak:      #bf4d12;
   --chart-peak-soft: #e07848;
   --chart-trend:     #2a7b50;
+}
+
+/* Visually hides content while keeping it in the accessibility tree — used
+   for screen-reader-only data (e.g. the Command Center trend chart's table
+   alternative to its decorative/aria-hidden SVG). Standard clip-based
+   pattern: `display: none` would remove it from the tree entirely. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* Global shell and sticky header chrome shared across all pages. */
@@ -675,10 +710,9 @@ button {
  * .profile-dropdown
  * Wrapper that establishes the positioning context for the account popover,
  * mirroring .notification-bell-container so the two header controls line up.
- * width: fit-content guards against the ≤900px header-actions breakpoint
- * (.header-actions switches to display:grid there) stretching this wrapper
- * full-width, which would detach the popover's right-anchored position from
- * the avatar button sitting at the wrapper's left edge.
+ * width: fit-content keeps this wrapper sized to the avatar button itself
+ * (not the flex row it sits in), so the popover's right-anchored position
+ * stays attached to the avatar rather than the wider header-actions row.
  */
 .profile-dropdown {
   position: relative;
@@ -826,21 +860,22 @@ button {
 .hero-section {
   min-height: calc(100vh - 5rem);
   display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
   align-items: center;
-  gap: clamp(2rem, 6vw, 5rem);
+  justify-content: center;
   padding: 3rem 0 4rem;
 }
 
 .hero-copy {
   max-width: 660px;
+  margin: 0 auto;
+  text-align: center;
 }
 
 .eyebrow {
   margin: 0 0 0.8rem;
   color: var(--clay);
   text-transform: uppercase;
-  letter-spacing: 0.12em;
+  letter-spacing: var(--tracking-wider);
   font-size: 0.76rem;
   font-weight: 800;
 }
@@ -866,12 +901,14 @@ p {
   color: var(--brown-dark);
   font-size: clamp(2.35rem, 6vw, 5rem);
   line-height: 1;
+  letter-spacing: var(--tracking-tight);
 }
 
 /* Landing hero heading variant: pairs the Sikika logo mark with the wordmark. */
 .hero-brand-heading {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.9rem;
 }
 
@@ -891,48 +928,33 @@ p {
 .hero-actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 0.85rem;
   margin-top: 1.8rem;
 }
 
-.hero-visual {
-  position: relative;
-  min-height: 420px;
-  display: grid;
-  place-items: center;
-  border-radius: 1.1rem;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.78), rgba(232, 240, 233, 0.9)),
-    repeating-linear-gradient(45deg, rgba(139, 94, 60, 0.1) 0 1px, transparent 1px 20px);
-  border: 1px solid rgba(139, 94, 60, 0.16);
-  box-shadow: var(--shadow-xl);
-  overflow: hidden;
+.hero-trust-strip {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 1.5rem;
+  margin: 1.8rem 0 0;
+  padding: 0;
+  list-style: none;
 }
 
-.hero-visual img {
-  width: min(78%, 360px);
-  height: auto;
-  filter: sepia(0.35) saturate(0.8) hue-rotate(330deg);
+.hero-trust-strip li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--body);
+  font-size: 0.88rem;
+  font-weight: 600;
 }
 
-.support-panel {
-  position: absolute;
-  right: 1.25rem;
-  bottom: 1.25rem;
-  display: grid;
-  gap: 0.35rem;
-  width: min(280px, calc(100% - 2.5rem));
-  padding: 1rem;
-  border-radius: 0.85rem;
-  color: var(--brown-dark);
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: var(--shadow);
-}
-
-.support-panel span {
+.hero-trust-strip svg {
+  flex-shrink: 0;
   color: var(--sage);
-  font-size: 1.8rem;
-  font-weight: 900;
 }
 
 .content-band,
@@ -950,6 +972,7 @@ p {
   color: var(--brown-dark);
   font-size: clamp(1.8rem, 3vw, 2.75rem);
   line-height: 1.12;
+  letter-spacing: var(--tracking-tight);
 }
 
 .offer-grid,
@@ -1205,6 +1228,25 @@ input:focus {
   background: var(--cream);
   border: 1px solid var(--color-border);
   color: var(--brown-dark);
+}
+
+/* Mirrors .presence-dot's pattern — colour conveys status at a glance. */
+.maintenance-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.maintenance-dot--off {
+  background-color: var(--success);
+}
+
+.maintenance-dot--on {
+  background-color: var(--status-session);
 }
 
 .resource-management-panel {
@@ -1611,11 +1653,6 @@ input:focus {
   background: var(--success-bg);
 }
 
-.feedback-hint {
-  color: #234b73;
-  background: #e5f1fb;
-}
-
 .auth-note,
 .token-preview {
   margin: 0;
@@ -1691,6 +1728,17 @@ input:focus {
 .profile-summary-card p,
 .profile-assigned-staff p {
   margin: 0;
+}
+
+.profile-summary-card p {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.profile-summary-card svg {
+  color: var(--brown);
+  flex-shrink: 0;
 }
 
 .profile-form {
@@ -1782,16 +1830,19 @@ input:focus {
 }
 
 @media (max-width: 900px) {
+  /* Below this width the header switches from a 3-column grid to a
+     wrapping flex row: brand mark and the hamburger/icon cluster share
+     the top row, with the only other flow child being the absolutely
+     positioned nav drawer (doesn't consume row space) or, for signed-out
+     visitors, the full-width "Join Community" button wrapping to its own
+     row beneath. */
   .site-header {
-    grid-template-columns: 1fr;
-    align-items: stretch;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
     padding: 0.85rem 1rem;
-  }
-
-  .site-nav,
-  .header-action,
-  .header-actions {
-    justify-self: stretch;
   }
 
   .site-nav {
@@ -1802,6 +1853,16 @@ input:focus {
   .header-signout,
   .site-nav button {
     width: 100%;
+  }
+
+  /* Keeps the notification bell and account avatar side-by-side rather
+     than stacked — previously this was `display: grid` with no column
+     track, which stacked them vertically on narrow screens. */
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-left: 0;
   }
 
   .app-quick-exit {
@@ -1822,10 +1883,6 @@ input:focus {
     right: 0.5rem;
   }
 
-  .header-actions {
-    display: grid;
-  }
-
   .hero-section,
   .library-intro,
   .auth-layout {
@@ -1835,10 +1892,6 @@ input:focus {
   .hero-section {
     min-height: auto;
     padding-top: 2rem;
-  }
-
-  .hero-visual {
-    min-height: 320px;
   }
 
   .offer-grid,
@@ -1898,18 +1951,6 @@ input:focus {
   .library-intro h1,
   .auth-context h1 {
     font-size: 2.15rem;
-  }
-
-  .support-panel {
-    position: static;
-    width: calc(100% - 1rem);
-    margin: 0.5rem;
-  }
-
-  .hero-visual {
-    align-content: center;
-    gap: 0.5rem;
-    padding: 1rem 0;
   }
 
   .category-tabs button {
@@ -2065,6 +2106,8 @@ input:focus {
   margin: 0;
   font-size: 1rem;
   font-family: var(--font-body);
+  font-weight: 800;
+  letter-spacing: var(--tracking-tight);
   color: var(--brown-dark);
 }
 
@@ -2248,15 +2291,37 @@ input:focus {
   padding: 0.65rem 0.95rem;
   display: flex;
   align-items: center;
+  gap: 0.5rem;
   justify-content: space-between;
+}
+
+/* Returns to the channel list on mobile (App.css ≤960px shows this as
+   inline-flex); irrelevant on wider screens where both panes are visible. */
+.wa-back-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--brown-dark);
+}
+
+.wa-back-btn:hover {
+  background: var(--hover-overlay);
 }
 
 .wa-notice {
   margin: 0;
   border-radius: 999px;
   padding: 0.3rem 0.65rem;
-  color: #1f4f91;
-  background: rgba(91, 141, 239, 0.14);
+  /* Was a hardcoded blue that broke from the warm-earth palette — same soft-tint
+     pattern used by the Command Center's KPI icon chips (App.css `.admin-stat-icon`). */
+  color: var(--workspace-accent);
+  background: color-mix(in srgb, var(--workspace-accent) 14%, transparent);
   font-size: 0.8rem;
   font-weight: 700;
 }
@@ -2492,18 +2557,18 @@ input:focus {
 
 .community-shell {
   height: calc(100vh - 8rem);
-  border: 1px solid rgba(91, 141, 239, 0.2);
+  border: 1px solid rgba(139, 94, 60, 0.2);
   border-radius: 0.75rem;
   overflow: hidden;
-  background: #eff4fb;
-  box-shadow: 0 8px 26px rgba(40, 76, 138, 0.12);
+  background: var(--warm-white);
+  box-shadow: var(--shadow-lg);
   display: grid;
   grid-template-columns: 250px 1fr;
 }
 
 .community-sidebar {
-  border-right: 1px solid rgba(91, 141, 239, 0.16);
-  background: #f8fbff;
+  border-right: 1px solid rgba(139, 94, 60, 0.16);
+  background: var(--surface);
   padding: 0.75rem;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
@@ -2520,12 +2585,14 @@ input:focus {
 
 .community-sidebar h2 {
   margin: 0;
-  color: #173a68;
+  color: var(--brown-dark);
   font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: var(--tracking-tight);
 }
 
 .community-room-search {
-  border: 1px solid rgba(91, 141, 239, 0.24);
+  border: 1px solid rgba(139, 94, 60, 0.22);
   border-radius: 0.55rem;
   background: var(--surface);
   min-height: 2rem;
@@ -2534,10 +2601,10 @@ input:focus {
 }
 
 .community-create-room-btn {
-  border: 1px solid rgba(33, 90, 166, 0.34);
+  border: 1px solid rgba(139, 94, 60, 0.3);
   border-radius: 0.5rem;
   background: var(--surface);
-  color: #20467f;
+  color: var(--brown);
   min-height: 1.8rem;
   padding: 0.1rem 0.5rem;
   font-weight: 700;
@@ -2553,13 +2620,14 @@ input:focus {
 }
 
 .community-room-item {
-  border: 1px solid rgba(91, 141, 239, 0.24);
+  border: 1px solid var(--color-border);
   border-radius: 0.65rem;
   background: var(--surface);
   padding: 0.5rem 0.6rem;
   text-align: left;
   display: grid;
   gap: 0.15rem;
+  transition: background-color 120ms ease, border-color 120ms ease;
 }
 
 .community-room-title-row {
@@ -2583,9 +2651,13 @@ input:focus {
   font-size: 0.75rem;
 }
 
-.community-room-item.active,
 .community-room-item:hover {
-  background: var(--community-bg);
+  background: var(--hover-overlay);
+}
+
+.community-room-item.active {
+  background: var(--selected-bg);
+  border-color: var(--brown);
 }
 
 .community-main {
@@ -2598,13 +2670,38 @@ input:focus {
 
 .community-main-head {
   display: grid;
-  gap: 0.5rem;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.5rem 0.6rem;
 }
 
+/* Explicit column 2 so the heading lines up next to .community-back-btn
+   when that button is shown (≤960px) — on wider screens the back button
+   is display:none, leaving column 1 collapsed to zero width. */
 .community-main h1 {
+  grid-column: 2;
   margin: 0;
   color: var(--community-title);
   font-size: 1rem;
+}
+
+/* Returns to the room list on mobile (App.css ≤960px shows this as
+   inline-flex); irrelevant on wider screens where both panes are visible. */
+.community-back-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--community-title);
+}
+
+.community-back-btn:hover {
+  background: var(--hover-overlay);
 }
 
 .community-main header p {
@@ -2613,7 +2710,10 @@ input:focus {
 }
 
 .community-active-room-bar {
-  border: 1px solid rgba(91, 141, 239, 0.14);
+  /* Spans both .community-main-head columns so it sits on its own row
+     beneath the title row rather than squeezing into column 2. */
+  grid-column: 1 / -1;
+  border: 1px solid var(--color-border);
   border-radius: 0.55rem;
   background: var(--surface);
   padding: 0.35rem 0.5rem;
@@ -2629,7 +2729,7 @@ input:focus {
 }
 
 .community-messages {
-  border: 1px solid rgba(91, 141, 239, 0.22);
+  border: 1px solid var(--color-border);
   border-radius: 0.65rem;
   background: var(--surface);
   padding: 0.6rem;
@@ -2655,7 +2755,7 @@ input:focus {
   max-width: min(62%, 500px);
   border-radius: 0.72rem;
   padding: 0.42rem 0.56rem;
-  box-shadow: 0 1px 2px rgba(25, 61, 101, 0.1);
+  box-shadow: var(--shadow-sm);
 }
 
 .community-bubble.mine {
@@ -2664,7 +2764,7 @@ input:focus {
 
 .community-bubble.theirs {
   background: var(--surface);
-  border: 1px solid rgba(91, 141, 239, 0.2);
+  border: 1px solid var(--color-border);
 }
 
 .community-message-meta {
@@ -2706,7 +2806,7 @@ input:focus {
 }
 
 .message-actions-menu button {
-  border: 1px solid rgba(91, 141, 239, 0.24);
+  border: 1px solid var(--color-border);
   border-radius: 0.55rem;
   padding: 0.45rem 0.55rem;
   background: var(--surface);
@@ -2757,7 +2857,7 @@ input:focus {
   margin: 0;
   padding: 0.8rem 0.5rem;
   text-align: center;
-  color: #60789c;
+  color: var(--community-muted);
   font-size: 0.8rem;
 }
 
@@ -2766,12 +2866,12 @@ input:focus {
   display: grid;
   place-items: center;
   text-align: center;
-  color: #55719a;
+  color: var(--community-text);
 }
 
 .community-empty-state h2 {
   margin: 0;
-  color: #2f5a91;
+  color: var(--community-title);
 }
 
 .community-empty-state p {
@@ -2780,14 +2880,14 @@ input:focus {
 
 .community-create-room-form input,
 .community-create-room-form textarea {
-  border: 1px solid rgba(91, 141, 239, 0.24);
+  border: 1px solid var(--color-border);
   border-radius: 0.65rem;
   padding: 0.55rem 0.62rem;
   font: inherit;
 }
 
 .community-report-modal textarea {
-  border: 1px solid rgba(91, 141, 239, 0.24);
+  border: 1px solid var(--color-border);
   border-radius: 0.65rem;
   padding: 0.55rem 0.62rem;
   font: inherit;
@@ -2800,21 +2900,21 @@ input:focus {
 }
 
 .moderation-shell {
-  border: 1px solid rgba(91, 141, 239, 0.24);
+  border: 1px solid var(--color-border);
   border-radius: 1rem;
-  background: #f8fbff;
-  box-shadow: 0 16px 44px rgba(40, 76, 138, 0.14);
+  background: var(--warm-white);
+  box-shadow: var(--shadow-lg);
   padding: 1rem;
 }
 
 .moderation-header h1 {
   margin: 0;
-  color: #163c73;
+  color: var(--brown-dark);
 }
 
 .moderation-header p {
   margin: 0.3rem 0 0;
-  color: #556d8f;
+  color: var(--muted);
 }
 
 .moderation-grid {
@@ -2825,7 +2925,7 @@ input:focus {
 }
 
 .moderation-card {
-  border: 1px solid rgba(91, 141, 239, 0.22);
+  border: 1px solid var(--color-border);
   border-radius: 0.8rem;
   background: var(--surface);
   padding: 0.8rem;
@@ -2846,39 +2946,59 @@ input:focus {
 
 .moderation-detail-grid p {
   margin: 0;
-  color: #2c486f;
+  color: var(--body);
 }
 
 .moderation-detail-card {
-  border: 1px solid rgba(91, 141, 239, 0.2);
+  border: 1px solid var(--color-border);
   border-radius: 0.7rem;
-  background: #f7fbff;
+  background: var(--cream);
   padding: 0.7rem;
 }
 
 .moderation-detail-card h4 {
   margin: 0;
-  color: #163c73;
+  color: var(--brown-dark);
 }
 
 .moderation-detail-card p {
   margin: 0.35rem 0 0;
-  color: #395a83;
+  color: var(--body);
   line-height: 1.45;
 }
 
 @media (max-width: 960px) {
+  /* Single-pane mobile pattern, matching DirectChatPage: show either the
+     room list or the active room, never both stacked. JS adds
+     `.community-shell--room-open` once a room is selected; `.community-back-btn`
+     (hidden ≥960px) returns to the list. */
   .community-shell {
     grid-template-columns: 1fr;
     height: calc(100vh - 7.6rem);
   }
 
   .community-sidebar {
-    grid-template-rows: auto auto;
+    grid-template-rows: auto auto minmax(0, 1fr);
   }
 
   .community-room-list {
-    max-height: 32vh;
+    max-height: none;
+  }
+
+  .community-main {
+    display: none;
+  }
+
+  .community-shell--room-open .community-sidebar {
+    display: none;
+  }
+
+  .community-shell--room-open .community-main {
+    display: grid;
+  }
+
+  .community-back-btn {
+    display: inline-flex;
   }
 
   .community-active-room-bar {
@@ -2893,10 +3013,14 @@ input:focus {
   .moderation-detail-grid {
     grid-template-columns: 1fr;
   }
-}
 
-@media (max-width: 960px) {
-  /* Collapse to vertical stacking on narrower devices. */
+  /* Single-pane mobile chat pattern: show either the channel list or the
+     active conversation, never both stacked — matches the messaging-app
+     convention users already know, and avoids forcing a scroll past a
+     compressed channel list just to reach messages. JS toggles
+     `.wa-shell--conversation-open` based on whether a channel is selected;
+     the in-conversation "Back" button (rendered only at this width via
+     .wa-back-btn) clears the selection to return to the list. */
   .wa-page {
     width: calc(100% - 1rem);
     margin: 0.35rem auto;
@@ -2910,7 +3034,23 @@ input:focus {
   }
 
   .wa-sidebar {
-    max-height: 34%;
+    display: flex;
+  }
+
+  .wa-main {
+    display: none;
+  }
+
+  .wa-shell--conversation-open .wa-sidebar {
+    display: none;
+  }
+
+  .wa-shell--conversation-open .wa-main {
+    display: flex;
+  }
+
+  .wa-back-btn {
+    display: inline-flex;
   }
 }
 
@@ -2984,9 +3124,43 @@ input:focus {
 }
 
 .admin-stat-card h3 {
-  margin: 0;
+  margin: 0.55rem 0 0;
   color: var(--workspace-title);
   font-size: 0.95rem;
+}
+
+/* KPI icon chip — a soft, low-alpha tint of the metric's accent colour
+   (rather than a solid fill) so the cards read as one coherent family while
+   still being individually distinguishable. Each modifier just sets the
+   `--icon-color` custom property; background/foreground derive from it. */
+.admin-stat-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 0.6rem;
+  background: color-mix(in srgb, var(--icon-color) 16%, transparent);
+  color: var(--icon-color);
+}
+
+.admin-stat-icon--reports    { --icon-color: var(--clay); }
+.admin-stat-icon--survivors  { --icon-color: var(--sage); }
+.admin-stat-icon--response   { --icon-color: var(--brown); }
+.admin-stat-icon--legal      { --icon-color: var(--legal-accent); }
+.admin-stat-icon--community  { --icon-color: var(--brown-hover); }
+.admin-stat-icon--harmful    { --icon-color: var(--danger); }
+
+/* Row pairing the icon chip with an optional inline KPI sparkline. */
+.admin-stat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.stat-sparkline {
+  display: block;
+  opacity: 0.85;
 }
 
 .admin-metric {
@@ -3001,11 +3175,20 @@ input:focus {
   font-size: 0.85rem;
 }
 
-.trend.up {
+/* Delta chip — direction-coloured arrow + percentage (Total Reports card,
+   the only KPI with period-over-period trend data from the backend). */
+.stat-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-weight: 700;
+}
+
+.stat-delta.up {
   color: #2a7b50;
 }
 
-.trend.down {
+.stat-delta.down {
   color: #a03030;
 }
 
@@ -3069,46 +3252,64 @@ input:focus {
   stroke: var(--workspace-border);
 }
 
-/* Daily bar — fill is set via SVG gradient attribute; only animate opacity here. */
-.chart-bar {
-  opacity: 1;
-  transition: opacity 0.14s ease, filter 0.14s ease;
+/* Wraps the trend chart's SVG so the hover tooltip can be absolutely
+   positioned relative to it (percentage-based, matching the SVG viewBox). */
+.trend-chart-wrap {
+  position: relative;
+  margin: 0;
 }
 
-.chart-bar:hover {
-  opacity: 0.88;
-  filter: brightness(1.08);
-  cursor: pointer;
+/* Peak-day marker — always visible, independent of hover state. */
+.trend-peak-dot {
+  fill: var(--chart-peak);
+  stroke: var(--workspace-surface);
+  stroke-width: 1.5;
 }
 
-/* Legacy daily polyline — kept for any other chart that still uses it. */
-.line-series {
-  fill: none;
-  stroke: var(--workspace-accent);
-  stroke-width: 3;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+/* Hover crosshair — visual only; pointer events are owned by the
+   transparent interaction rect painted above these in the SVG. */
+.trend-crosshair-line {
+  stroke: var(--workspace-border);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
 }
 
-/* 7-day rolling average trend line — thicker, solid, clearly the primary signal. */
-.line-series-average {
-  fill: none;
-  stroke: #2a7b50;
-  stroke-width: 2.5;
-  stroke-dasharray: 8 5;
-  stroke-linecap: round;
-  opacity: 0.95;
-}
-
-.line-area {
-  fill: rgba(214, 130, 68, 0.16);
-  stroke: none;
-}
-
-.line-point {
-  fill: var(--surface);
-  stroke: var(--workspace-accent);
+.trend-crosshair-dot {
+  fill: var(--workspace-accent);
+  stroke: var(--workspace-surface);
   stroke-width: 2;
+  pointer-events: none;
+}
+
+/* Floating tooltip that follows the crosshair, positioned via inline
+   `left` percentage matching the hovered point's SVG-space x-coordinate. */
+.trend-tooltip {
+  position: absolute;
+  top: 0.4rem;
+  transform: translateX(-50%);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  border: 1px solid var(--workspace-border);
+  border-radius: 0.55rem;
+  background: var(--workspace-surface);
+  box-shadow: var(--shadow-md);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.76rem;
+  color: var(--workspace-text);
+  white-space: nowrap;
+  z-index: 1;
+}
+
+.trend-tooltip strong {
+  color: var(--workspace-title);
+  font-size: 0.82rem;
+}
+
+.trend-tooltip-avg {
+  color: var(--chart-trend);
 }
 
 .chart-grid-line {
@@ -3198,38 +3399,6 @@ input:focus {
 .legend-swatch.swatch-avg {
   background: #2a7b50;
   border-radius: 999px;
-}
-
-/* ── Legacy dot classes kept for any other chart still using them ──────── */
-.legend-dot { width: 0.65rem; height: 0.65rem; border-radius: 999px; display: inline-block; }
-.legend-dot.daily { background: var(--workspace-accent); }
-.legend-dot.avg   { background: #2a7b50; }
-
-/* ── Old summary-card kept as fallback (replaced by chart-stat-chip) ──── */
-.chart-summary-row {
-  margin: 0.7rem 0;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.55rem;
-}
-
-.chart-summary-card {
-  border: 1px solid var(--workspace-border);
-  border-radius: 0.7rem;
-  background: rgba(255, 255, 255, 0.86);
-  padding: 0.55rem 0.65rem;
-}
-
-.chart-summary-card span {
-  color: var(--workspace-text);
-  font-size: 0.76rem;
-}
-
-.chart-summary-card strong {
-  display: block;
-  margin-top: 0.15rem;
-  color: var(--workspace-title);
-  font-size: 0.92rem;
 }
 
 .breakdown-grid {
@@ -3346,8 +3515,15 @@ input:focus {
 }
 
 .admin-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--workspace-surface);
   color: var(--workspace-title);
   font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  font-size: 0.72rem;
 }
 
 .availability-pill {
@@ -3459,7 +3635,7 @@ input:focus {
 }
 
 .admin-table tbody tr:hover td {
-  background: rgba(169, 82, 38, 0.04);
+  background: var(--hover-overlay);
 }
 
 /* ── Admin action button hover ─────────────────────────────────────────── */
@@ -4035,6 +4211,16 @@ input:focus {
   text-align: center;
 }
 
+/* Icon precedes the message inline — kept out of .admin-empty's own layout
+   (some call sites reuse this class as a plain text callout, e.g. a
+   left-aligned case-detail box, so the base rule stays a simple block). */
+.admin-empty svg {
+  display: block;
+  margin: 0 auto 0.4rem;
+  color: var(--workspace-accent);
+  opacity: 0.7;
+}
+
 .admin-workspace {
   min-height: calc(100vh - 1rem);
   padding: 1rem;
@@ -4247,7 +4433,6 @@ input:focus {
   }
 
   .breakdown-grid,
-  .chart-summary-row,
   .reassignment-form,
   .report-filter-row,
   .resource-form-grid {
@@ -4715,83 +4900,6 @@ input:focus {
   margin-top: 0.5rem;
   border-top: 1px solid var(--legal-border);
   padding-top: 0.75rem;
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
-   Dark Mode Theme (Phase 5-F)
-   ───────────────────────────────────────────────────────────────────────── */
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* Surfaces — dark background with warm tones */
-    --warm-white:   #1a1210;
-    --surface:      #231a15;
-    --cream:        #2c2018;
-    --sand:         #3a2a1e;
-
-    /* Text — light colors on dark background */
-    --brown-dark:   #f0e6dc;
-    --body:         #d4c4b8;
-    --muted:        #9e8e82;
-
-    /* Primary action — lighter, warmer */
-    --brown:        #c4855a;
-    --brown-hover:  #d49066;
-
-    /* Accents — adjusted for dark mode */
-    --clay:         #e08060;
-    --sage:         #7aad8a;
-    --sage-soft:    #1e3324;
-
-    /* Semantic — dark mode versions */
-    --danger:       #e05555;
-    --danger-bg:    #3a1a1a;
-    --success:      #4daa72;
-    --success-bg:   #1a3326;
-
-    /* Borders — lighter on dark background */
-    --color-border: rgba(255, 220, 190, 0.12);
-
-    /* Shadows — darker environments need darker shadows */
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-    --shadow-lg: 0 18px 44px rgba(0, 0, 0, 0.5);
-    --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.6);
-
-    /* Focus ring — brighter for dark mode */
-    --focus-ring: 0 0 0 3px rgba(196, 133, 90, 0.45);
-  }
-
-  /* Admin workspace theme variants for dark mode */
-  .admin-workspace.ngo {
-    --workspace-bg:      #1c1410;
-    --workspace-surface: #261c16;
-    --workspace-border:  rgba(200, 140, 90, 0.18);
-    --workspace-accent:  #c4855a;
-    --workspace-title:   #f0dfd0;
-    --workspace-text:    #c4b0a0;
-  }
-
-  /* Community and legal palette overrides for dark mode */
-  :root {
-    --community-border: rgba(150, 180, 255, 0.18);
-    --community-bg:     #0f1a2e;
-    --community-title:  #b0d4ff;
-    --community-text:   #7aafff;
-    --community-muted:  #5a8fcc;
-
-    --legal-border:  #8060a8;
-    --legal-bg:      #1a0f2e;
-    --legal-accent:  #b885d8;
-    --legal-text:    #d4c4b8;
-
-    --status-connected: #2fbf71;
-    --status-session:   #f0a050;
-    --status-offline:   #5a6470;
-
-    --chart-peak:      #e0762e;
-    --chart-peak-soft: #f0905a;
-    --chart-trend:     #4caf7d;
-  }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────

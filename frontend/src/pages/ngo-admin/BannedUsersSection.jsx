@@ -1,5 +1,7 @@
-import { UserCheck } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { UserCheck, Inbox } from "lucide-react";
 import { formatDate, prettifyLabel } from "./helpers";
+import { staggerIn } from "../../utils/motion";
 
 /**
  * BannedUsersSection
@@ -24,6 +26,17 @@ export default function BannedUsersSection({
   liftingBanId,
   onLiftBan
 }) {
+  const tableRef = useRef(null);
+
+  // Stagger the banned-user rows in once the list loads.
+  useEffect(() => {
+    if (!tableRef.current) return;
+    const rows = tableRef.current.querySelectorAll('tbody tr');
+    if (!rows.length) return;
+    const mm = staggerIn(rows, { y: 8, stagger: 0.04 });
+    return () => mm.revert();
+  }, [bannedUsers]);
+
   return (
     <section className="banned-users-section" aria-label="Banned Users">
       <div className="banned-users-header">
@@ -54,11 +67,11 @@ export default function BannedUsersSection({
       )}
 
       {!bannedUsersLoading && bannedUsers.length === 0 && (
-        <p className="admin-empty">No accounts are currently banned.</p>
+        <p className="admin-empty"><Inbox size={18} aria-hidden="true" />No accounts are currently banned.</p>
       )}
 
       {!bannedUsersLoading && bannedUsers.length > 0 && (
-        <div className="admin-table-wrap">
+        <div className="admin-table-wrap" ref={tableRef}>
           <table className="admin-table banned-table">
             <thead>
               <tr>

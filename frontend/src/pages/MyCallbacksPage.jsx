@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Inbox } from "lucide-react";
 import { getMyCallbackRequests, updateUssdCallbackRequest } from "../services/admin";
 import { formatDate, prettifyLabel } from "./ngo-admin/helpers";
+import { staggerIn } from "../utils/motion";
 
 /**
  * MyCallbacksPage
@@ -17,6 +19,16 @@ export default function MyCallbacksPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [updatingId, setUpdatingId] = useState("");
+  const tableRef = useRef(null);
+
+  // Stagger the callback rows in once the list loads.
+  useEffect(() => {
+    if (!tableRef.current) return;
+    const rows = tableRef.current.querySelectorAll('tbody tr');
+    if (!rows.length) return;
+    const mm = staggerIn(rows, { y: 8, stagger: 0.04 });
+    return () => mm.revert();
+  }, [callbacks]);
 
   async function loadCallbacks() {
     setIsLoading(true);
@@ -69,7 +81,7 @@ export default function MyCallbacksPage() {
             auto-assigned to you. Mark a request completed once you've followed up, or
             cancelled if the number is unreachable.
           </p>
-          <div className="admin-table-wrap">
+          <div className="admin-table-wrap" ref={tableRef}>
             <table className="admin-table">
               <thead>
                 <tr>
@@ -130,6 +142,7 @@ export default function MyCallbacksPage() {
           </div>
           {!isLoading && callbacks.length === 0 && (
             <p className="admin-empty" style={{ marginTop: "0.8rem" }}>
+              <Inbox size={18} aria-hidden="true" />
               No callback requests assigned to you yet.
             </p>
           )}

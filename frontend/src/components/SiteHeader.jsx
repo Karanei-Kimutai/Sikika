@@ -5,6 +5,7 @@ import NotificationBell from "./NotificationBell";
 import SikikaLogo from "./SikikaLogo";
 import { getToken } from "../utils/auth";
 import { prettifyLabel } from "../pages/ngo-admin/helpers";
+import { fadeInUp } from "../utils/motion";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
@@ -29,6 +30,7 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
   const [navOpen, setNavOpen] = useState(false);
   const navRef = useRef(null);
   const toggleRef = useRef(null);
+  const headerRef = useRef(null);
   // Tracks the rAF handle so scroll animation can be cancelled cleanly.
   const scrollRafRef = useRef(null);
 
@@ -85,6 +87,20 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
       ...(role === "COUNSELLOR" ? [{ path: "/callbacks", label: "My Callbacks" }] : [])
     ];
   })();
+
+  /** One-time slide-down + fade entrance on first mount only. */
+  useEffect(() => {
+    if (!headerRef.current) return;
+    const mm = fadeInUp(headerRef.current, { y: -10, duration: 0.4 });
+    return () => mm.revert();
+  }, []);
+
+  /** Fade + lift the account popover in each time it opens. */
+  useEffect(() => {
+    if (!menuOpen || !menuRef.current) return;
+    const mm = fadeInUp(menuRef.current, { y: -6, duration: 0.22 });
+    return () => mm.revert();
+  }, [menuOpen]);
 
   /** Close drawer on click outside nav or toggle button */
   useEffect(() => {
@@ -235,7 +251,7 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
   };
 
   return (
-    <header className="site-header">
+    <header ref={headerRef} className="site-header">
       <button type="button" className="brand-mark" onClick={() => onNavigate("/")}>
         <SikikaLogo size={40} className="brand-symbol" decorative />
         <span>

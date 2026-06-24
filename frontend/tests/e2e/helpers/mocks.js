@@ -63,5 +63,8 @@ export async function installBaseApiMocks(page, { maintenanceEnabled = false } =
 }
 
 export async function expectSignedInShell(page) {
-  await expect(page.getByRole('button', { name: 'Sign Out' })).toBeVisible();
+  // Sign Out now lives inside the header's "Account menu" dropdown (no more
+  // standalone Sign Out button), so open it before asserting visibility.
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  await expect(page.getByRole('menuitem', { name: 'Sign Out' })).toBeVisible();
 }

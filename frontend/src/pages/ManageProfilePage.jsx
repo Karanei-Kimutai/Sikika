@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
+import { User, Phone, ShieldCheck } from "lucide-react";
 import { getToken } from "../utils/auth";
+import { fadeInUp } from "../utils/motion";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
@@ -16,8 +18,16 @@ function ManageProfilePage() {
   const [successMessage, setSuccessMessage] = useState("");
   const [profileData, setProfileData] = useState(null);
   const [formValues, setFormValues] = useState({});
+  const shellRef = useRef(null);
 
   const role = useMemo(() => String(profileData?.user?.role || "").toUpperCase(), [profileData]);
+
+  // Subtle entrance once the profile shell mounts.
+  useEffect(() => {
+    if (!shellRef.current) return;
+    const mm = fadeInUp(shellRef.current, { y: 12 });
+    return () => mm.revert();
+  }, []);
 
   useEffect(() => {
     async function loadProfile() {
@@ -107,7 +117,7 @@ function ManageProfilePage() {
 
   return (
     <main className="profile-page">
-      <section className="profile-shell">
+      <section className="profile-shell" ref={shellRef}>
         <header className="profile-header">
           <h1>Manage Profile</h1>
           <p>Review and update the details relevant to your role.</p>
@@ -117,10 +127,10 @@ function ManageProfilePage() {
         {successMessage && <p className="status-message">{successMessage}</p>}
 
         <article className="profile-summary-card">
-          <p><strong>User ID:</strong> {profileData?.user?.userId || "-"}</p>
-          <p><strong>Phone:</strong> {profileData?.user?.phoneNumber || "-"}</p>
-          <p><strong>Role:</strong> {profileData?.user?.role || "-"}</p>
-          <p><strong>Status:</strong> {profileData?.user?.accountStatus || "-"}</p>
+          <p><User size={15} aria-hidden="true" /> <strong>User ID:</strong> {profileData?.user?.userId || "-"}</p>
+          <p><Phone size={15} aria-hidden="true" /> <strong>Phone:</strong> {profileData?.user?.phoneNumber || "-"}</p>
+          <p><ShieldCheck size={15} aria-hidden="true" /> <strong>Role:</strong> {profileData?.user?.role || "-"}</p>
+          <p><ShieldCheck size={15} aria-hidden="true" /> <strong>Status:</strong> {profileData?.user?.accountStatus || "-"}</p>
         </article>
 
         <form className="profile-form" onSubmit={handleSaveProfile}>

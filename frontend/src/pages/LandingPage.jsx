@@ -1,6 +1,7 @@
-import { ArrowRight, CheckCircle2 } from "lucide-react";
-import heroArtwork from "../assets/hero.png";
+import { useEffect, useRef } from "react";
+import { ArrowRight, CheckCircle2, ShieldCheck, EyeOff, DoorOpen } from "lucide-react";
 import SikikaLogo from "../components/SikikaLogo";
+import { staggerIn, revealOnScroll } from "../utils/motion";
 
 /**
  * Public landing page for unregistered visitors.
@@ -29,10 +30,41 @@ const steps = [
   "Access support and community spaces"
 ];
 
+// Reassurance strip shown beneath the hero actions — survivors arriving here
+// need to know immediately that looking is safe before they commit to anything.
+const trustSignals = [
+  { icon: EyeOff, text: "Browse anonymously" },
+  { icon: ShieldCheck, text: "No account needed to look around" },
+  { icon: DoorOpen, text: "Quick Exit always available" }
+];
+
 function LandingPage({ onNavigate }) {
+  const heroRef = useRef(null);
+  const offersRef = useRef(null);
+  const stepsRef = useRef(null);
+
+  // Staged hero entrance: copy column, then visual panel, for a deliberate,
+  // calm reveal rather than everything appearing at once.
+  useEffect(() => {
+    if (!heroRef.current) return;
+    const mm = staggerIn(heroRef.current.children, { y: 16, stagger: 0.12, duration: 0.55 });
+    return () => mm.revert();
+  }, []);
+
+  // Offer tiles and steps reveal once as they scroll into view.
+  useEffect(() => {
+    if (!offersRef.current || !stepsRef.current) return;
+    const mmOffers = revealOnScroll(offersRef.current.children, { stagger: 0.1 });
+    const mmSteps = revealOnScroll(stepsRef.current.children, { stagger: 0.1 });
+    return () => {
+      mmOffers.revert();
+      mmSteps.revert();
+    };
+  }, []);
+
   return (
     <main>
-      <section className="hero-section">
+      <section className="hero-section" ref={heroRef}>
         <div className="hero-copy">
           <p className="eyebrow">Safe access to support</p>
           <h1 className="hero-brand-heading">
@@ -51,14 +83,14 @@ function LandingPage({ onNavigate }) {
               Join Community
             </button>
           </div>
-        </div>
-
-        <div className="hero-visual" aria-hidden="true">
-          <img src={heroArtwork} alt="" />
-          <div className="support-panel">
-            <span>24/7</span>
-            <strong>Emergency contacts and safety planning resources</strong>
-          </div>
+          <ul className="hero-trust-strip">
+            {trustSignals.map(({ icon: Icon, text }) => (
+              <li key={text}>
+                <Icon size={16} aria-hidden="true" />
+                <span>{text}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       </section>
 
@@ -67,7 +99,7 @@ function LandingPage({ onNavigate }) {
           <p className="eyebrow">What we offer</p>
           <h2 id="offer-heading">Support that is easy to find and careful with privacy</h2>
         </div>
-        <div className="offer-grid">
+        <div className="offer-grid" ref={offersRef}>
           {offers.map((offer) => (
             <article className="info-tile" key={offer.title}>
               <h3>{offer.title}</h3>
@@ -82,7 +114,7 @@ function LandingPage({ onNavigate }) {
           <p className="eyebrow">How it works</p>
           <h2 id="how-heading">Start with resources, continue only when you are ready</h2>
         </div>
-        <ol className="steps-list">
+        <ol className="steps-list" ref={stepsRef}>
           {steps.map((step, index) => (
             <li key={step}>
               <CheckCircle2 size={22} aria-hidden="true" className="step-check-icon" />

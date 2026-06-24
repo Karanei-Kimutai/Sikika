@@ -8,13 +8,14 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Archive, ArchiveRestore, MoreHorizontal, Send, Lock, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, ArrowLeft, MoreHorizontal, Send, Lock, Trash2 } from 'lucide-react';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import { getToken } from '../utils/auth';
 import { deriveSharedKey, encryptMessage, decryptMessage } from '../utils/cryptoUtils';
 import { getOrCreateKeyPair } from '../utils/keyStorage';
 import { fetchPublicKey } from '../services/chatKeys';
+import { fadeInUp, staggerIn, pulse } from '../utils/motion';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
@@ -197,6 +198,11 @@ const DirectChatPage = () => {
   const socketRef = useRef(null);
   const inactivityTimerRef = useRef(null);
   const preferredChannelRef = useRef('');
+  const chatListRef = useRef(null);
+  const messagesListRef = useRef(null);
+  const mainPanelRef = useRef(null);
+  const sendBtnRef = useRef(null);
+  const prevMessageCountRef = useRef(0);
 
   useEffect(() => {
     const handleOutsideMenuClick = (event) => {
@@ -553,6 +559,40 @@ const DirectChatPage = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Stagger the sidebar chat list in whenever its contents change (initial
+  // load, or toggling Archive/Trash view) — not on every render, since
+  // re-running this on unrelated state changes would replay it needlessly.
+  useEffect(() => {
+    if (!chatListRef.current) return;
+    const items = chatListRef.current.querySelectorAll('.wa-chat-item');
+    if (!items.length) return;
+    const mm = staggerIn(items, { y: 8, stagger: 0.04 });
+    return () => mm.revert();
+  }, [channels, showArchivedChannels, showDeletedChannels]);
+
+  // Cross-fade the message panel when the active channel changes, so
+  // switching chats reads as a deliberate transition rather than a flicker.
+  useEffect(() => {
+    if (!mainPanelRef.current) return;
+    const mm = fadeInUp(mainPanelRef.current, { y: 6, duration: 0.28 });
+    return () => mm.revert();
+  }, [activeChannelId]);
+
+  // Animate only the newest message bubble in on append — replaying the
+  // whole history on every render would be both wasteful and distracting.
+  useEffect(() => {
+    if (!messagesListRef.current) {
+      prevMessageCountRef.current = messages.length;
+      return;
+    }
+    const rows = messagesListRef.current.querySelectorAll('.wa-row');
+    const isAppend = messages.length > prevMessageCountRef.current && rows.length > 0;
+    prevMessageCountRef.current = messages.length;
+    if (!isAppend) return;
+    const mm = fadeInUp(rows[rows.length - 1], { y: 10, duration: 0.26 });
+    return () => mm.revert();
+  }, [messages]);
+
   /**
    * 4. Encrypt and Dispatch Message
    */
@@ -574,6 +614,7 @@ const DirectChatPage = () => {
         encryptedPayload: encryptedPayload
       });
 
+      if (sendBtnRef.current) pulse(sendBtnRef.current);
     } catch (err) {
       console.error('Failed to encrypt and send message:', err);
     }
@@ -588,7 +629,10 @@ const DirectChatPage = () => {
         </button>
       )}
 
-      <section className="wa-shell" aria-label="Direct chat">
+      {/* `wa-shell--conversation-open` drives the single-pane mobile layout
+          (App.css ≤960px): shows the active conversation instead of the
+          channel list. Inert on wider screens, where both panes are visible. */}
+      <section className={`wa-shell${activeChannelId ? ' wa-shell--conversation-open' : ''}`} aria-label="Direct chat">
         <aside className="wa-sidebar">
           <header className="wa-sidebar-header">
             <h2>Chats</h2>
@@ -606,6 +650,7 @@ const DirectChatPage = () => {
                   title={showArchivedChannels ? 'Hide archived chats' : 'Show archived chats'}
                   aria-label={showArchivedChannels ? 'Hide archived chats' : 'Show archived chats'}
                   aria-pressed={showArchivedChannels}
+                  data-testid="chat-archive-toggle"
                 >
                   <Archive size={16} aria-hidden="true" />
                 </button>
@@ -620,6 +665,7 @@ const DirectChatPage = () => {
                   title={showDeletedChannels ? 'Hide Trash' : 'Show Trash'}
                   aria-label={showDeletedChannels ? 'Hide Trash' : 'Show Trash'}
                   aria-pressed={showDeletedChannels}
+                  data-testid="chat-trash-toggle"
                 >
                   <Trash2 size={16} aria-hidden="true" />
                 </button>
@@ -627,7 +673,7 @@ const DirectChatPage = () => {
             )}
           </header>
 
-          <div className="wa-chat-list">
+          <div className="wa-chat-list" ref={chatListRef}>
             {errorMessage && <p className="wa-error">{errorMessage}</p>}
 
             {channels.map((channel) => (
@@ -700,10 +746,19 @@ const DirectChatPage = () => {
           </div>
         </aside>
 
-        <div className="wa-main">
+        <div className="wa-main" ref={mainPanelRef}>
           {activeChannelId ? (
             <>
               <header className="wa-main-header">
+                {/* Mobile-only: returns to the channel list (hidden ≥960px via App.css). */}
+                <button
+                  type="button"
+                  className="wa-back-btn"
+                  aria-label="Back to chat list"
+                  onClick={() => setActiveChannelId(null)}
+                >
+                  <ArrowLeft size={18} aria-hidden="true" />
+                </button>
                 <div className="wa-header-title">
                   <span className="wa-avatar muted">{currentUserRole === 'survivor' ? 'S' : 'U'}</span>
                   <div>
@@ -722,7 +777,7 @@ const DirectChatPage = () => {
 
               {activeChannel?.asyncDeliveryHint && <p role="alert" className="status-message warning">{activeChannel.asyncDeliveryHint}</p>}
 
-              <div className="wa-messages">
+              <div className="wa-messages" ref={messagesListRef}>
                 {messages.length === 0 ? (
                   <p className="wa-empty-state">Messages in this channel are encrypted end-to-end.</p>
                 ) : (
@@ -754,7 +809,7 @@ const DirectChatPage = () => {
                   onChange={(e) => setNewMessage(e.target.value)}
                   disabled={!cryptoKey}
                 />
-                <button type="submit" className="wa-send-btn" aria-label="Send message" disabled={!cryptoKey || !newMessage.trim()}>
+                <button ref={sendBtnRef} type="submit" className="wa-send-btn" aria-label="Send message" disabled={!cryptoKey || !newMessage.trim()}>
                   <Send size={14} aria-hidden="true" />
                 </button>
               </form>
@@ -769,16 +824,16 @@ const DirectChatPage = () => {
         <div className="wa-chat-options-menu" style={{ top: menuPosition.top, left: menuPosition.left }}>
           {actionMenuChannel.chatChannelStatus === 'deleted' ? (
             /* Trash view: only Restore is available. Delete/Archive are blocked for deleted channels. */
-            <button type="button" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'active')}>
+            <button type="button" data-testid="chat-restore" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'active')}>
               <ArchiveRestore size={14} aria-hidden="true" /> Restore Chat
             </button>
           ) : actionMenuChannel.chatChannelStatus === 'archived' ? (
             /* Archived view: Restore or Delete. */
             <>
-              <button type="button" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'active')}>
+              <button type="button" data-testid="chat-restore" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'active')}>
                 <ArchiveRestore size={14} aria-hidden="true" /> Restore Chat
               </button>
-              <button type="button" className="danger" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'deleted')}>
+              <button type="button" className="danger" data-testid="chat-move-to-trash" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'deleted')}>
                 <Trash2 size={14} aria-hidden="true" /> Move to Trash
               </button>
             </>
@@ -788,7 +843,7 @@ const DirectChatPage = () => {
               <button type="button" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'archived')}>
                 <Archive size={14} aria-hidden="true" /> Archive Chat
               </button>
-              <button type="button" className="danger" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'deleted')}>
+              <button type="button" className="danger" data-testid="chat-move-to-trash" onClick={() => updateChannelStatus(actionMenuChannel.chatId, 'deleted')}>
                 <Trash2 size={14} aria-hidden="true" /> Move to Trash
               </button>
             </>

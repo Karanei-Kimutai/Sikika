@@ -1,5 +1,7 @@
-import { UserCheck, UserX } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { UserCheck, UserX, Inbox } from "lucide-react";
 import { formatNumber, formatDate, prettifyLabel, availabilityClass } from "./helpers";
+import { staggerIn } from "../../utils/motion";
 
 /**
  * TeamCapacitySection
@@ -61,6 +63,27 @@ export default function TeamCapacitySection({
   onUnban,
   onReviewRequest
 }) {
+  const workloadRef = useRef(null);
+  const staffDirectoryRef = useRef(null);
+
+  // Stagger the workload bars in once data has loaded.
+  useEffect(() => {
+    if (!workloadRef.current) return;
+    const rows = workloadRef.current.querySelectorAll('.workload-row');
+    if (!rows.length) return;
+    const mm = staggerIn(rows, { y: 8, stagger: 0.04 });
+    return () => mm.revert();
+  }, [dashboard.staffWorkload]);
+
+  // Stagger the staff directory rows in once data has loaded.
+  useEffect(() => {
+    if (!staffDirectoryRef.current) return;
+    const rows = staffDirectoryRef.current.querySelectorAll('tbody tr');
+    if (!rows.length) return;
+    const mm = staggerIn(rows, { y: 8, stagger: 0.04 });
+    return () => mm.revert();
+  }, [dashboard.staffDirectory]);
+
   return (
     <section className="admin-module-grid" aria-label="Team capacity">
       {/* ── Capacity snapshot ──────────────────────────────────────────── */}
@@ -90,7 +113,7 @@ export default function TeamCapacitySection({
       {/* ── Workload distribution ──────────────────────────────────────── */}
       <article className="admin-panel full-span">
         <h2>Workload Distribution</h2>
-        <div className="stacked-bars">
+        <div className="stacked-bars" ref={workloadRef}>
           {[...(dashboard.staffWorkload?.counsellors || []), ...(dashboard.staffWorkload?.legalCounsel || [])]
             .slice(0, 12)
             .map((staff) => (
@@ -104,14 +127,14 @@ export default function TeamCapacitySection({
             ))}
         </div>
         {(!dashboard.staffWorkload?.counsellors?.length && !dashboard.staffWorkload?.legalCounsel?.length)
-          ? <p className="admin-empty">No staff workload data available yet.</p>
-          : <p className="admin-empty">Bars represent active assigned survivors per staff member.</p>}
+          ? <p className="admin-empty"><Inbox size={18} aria-hidden="true" />No staff workload data available yet.</p>
+          : <p className="admin-note">Bars represent active assigned survivors per staff member.</p>}
       </article>
 
       {/* ── Staff directory ────────────────────────────────────────────── */}
       <article className="admin-panel full-span">
         <h2>Staff Directory</h2>
-        <div className="admin-table-wrap">
+        <div className="admin-table-wrap" ref={staffDirectoryRef}>
           <table className="admin-table">
             <thead>
               <tr>
@@ -225,14 +248,17 @@ export default function TeamCapacitySection({
           </table>
         </div>
         {(dashboard.staffDirectory || []).length === 0 && (
-          <p className="admin-empty" style={{ marginTop: "0.8rem" }}>No staff profiles available yet.</p>
+          <p className="admin-empty" style={{ marginTop: "0.8rem" }}>
+            <Inbox size={18} aria-hidden="true" />
+            No staff profiles available yet.
+          </p>
         )}
       </article>
 
       {/* ── Create staff account ───────────────────────────────────────── */}
       <article className="admin-panel full-span">
         <h2>Create Staff Account</h2>
-        <p className="admin-empty">NGO admins can onboard counsellors, legal counsel, and moderators. New staff must change the temporary password on first login.</p>
+        <p className="admin-note">NGO admins can onboard counsellors, legal counsel, and moderators. New staff must change the temporary password on first login.</p>
         <form className="reassignment-form" onSubmit={onStaffCreate}>
           <label>
             Phone Number
@@ -294,7 +320,7 @@ export default function TeamCapacitySection({
       {/* ── Manual survivor reassignment ───────────────────────────────── */}
       <article className="admin-panel full-span">
         <h2>Manual Survivor Reassignment</h2>
-        <p className="admin-empty">Use this form when a survivor requests a change or staff workload becomes high.</p>
+        <p className="admin-note">Use this form when a survivor requests a change or staff workload becomes high.</p>
         <div className="selection-summary-card">
           <h3>Current Selection</h3>
           <p><strong>Survivor:</strong> {selectedSurvivor ? `${selectedSurvivor.nickname} (${selectedSurvivor.county || "Unknown"})` : "Not selected"}</p>
@@ -439,6 +465,7 @@ export default function TeamCapacitySection({
         </div>
         {reassignmentRequests.length === 0 && (
           <p className="admin-empty" style={{ marginTop: "0.8rem" }}>
+            <Inbox size={18} aria-hidden="true" />
             No reassignment requests found for this filter.
           </p>
         )}

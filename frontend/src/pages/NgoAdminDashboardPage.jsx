@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Inbox } from "lucide-react";
 import AdminWorkspace from "@/components/AdminWorkspace";
 import axios from "axios";
 import {
@@ -838,6 +839,8 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
 
       <div className="maintenance-mode-toggle-bar">
         <span>
+          {/* ON means the platform is in restricted maintenance access, hence the amber dot. */}
+          <span className={`maintenance-dot ${maintenanceMode.enabled ? "maintenance-dot--on" : "maintenance-dot--off"}`} aria-hidden="true" />
           Maintenance Mode: <strong>{maintenanceMode.enabled ? "ON" : "OFF"}</strong>
         </span>
         <button
@@ -845,6 +848,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
           className="secondary-btn"
           onClick={handleToggleMaintenanceMode}
           disabled={maintenanceToggling}
+          data-testid="ngo-maintenance-toggle"
         >
           {maintenanceToggling
             ? "Updating..."
@@ -972,6 +976,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
             <form className="admin-search" onSubmit={handleSearch}>
               <input
                 type="search"
+                autoComplete="off"
                 placeholder="Search by case ID, user ID, or phone number"
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
@@ -1069,6 +1074,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
               <div className="report-filter-row">
                 <input
                   type="search"
+                  autoComplete="off"
                   placeholder="Search report id, category, or status"
                   value={reportFilters.query}
                   onChange={(event) => setReportFilters((prev) => ({ ...prev, query: event.target.value }))}
@@ -1161,7 +1167,9 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
                 </tbody>
               </table>
             </div>
-            {filteredReports.length === 0 && <p className="admin-empty">No reports match the selected filters.</p>}
+            {filteredReports.length === 0 && (
+              <p className="admin-empty"><Inbox size={18} aria-hidden="true" />No reports match the selected filters.</p>
+            )}
           </article>
         </section>
       )}
@@ -1324,7 +1332,10 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
               </table>
             </div>
             {(dashboard.resources || []).length === 0 && (
-              <p className="admin-empty" style={{ marginTop: "0.8rem" }}>No resources have been posted yet.</p>
+              <p className="admin-empty" style={{ marginTop: "0.8rem" }}>
+                <Inbox size={18} aria-hidden="true" />
+                No resources have been posted yet.
+              </p>
             )}
           </article>
 

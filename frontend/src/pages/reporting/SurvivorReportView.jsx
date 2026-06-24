@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Inbox } from "lucide-react";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import {
   createReport,
@@ -259,7 +260,12 @@ export default function SurvivorReportView({
               ))}
             </tbody>
           </table>
-          {reassignmentRequests.length === 0 && <p className="admin-empty" style={{ marginTop: "0.6rem" }}>No reassignment requests submitted yet.</p>}
+          {reassignmentRequests.length === 0 && (
+            <p className="admin-empty" style={{ marginTop: "0.6rem" }}>
+              <Inbox size={18} aria-hidden="true" />
+              No reassignment requests submitted yet.
+            </p>
+          )}
         </div>
       </section>
 
