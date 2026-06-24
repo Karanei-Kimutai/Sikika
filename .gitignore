@@ -9,3 +9,6 @@ frontend/.env
 backend/*.log
 csprojectrelatedfiles/
 .claude
+
+# Local Mermaid working diagrams
+mmd-diagrams/

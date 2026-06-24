@@ -711,6 +711,7 @@ async function reviewReport(req, res) {
       // can be informed without exposing sensitive moderation context in plain UI text.
       // createNotification is called after commit to avoid transaction entanglement.
       req._warnTargetUserId = message.senderUserId;
+      req._warnTargetRoomId = message.roomId;
 
       if (actor.role === "MODERATOR") {
         await incrementModeratorWorkload(actor.userId, transaction);
@@ -736,7 +737,9 @@ async function reviewReport(req, res) {
     createNotification({
       recipientUserId: req._warnTargetUserId,
       message: "A recent community post from your account was reviewed. Please follow community guidelines.",
-      category: "MODERATION_ALERT"
+      category: "MODERATION_ALERT",
+      entityType: "COMMUNITY_ROOM",
+      entityId: req._warnTargetRoomId
     }).catch((err) => console.error("[communityController] warning notification error:", err));
   }
 

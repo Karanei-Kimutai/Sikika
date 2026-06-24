@@ -80,6 +80,28 @@ const InAppNotification = sequelize.define('inAppNotification', {
     type:         DataTypes.DATE,
     defaultValue: DataTypes.NOW,
     comment:      'UTC timestamp of when this notification was created'
+  },
+
+  /**
+   * The type of entity that triggered this notification (e.g. 'CHAT', 'REPORT',
+   * 'COMMUNITY_ROOM', 'CALLBACK_REQUEST'). Paired with relatedEntityId so the
+   * frontend can navigate the user straight to the relevant item on click.
+   * Nullable — older rows and categories with no linkable entity leave this unset.
+   */
+  relatedEntityType: {
+    type:      DataTypes.STRING(30),
+    allowNull: true,
+    comment:   'Entity type this notification refers to, e.g. CHAT, REPORT, COMMUNITY_ROOM, CALLBACK_REQUEST'
+  },
+
+  /**
+   * The UUID of the entity referenced by relatedEntityType (chatId, reportId,
+   * roomId, callbackRequestId, etc). Nullable for the same reasons as above.
+   */
+  relatedEntityId: {
+    type:      DataTypes.STRING(36),
+    allowNull: true,
+    comment:   'UUID of the entity this notification refers to'
   }
 
 }, {

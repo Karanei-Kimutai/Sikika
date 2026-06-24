@@ -125,8 +125,10 @@ async function handleCallback(req, res) {
           return null;
         });
 
+        const callbackRequestId = uuidv4();
+
         await UssdCallbackRequest.create({
-          callbackRequestId: uuidv4(),
+          callbackRequestId,
           requesterPhoneNumber: phoneNumber,
           callbackFulfillmentStatus: 'PENDING',
           assignedCounsellorId: assignedCounsellor?.counsellorId || null
@@ -143,7 +145,9 @@ async function handleCallback(req, res) {
           return createNotificationsBulk(
             ids,
             'A new callback request has been received via USSD.',
-            'CALLBACK_REQUEST'
+            'CALLBACK_REQUEST',
+            'CALLBACK_REQUEST',
+            callbackRequestId
           );
         }).catch((err) => {
           console.error('[USSD] Failed to notify NGO admins of callback request:', err.message);
@@ -156,7 +160,9 @@ async function handleCallback(req, res) {
           createNotification({
             recipientUserId: assignedCounsellor.userId,
             message: 'A new callback request has been assigned to you.',
-            category: 'CALLBACK_REQUEST'
+            category: 'CALLBACK_REQUEST',
+            entityType: 'CALLBACK_REQUEST',
+            entityId: callbackRequestId
           }).catch((err) => {
             console.error('[USSD] Failed to notify assigned counsellor of callback request:', err.message);
           });

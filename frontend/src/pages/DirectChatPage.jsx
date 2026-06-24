@@ -372,7 +372,7 @@ const DirectChatPage = () => {
         const peerPublicKeyJwk = await fetchPublicKey(counterpartUserId);
         if (!peerPublicKeyJwk) {
           setCryptoKey(null);
-          setErrorMessage('Waiting for the other participant to come online for secure key exchange.');
+          setErrorMessage('Secure messaging will unlock once the other participant logs in for the first time to generate their encryption key. This only needs to happen once.');
           return;
         }
 

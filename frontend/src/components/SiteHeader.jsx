@@ -318,7 +318,7 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
         )}
         {/* Notification bell — shown for all authenticated roles.
             Encapsulates its own polling and panel state. */}
-        <NotificationBell isAuthenticated={isAuthenticated} />
+        <NotificationBell isAuthenticated={isAuthenticated} onNavigate={onNavigate} />
         {isAuthenticated && (
           <div className="profile-dropdown">
             <button

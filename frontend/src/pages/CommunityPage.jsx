@@ -43,6 +43,17 @@ function readRoleFromToken() {
   }
 }
 
+// Reads /community?room=<roomId> deep-link parameter when a preferred room is provided
+// (e.g. arriving here via a clicked moderation-alert notification).
+function readPreferredRoomFromUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return String(params.get("room") || "").trim();
+  } catch {
+    return "";
+  }
+}
+
 // Converts potentially invalid timestamps into sortable epoch values.
 function toEpoch(value) {
   const parsed = Date.parse(String(value || ""));
@@ -86,6 +97,9 @@ function CommunityPage() {
   const [joiningRoom, setJoiningRoom] = useState(false);
   const [roomQuery, setRoomQuery] = useState("");
   const activeRoomIdRef = useRef("");
+  // Read once on mount — a deep-linked room should only win the very first
+  // room-list load, not override the user's manual room switches afterward.
+  const preferredRoomRef = useRef(readPreferredRoomFromUrl());
   const messagesViewportRef = useRef(null);
   const roomListRef = useRef(null);
   const communityMainRef = useRef(null);
@@ -123,6 +137,13 @@ function CommunityPage() {
       const nextRooms = sortRoomsByActivity(response.data.rooms || []);
       setRooms(nextRooms);
       setActiveRoomId((current) => {
+        // Deep-link wins exactly once — consume it so later refreshes/polls
+        // fall back to the normal "stay where you are" behavior.
+        const preferred = preferredRoomRef.current;
+        if (preferred) {
+          preferredRoomRef.current = "";
+          if (nextRooms.some((room) => room.roomId === preferred)) return preferred;
+        }
         if (nextRooms.some((room) => room.roomId === current)) return current;
         return nextRooms[0]?.roomId || "";
       });

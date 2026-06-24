@@ -997,6 +997,13 @@ p {
   box-shadow: var(--shadow-md);
 }
 
+/* Briefly draws the eye to a report card landed on via a clicked notification deep-link. */
+.resource-tile--highlighted {
+  border-color: var(--clay);
+  box-shadow: 0 0 0 3px rgba(169, 82, 38, 0.25), var(--shadow-md);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
 .info-tile {
   padding: 1.35rem;
 }
