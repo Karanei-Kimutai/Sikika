@@ -172,6 +172,15 @@ function PageTransition({ path, children }) {
 
 function App() {
   const [currentPath, setCurrentPath] = useState(getCurrentPath);
+  // Full pathname+search, used only as a remount key for the routed page —
+  // currentPath above stays pathname-only for route-matching. Without this,
+  // a notification deep-link that changes only the query string (e.g.
+  // /chat -> /chat?channel=Y while already on /chat) leaves currentPath
+  // unchanged, so React never re-renders and the target page's mount-time
+  // query-param reads never re-run.
+  const [locationVersion, setLocationVersion] = useState(
+    () => window.location.pathname + window.location.search
+  );
   const [isQuickExitCollapsed, setIsQuickExitCollapsed] = useState(false);
   const quickExitIdleTimerRef = useRef(null);
   const isAuthenticated = Boolean(getToken());
@@ -179,7 +188,10 @@ function App() {
   const [maintenanceMode, setMaintenanceMode] = useState({ enabled: false, updatedAt: null });
 
   useEffect(() => {
-    const handlePopState = () => setCurrentPath(getCurrentPath());
+    const handlePopState = () => {
+      setCurrentPath(getCurrentPath());
+      setLocationVersion(window.location.pathname + window.location.search);
+    };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
@@ -226,6 +238,7 @@ function App() {
   const navigate = (path) => {
     window.history.pushState({}, "", path);
     setCurrentPath(getCurrentPath());
+    setLocationVersion(window.location.pathname + window.location.search);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -393,7 +406,12 @@ function App() {
       </button>
       <PageTransition path={finalPath}>
         <Suspense fallback={<RouteLoadingFallback />}>
-          <Page onNavigate={navigate} role={role} onSignOut={handleSignOut} />
+          {/* Keyed by full pathname+search (not just pathname) so a notification
+              deep-link that only changes the query string — e.g. /chat ->
+              /chat?channel=Y while already on /chat — forces a real remount.
+              Pages read deep-link query params (channel/room/reportId) only at
+              mount time by design; a remount is what re-arms that logic. */}
+          <Page key={locationVersion} onNavigate={navigate} role={role} onSignOut={handleSignOut} />
         </Suspense>
       </PageTransition>
     </div>
