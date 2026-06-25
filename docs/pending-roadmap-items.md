@@ -368,3 +368,32 @@ Full design and threat model documented in `docs/e2ee.md`.
   clean dev DB.
 - Tests: `backend/tests/chatPublicKey.test.js` — auth requirements, validation, and
   persistence for both public-key endpoints.
+- Follow-up (see item below): the composer used to hard-block until the counterpart had a
+  registered key; it now queues messages locally and auto-sends once one shows up.
+
+## 12) Direct Chat: don't block sending while the counterpart's E2EE key is missing
+Status: Done
+
+Reported as "can't send a message if the other person isn't online" — root cause was never
+about live presence (async delivery already worked regardless of connectivity); it was that
+a counterpart who has never logged in has no `ecdhPublicKey` registered yet, so no shared key
+could be derived, and the composer was fully `disabled={!cryptoKey}`. This commonly hit
+freshly-provisioned staff accounts and freshly auto-assigned counsellor/legal-counsel pairings.
+
+- Backend: `chatAccessService.getChannelsForParticipant(userId)` resolves all of a user's
+  active channels on either side; `chatController.setPublicKey` calls it after a successful
+  key registration and emits `chatKey:available` (`{ chatId, userId }`) to every channel
+  counterpart's `user:<userId>` Socket.io room (reusing the per-user-room pattern already
+  used for presence/read-receipts).
+- Frontend: `frontend/src/utils/pendingMessageQueue.js` — a `localStorage`-backed, per-`chatId`
+  queue of plaintext (never transmitted) typed before a key exists. `DirectChatPage.jsx`:
+  composer no longer disables on a missing key; a non-blocking banner replaces the old hard
+  error; queued messages render with a "Pending" tag; a flush effect encrypts and sends the
+  queue in order the moment `cryptoKey` becomes derivable (via the socket push, or a 30s
+  polling fallback mirroring `NotificationBell`'s pattern).
+- Doesn't weaken the E2EE threat model: plaintext only ever sits in `localStorage` until it
+  can be encrypted, and same-origin XSS already had IndexedDB access to the private key.
+- Verified with a real (unmocked) Playwright run against the dev backend and demo credentials:
+  composer stays enabled and queues a message while the counsellor has no key, the pending
+  message survives a page reload, and it auto-flushes within seconds of the counsellor
+  completing their first login. Full existing backend suite (113 tests) still passes.

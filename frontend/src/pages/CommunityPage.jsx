@@ -136,14 +136,17 @@ function CommunityPage() {
       });
       const nextRooms = sortRoomsByActivity(response.data.rooms || []);
       setRooms(nextRooms);
+
+      // Deep-link wins exactly once — consume it here, outside the setState
+      // updater below, so that updater stays pure. (React invokes functional
+      // setState updaters twice in dev/StrictMode to detect impure updaters;
+      // mutating this ref inside the updater meant the second invocation saw
+      // an already-cleared ref and silently fell back to the wrong room.)
+      const preferred = preferredRoomRef.current;
+      preferredRoomRef.current = "";
+
       setActiveRoomId((current) => {
-        // Deep-link wins exactly once — consume it so later refreshes/polls
-        // fall back to the normal "stay where you are" behavior.
-        const preferred = preferredRoomRef.current;
-        if (preferred) {
-          preferredRoomRef.current = "";
-          if (nextRooms.some((room) => room.roomId === preferred)) return preferred;
-        }
+        if (preferred && nextRooms.some((room) => room.roomId === preferred)) return preferred;
         if (nextRooms.some((room) => room.roomId === current)) return current;
         return nextRooms[0]?.roomId || "";
       });

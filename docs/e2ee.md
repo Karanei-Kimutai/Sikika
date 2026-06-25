@@ -68,7 +68,13 @@ The private key is generated **non-extractable** (`crypto.subtle.generateKey({ n
 3. **Key derivation** — with the local private key and the counterpart's public key, `deriveSharedKey` runs `crypto.subtle.deriveKey({ name: 'ECDH', public: peerPublicKey }, privateKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])`. Both participants independently compute the *same* AES-GCM key.
 4. **Sending/receiving** — `encryptMessage`/`decryptMessage` are unchanged from before; they only need an AES-GCM `CryptoKey`, regardless of how it was derived.
 
-If a counterpart hasn't loaded the app since registering a public key (e.g. a stale account from before this feature shipped that hasn't logged in again), `fetchPublicKey` returns `null` and the chat surfaces *"Waiting for the other participant to come online for secure key exchange"* instead of falling back to a weaker scheme.
+If a counterpart hasn't ever loaded the app to register a public key (most commonly: a newly-provisioned staff account, or a survivor's just-assigned counsellor/legal counsel who hasn't logged in yet), `fetchPublicKey` returns `null`. Rather than blocking the composer, the chat shows a non-blocking banner and lets the user keep typing — see "Pending-message queue" below.
+
+### Pending-message queue (composing before the counterpart's key exists)
+
+Messages typed while the counterpart's public key isn't registered yet are held client-side in `localStorage` (`frontend/src/utils/pendingMessageQueue.js`, keyed per `chatId`) as plaintext — never transmitted, since there's no key yet to encrypt under. This doesn't weaken the threat model: same-origin XSS already had access to the IndexedDB-stored private key, so a queued plaintext message in `localStorage` adds no new exposure beyond what was already possible.
+
+The composer stays enabled in this state (`DirectChatPage.jsx`), and the message renders with a "Pending" tag instead of the normal delivery ticks. Once the counterpart registers their public key — either pushed in real time via the `chatKey:available` Socket.io event (`backend/src/controllers/chatController.js` `setPublicKey` notifies every channel counterpart after a successful key registration) or picked up by a 30s polling fallback — the queued messages are encrypted and sent automatically, in order, exactly as a normal send would be.
 
 ## Migration note
 
