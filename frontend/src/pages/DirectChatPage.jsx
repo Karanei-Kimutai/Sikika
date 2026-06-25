@@ -6,7 +6,7 @@
  * The backend server only ever handles blind ciphertext payloads.
  */
 
-import { useState, useEffect, useRef, useReducer } from 'react';
+import { useState, useEffect, useRef, useReducer, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Archive, ArchiveRestore, ArrowLeft, MoreHorizontal, Send, Lock, Trash2 } from 'lucide-react';
 import axios from 'axios';
@@ -184,6 +184,11 @@ const DirectChatPage = () => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [cryptoKey, setCryptoKey] = useState(null);
+  // Which chatId `cryptoKey`/`messages`/`keyBanner` were actually derived for.
+  // Read everywhere alongside the raw state below (see effectiveCryptoKey
+  // etc.) so a still-resolving channel switch can never display, encrypt
+  // under, or send with another channel's leftover key/history.
+  const [derivedForChannelId, setDerivedForChannelId] = useState(null);
   const [currentUserId] = useState(initialPayload?.userId || initialPayload?.id || null);
   const [currentUserRole] = useState((initialPayload?.role || '').toString().toLowerCase());
   const [errorMessage, setErrorMessage] = useState('');
@@ -212,6 +217,11 @@ const DirectChatPage = () => {
   const sendBtnRef = useRef(null);
   const prevMessageCountRef = useRef(0);
   const flushInProgressRef = useRef(false);
+  // Tracks the latest activeChannelId synchronously, so an in-flight
+  // establishSecureChannelRef call for a channel the user has since switched
+  // away from can detect that and bail out instead of overwriting the newly
+  // active channel's state with stale data.
+  const activeChannelIdRef = useRef(null);
 
   useEffect(() => {
     const handleOutsideMenuClick = (event) => {
@@ -310,6 +320,22 @@ const DirectChatPage = () => {
   // bumpPendingVersion (on enqueue/flush) just forces this cheap re-read.
   const pendingMessages = activeChannelId ? getPending(activeChannelId) : [];
 
+  // Gate cryptoKey/messages/keyBanner on the channel they were actually
+  // derived for. Without this, a channel switch made while the previous
+  // channel's key derivation or history fetch was still in flight could
+  // display — or worse, encrypt and send under — another channel's stale
+  // key/history for a brief window.
+  const isChannelDataCurrent = derivedForChannelId === activeChannelId;
+  const effectiveCryptoKey = isChannelDataCurrent ? cryptoKey : null;
+  // Memoized so effects keyed on this array (scroll-to-bottom, append
+  // animation) don't re-fire every render just because the `[]` fallback
+  // below is a fresh literal each time isChannelDataCurrent is false.
+  const effectiveMessages = useMemo(
+    () => (isChannelDataCurrent ? messages : []),
+    [isChannelDataCurrent, messages]
+  );
+  const effectiveKeyBanner = isChannelDataCurrent ? keyBanner : '';
+
   const updateChannelStatus = async (chatId, status) => {
     if (!chatId) return;
 
@@ -370,71 +396,94 @@ const DirectChatPage = () => {
     establishSecureChannelRef.current = async (channelId) => {
       if (!channelId || !currentUserId) return;
 
+      // True once the user has switched to a different channel since this
+      // call started — guards every state update below so a slow response
+      // for a channel the user has navigated away from can never clobber
+      // the channel they're now looking at (e.g. one channel's history
+      // overwriting another's after a quick switch).
+      const isStale = () => activeChannelIdRef.current !== channelId;
+
       try {
-      const token = getToken();
-      if (!token) {
-        setErrorMessage('Session expired. Please log in again.');
-        return;
-      }
+        const token = getToken();
+        if (!token) {
+          if (isStale()) return;
+          setErrorMessage('Session expired. Please log in again.');
+          return;
+        }
 
-      // Real E2EE key derivation: ECDH between this user's private key
-      // (IndexedDB, never leaves the browser) and the counterpart's public
-      // key (fetched from the server, which only ever brokers public keys).
-      const channel = channels.find((c) => c.chatId === channelId);
-      const counterpartUserId = channel?.counterpartUserId;
-      if (!counterpartUserId) {
-        setCryptoKey(null);
-        setErrorMessage('Unable to resolve the other participant for this chat.');
-        return;
-      }
+        // Real E2EE key derivation: ECDH between this user's private key
+        // (IndexedDB, never leaves the browser) and the counterpart's public
+        // key (fetched from the server, which only ever brokers public keys).
+        const channel = channels.find((c) => c.chatId === channelId);
+        const counterpartUserId = channel?.counterpartUserId;
+        if (!counterpartUserId) {
+          if (isStale()) return;
+          setCryptoKey(null);
+          setMessages([]);
+          setDerivedForChannelId(channelId);
+          setErrorMessage('Unable to resolve the other participant for this chat.');
+          return;
+        }
 
-      const peerPublicKeyJwk = await fetchPublicKey(counterpartUserId);
-      if (!peerPublicKeyJwk) {
-        setCryptoKey(null);
-        setKeyBanner('Secure messaging setup is still pending on the other side — you can keep typing. Your messages will be sent automatically as soon as they log in for the first time.');
-        return;
-      }
+        const peerPublicKeyJwk = await fetchPublicKey(counterpartUserId);
+        if (isStale()) return;
+        if (!peerPublicKeyJwk) {
+          setCryptoKey(null);
+          setMessages([]);
+          setDerivedForChannelId(channelId);
+          setKeyBanner('Secure messaging setup is still pending on the other side — you can keep typing. Your messages will be sent automatically as soon as they log in for the first time.');
+          return;
+        }
 
-      const { privateKey } = await getOrCreateKeyPair(currentUserId);
-      const key = await deriveSharedKey(privateKey, peerPublicKeyJwk);
-      setCryptoKey(key);
-      setKeyBanner('');
+        const { privateKey } = await getOrCreateKeyPair(currentUserId);
+        const key = await deriveSharedKey(privateKey, peerPublicKeyJwk);
+        if (isStale()) return;
+        // Not paired with setDerivedForChannelId yet — history is still
+        // loading, so effectiveCryptoKey (gated on derivedForChannelId)
+        // stays null until the final setMessages below lands alongside it.
+        setCryptoKey(key);
+        setKeyBanner('');
 
-      // History endpoint returns ciphertext; decrypt client-side only.
-      const response = await axios.get(`${API_BASE_URL}/api/chat/${channelId}/messages`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+        // History endpoint returns ciphertext; decrypt client-side only.
+        const response = await axios.get(`${API_BASE_URL}/api/chat/${channelId}/messages`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (isStale()) return;
 
-      const history = Array.isArray(response.data) ? response.data : [];
-      const decryptedHistory = await Promise.all(
-        history.map(async (dbMessage) => ({
-          messageId: dbMessage.messageId,
-          senderUserId: dbMessage.senderUserId,
-          // Failed decrypts are handled in cryptoUtils with a readable marker.
-          plaintext: await decryptMessage(dbMessage.encryptedMessageContent, key),
-          isMine: dbMessage.senderUserId === currentUserId,
-          senderLabel:
-            dbMessage.senderUserId === currentUserId
-              ? roleLabelFromSession(currentUserRole)
-              : peerRoleLabelFromSession(currentUserRole),
-          // Carry delivery/seen timestamps so ticks render correctly on history load.
-          deliveredAt: dbMessage.deliveredAt || null,
-          seenAt: dbMessage.seenAt || null,
-          sentAt: dbMessage.messageDispatchTimestamp || null
-        }))
-      );
+        const history = Array.isArray(response.data) ? response.data : [];
+        const decryptedHistory = await Promise.all(
+          history.map(async (dbMessage) => ({
+            messageId: dbMessage.messageId,
+            senderUserId: dbMessage.senderUserId,
+            // Failed decrypts are handled in cryptoUtils with a readable marker.
+            plaintext: await decryptMessage(dbMessage.encryptedMessageContent, key),
+            isMine: dbMessage.senderUserId === currentUserId,
+            senderLabel:
+              dbMessage.senderUserId === currentUserId
+                ? roleLabelFromSession(currentUserRole)
+                : peerRoleLabelFromSession(currentUserRole),
+            // Carry delivery/seen timestamps so ticks render correctly on history load.
+            deliveredAt: dbMessage.deliveredAt || null,
+            seenAt: dbMessage.seenAt || null,
+            sentAt: dbMessage.messageDispatchTimestamp || null
+          }))
+        );
+        if (isStale()) return;
 
-      const demoTranscriptEnabled = String(import.meta.env.VITE_ENABLE_CHAT_DEMO_TRANSCRIPT || '').toLowerCase() === 'true';
-      const shouldAddDemoTranscript = import.meta.env.DEV && demoTranscriptEnabled && decryptedHistory.length < 8;
-      // Demo transcript is now explicit opt-in to avoid confusing real user timelines.
-      setMessages(
-        shouldAddDemoTranscript
-          ? [...decryptedHistory, ...buildDemoTranscript(currentUserRole)]
-          : decryptedHistory
-      );
+        const demoTranscriptEnabled = String(import.meta.env.VITE_ENABLE_CHAT_DEMO_TRANSCRIPT || '').toLowerCase() === 'true';
+        const shouldAddDemoTranscript = import.meta.env.DEV && demoTranscriptEnabled && decryptedHistory.length < 8;
+        // Demo transcript is now explicit opt-in to avoid confusing real user timelines.
+        setMessages(
+          shouldAddDemoTranscript
+            ? [...decryptedHistory, ...buildDemoTranscript(currentUserRole)]
+            : decryptedHistory
+        );
+        setDerivedForChannelId(channelId);
       } catch (error) {
+        if (isStale()) return;
         setCryptoKey(null);
         setMessages([]);
+        setDerivedForChannelId(channelId);
         setErrorMessage(error.response?.data?.error || 'Failed to establish secure chat session.');
       }
     };
@@ -448,6 +497,10 @@ const DirectChatPage = () => {
    * below) and bumped via pendingVersion, so no setState happens synchronously
    * inside this effect.
    */
+  useEffect(() => {
+    activeChannelIdRef.current = activeChannelId;
+  }, [activeChannelId]);
+
   useEffect(() => {
     if (!activeChannelId || !currentUserId) return;
 
@@ -486,21 +539,21 @@ const DirectChatPage = () => {
    * Mirrors the poll-plus-socket-push pattern already used by NotificationBell.
    */
   useEffect(() => {
-    if (!activeChannelId || cryptoKey) return;
+    if (!activeChannelId || effectiveCryptoKey) return;
 
     const intervalId = window.setInterval(() => {
       establishSecureChannelRef.current(activeChannelId);
     }, 30000);
 
     return () => window.clearInterval(intervalId);
-  }, [activeChannelId, cryptoKey]);
+  }, [activeChannelId, effectiveCryptoKey]);
 
   /**
    * 2d. Flush the pending queue once a key becomes derivable — encrypts and
    * sends queued plaintext in order, exactly as a normal send would.
    */
   useEffect(() => {
-    if (!cryptoKey || !activeChannelId || flushInProgressRef.current) return;
+    if (!effectiveCryptoKey || !activeChannelId || flushInProgressRef.current) return;
 
     const pending = getPending(activeChannelId);
     if (pending.length === 0) return;
@@ -510,7 +563,7 @@ const DirectChatPage = () => {
     (async () => {
       for (const entry of pending) {
         try {
-          const encryptedPayload = await encryptMessage(entry.plaintext, cryptoKey);
+          const encryptedPayload = await encryptMessage(entry.plaintext, effectiveCryptoKey);
           socketRef.current?.emit('sendEncryptedMessage', {
             chatId: activeChannelId,
             encryptedPayload
@@ -524,13 +577,13 @@ const DirectChatPage = () => {
       }
       flushInProgressRef.current = false;
     })();
-  }, [cryptoKey, activeChannelId]);
+  }, [effectiveCryptoKey, activeChannelId]);
 
   /**
    * 3. Listen for Incoming Live Messages
    */
   useEffect(() => {
-    if (!cryptoKey || !currentUserId || !activeChannelId) return;
+    if (!effectiveCryptoKey || !currentUserId || !activeChannelId) return;
 
     // ── receiveMessage — new incoming or echoed outgoing message ──────────────
     const handleNewMessage = async (dbMessage) => {
@@ -538,7 +591,7 @@ const DirectChatPage = () => {
       if (dbMessage.chatId !== activeChannelId) return;
 
       // Decrypt the incoming ciphertext payload
-      const plaintext = await decryptMessage(dbMessage.encryptedMessageContent, cryptoKey);
+      const plaintext = await decryptMessage(dbMessage.encryptedMessageContent, effectiveCryptoKey);
 
       const decryptedMsg = {
         messageId: dbMessage.messageId,
@@ -611,7 +664,7 @@ const DirectChatPage = () => {
       socketRef.current?.off('message:delivered', handleMessageDelivered);
       socketRef.current?.off('message:seen', handleMessageSeen);
     };
-  }, [activeChannelId, cryptoKey, currentUserId, currentUserRole]);
+  }, [activeChannelId, effectiveCryptoKey, currentUserId, currentUserRole]);
 
   useEffect(() => {
     const markRead = async () => {
@@ -631,7 +684,7 @@ const DirectChatPage = () => {
     };
 
     markRead();
-  }, [activeChannelId, messages.length]);
+  }, [activeChannelId, effectiveMessages.length]);
 
   useEffect(() => {
     const activateMaskLater = () => {
@@ -661,7 +714,7 @@ const DirectChatPage = () => {
   // Auto-scroll to latest message
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [effectiveMessages]);
 
   // Stagger the sidebar chat list in whenever its contents change (initial
   // load, or toggling Archive/Trash view) — not on every render, since
@@ -686,16 +739,16 @@ const DirectChatPage = () => {
   // whole history on every render would be both wasteful and distracting.
   useEffect(() => {
     if (!messagesListRef.current) {
-      prevMessageCountRef.current = messages.length;
+      prevMessageCountRef.current = effectiveMessages.length;
       return;
     }
     const rows = messagesListRef.current.querySelectorAll('.wa-row');
-    const isAppend = messages.length > prevMessageCountRef.current && rows.length > 0;
-    prevMessageCountRef.current = messages.length;
+    const isAppend = effectiveMessages.length > prevMessageCountRef.current && rows.length > 0;
+    prevMessageCountRef.current = effectiveMessages.length;
     if (!isAppend) return;
     const mm = fadeInUp(rows[rows.length - 1], { y: 10, duration: 0.26 });
     return () => mm.revert();
-  }, [messages]);
+  }, [effectiveMessages]);
 
   /**
    * 4. Encrypt and Dispatch Message
@@ -708,10 +761,11 @@ const DirectChatPage = () => {
     const plaintext = newMessage;
     setNewMessage(''); // Clear input
 
-    if (!cryptoKey) {
-      // Counterpart hasn't completed one-time key setup yet — hold the
-      // message locally instead of blocking the composer. It auto-sends
-      // once a key becomes derivable (see the flush effect above).
+    if (!effectiveCryptoKey) {
+      // Counterpart hasn't completed one-time key setup yet (or this
+      // channel's key is still being derived after a switch) — hold the
+      // message locally instead of sending under a stale/wrong key. It
+      // auto-sends once a key becomes derivable (see the flush effect above).
       enqueuePending(activeChannelId, plaintext);
       bumpPendingVersion();
       if (sendBtnRef.current) pulse(sendBtnRef.current);
@@ -720,7 +774,7 @@ const DirectChatPage = () => {
 
     try {
       // Encrypt the message before it ever touches the network
-      const encryptedPayload = await encryptMessage(plaintext, cryptoKey);
+      const encryptedPayload = await encryptMessage(plaintext, effectiveCryptoKey);
 
       // Emit the ciphertext payload over WebSockets
       socketRef.current?.emit('sendEncryptedMessage', {
@@ -890,15 +944,15 @@ const DirectChatPage = () => {
               </header>
 
               {activeChannel?.asyncDeliveryHint && <p role="alert" className="status-message warning">{activeChannel.asyncDeliveryHint}</p>}
-              {keyBanner && <p role="status" className="status-message warning">{keyBanner}</p>}
+              {effectiveKeyBanner && <p role="status" className="status-message warning">{effectiveKeyBanner}</p>}
 
               <div className="wa-messages" ref={messagesListRef}>
-                {messages.length === 0 && pendingMessages.length === 0 ? (
+                {effectiveMessages.length === 0 && pendingMessages.length === 0 ? (
                   <p className="wa-empty-state">Messages in this channel are encrypted end-to-end.</p>
                 ) : (
                   <>
                     {/* Render deterministic order from API + realtime appends. */}
-                    {messages.map((msg) => (
+                    {effectiveMessages.map((msg) => (
                       <div key={msg.messageId} className={`wa-row ${msg.isMine ? 'mine' : 'theirs'}`}>
                         <div className={`wa-bubble ${msg.isMine ? 'mine' : 'theirs'}`}>
                           <small className="wa-msg-role">{msg.senderLabel || (msg.isMine ? 'You' : 'Peer')}</small>
