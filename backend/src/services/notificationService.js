@@ -51,9 +51,12 @@ function setNotificationIo(io) {
  * @param {string} opts.recipientUserId  - UserAccount.userId of the recipient.
  * @param {string} opts.message          - Discreet notification message (≤255 chars).
  * @param {string} [opts.category]       - notificationCategoryType (default 'REPORT_UPDATE').
+ * @param {string} [opts.entityType]     - relatedEntityType, e.g. 'CHAT', 'REPORT' — lets the
+ *                                          frontend deep-link the notification to its source.
+ * @param {string} [opts.entityId]       - relatedEntityId — UUID of the entity referenced above.
  * @returns {Promise<import('../models').InAppNotification>} The persisted row.
  */
-async function createNotification({ recipientUserId, message, category = 'REPORT_UPDATE' }) {
+async function createNotification({ recipientUserId, message, category = 'REPORT_UPDATE', entityType = null, entityId = null }) {
   const notificationId = randomUUID();
   const createdAt = new Date();
 
@@ -63,7 +66,9 @@ async function createNotification({ recipientUserId, message, category = 'REPORT
     notificationCategoryType: category,
     discreetNotificationMessage: message,
     notificationReadStatus: 'UNREAD',
-    notificationCreationTimestamp: createdAt
+    notificationCreationTimestamp: createdAt,
+    relatedEntityType: entityType,
+    relatedEntityId: entityId
   });
 
   // Push to the recipient's personal socket room for zero-latency badge updates.
@@ -75,7 +80,9 @@ async function createNotification({ recipientUserId, message, category = 'REPORT
       notificationId,
       category,
       message,
-      createdAt: createdAt.toISOString()
+      createdAt: createdAt.toISOString(),
+      entityType,
+      entityId
     });
   } else {
     // io not yet wired — only expected during test runs or very early startup.
@@ -95,12 +102,14 @@ async function createNotification({ recipientUserId, message, category = 'REPORT
  * @param {string[]} recipientUserIds - Array of UserAccount.userId values.
  * @param {string}   message          - Discreet notification message.
  * @param {string}   [category]       - notificationCategoryType.
+ * @param {string}   [entityType]     - relatedEntityType, forwarded to createNotification.
+ * @param {string}   [entityId]       - relatedEntityId, forwarded to createNotification.
  * @returns {Promise<void>}
  */
-async function createNotificationsBulk(recipientUserIds, message, category = 'REPORT_UPDATE') {
+async function createNotificationsBulk(recipientUserIds, message, category = 'REPORT_UPDATE', entityType = null, entityId = null) {
   await Promise.all(
     recipientUserIds.map((recipientUserId) =>
-      createNotification({ recipientUserId, message, category }).catch((err) =>
+      createNotification({ recipientUserId, message, category, entityType, entityId }).catch((err) =>
         console.error('[notificationService] bulk notify failed for', recipientUserId, err)
       )
     )

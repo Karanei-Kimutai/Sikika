@@ -111,7 +111,8 @@ async function createDiscreetNotifications(channel, senderUserId) {
 
   // Notify every participant except the sender with privacy-safe copy.
   // createNotificationsBulk also pushes `notification:new` via Socket.io for instant badge updates.
-  await createNotificationsBulk(recipients, 'You have a new update.', 'NEW_MESSAGE');
+  // entityType/entityId let the frontend deep-link the notification straight to this conversation.
+  await createNotificationsBulk(recipients, 'You have a new update.', 'NEW_MESSAGE', 'CHAT', channel.chatId);
 }
 
 /**

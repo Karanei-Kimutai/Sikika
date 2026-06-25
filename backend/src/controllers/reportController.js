@@ -181,14 +181,15 @@ async function notifyStakeholders({
   actorUserId,
   survivorMessage,
   staffMessage,
-  category = "REPORT_UPDATE"
+  category = "REPORT_UPDATE",
+  entityId = null
 }) {
   const stakeholderIds = await getReportStakeholderUserIds(survivorId);
 
   if (survivorMessage) {
     const survivor = await SurvivorProfile.findByPk(survivorId, { attributes: ["userId"] });
     if (survivor?.userId) {
-      await createNotification({ recipientUserId: survivor.userId, message: survivorMessage, category });
+      await createNotification({ recipientUserId: survivor.userId, message: survivorMessage, category, entityType: "REPORT", entityId });
     }
   }
 
@@ -204,7 +205,7 @@ async function notifyStakeholders({
   }
 
   // Fan-out runs in parallel to avoid serial notification delays on write paths.
-  await createNotificationsBulk([...stakeholderIds], staffMessage, category);
+  await createNotificationsBulk([...stakeholderIds], staffMessage, category, "REPORT", entityId);
 }
 
 async function getActorContext(req) {
@@ -402,7 +403,8 @@ async function createReport(req, res) {
     survivorId: actor.survivorId,
     actorUserId: actor.userId,
     staffMessage: "A new submission requires attention",
-    category: "NEW_SUBMISSION"
+    category: "NEW_SUBMISSION",
+    entityId: report.reportId
   });
 
   return res.status(201).json({ report: toApiReport(report) });
@@ -536,7 +538,8 @@ async function updateOwnReport(req, res) {
     survivorId: report.survivorId,
     actorUserId: actor.userId,
     staffMessage: "A request has been updated",
-    category: "REPORT_UPDATE"
+    category: "REPORT_UPDATE",
+    entityId: report.reportId
   });
 
   return res.json({ report: toApiReport(report) });
@@ -572,7 +575,8 @@ async function withdrawReport(req, res) {
     survivorId: report.survivorId,
     actorUserId: actor.userId,
     staffMessage: "A request has been updated",
-    category: "REPORT_UPDATE"
+    category: "REPORT_UPDATE",
+    entityId: report.reportId
   });
 
   return res.json({
@@ -610,7 +614,8 @@ async function deleteOwnReport(req, res) {
     survivorId: report.survivorId,
     actorUserId: actor.userId,
     staffMessage: "A request has been withdrawn",
-    category: "REPORT_UPDATE"
+    category: "REPORT_UPDATE",
+    entityId: report.reportId
   });
 
   return res.json({ message: "Report deleted successfully." });
@@ -706,7 +711,8 @@ async function updateReportStatus(req, res) {
     actorUserId: actor.userId,
     survivorMessage: "Your request has been updated",
     staffMessage: "A request status has been updated",
-    category: "REPORT_UPDATE"
+    category: "REPORT_UPDATE",
+    entityId: report.reportId
   });
 
   const refreshed = await fetchReportById(report.reportId);
@@ -769,7 +775,8 @@ async function uploadEvidence(req, res) {
     survivorId: report.survivorId,
     actorUserId: actor.userId,
     staffMessage: "New files were added to a request",
-    category: "REPORT_UPDATE"
+    category: "REPORT_UPDATE",
+    entityId: report.reportId
   });
 
   return res.status(201).json({ evidence: toApiEvidence(evidence) });

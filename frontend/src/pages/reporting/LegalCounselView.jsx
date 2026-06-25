@@ -9,6 +9,7 @@ import {
   generateLegalCaseDocument,
   getLegalCaseDocumentUrl
 } from "../../services/legalCases";
+import useReportHighlight from "./useReportHighlight";
 
 const STATUS_OPTIONS = [
   "SUBMITTED", "UNDER_REVIEW", "ACTIVE_SUPPORT", "UNDER_INVESTIGATION",
@@ -32,11 +33,13 @@ const CASE_NEXT_STATUSES = {
  *
  * @param {{ reports: object[], loading: boolean,
  *   loadReports: Function,
- *   setErrorMessage: Function, setSuccessMessage: Function }} props
+ *   setErrorMessage: Function, setSuccessMessage: Function,
+ *   highlightReportId: string }} props
  */
 export default function LegalCounselView({
-  reports, loading, loadReports, setErrorMessage, setSuccessMessage
+  reports, loading, loadReports, setErrorMessage, setSuccessMessage, highlightReportId
 }) {
+  const highlightedId = useReportHighlight(reports, highlightReportId);
   const [reportStatusMap, setReportStatusMap] = useState({});
   const [openingEvidenceId, setOpeningEvidenceId] = useState("");
 
@@ -178,7 +181,11 @@ export default function LegalCounselView({
   return (
     <section className="resource-grid" aria-label="Assigned legal cases">
       {reports.map((report) => (
-        <article className="resource-tile" key={report.reportId}>
+        <article
+          className={`resource-tile${report.reportId === highlightedId ? " resource-tile--highlighted" : ""}`}
+          id={`report-${report.reportId}`}
+          key={report.reportId}
+        >
           <div>
             <span className="resource-category">{formatStatus(report.reportStatus)}</span>
             <h2>{report.category}</h2>

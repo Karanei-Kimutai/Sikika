@@ -22,6 +22,21 @@ function decodeTokenRole() {
 }
 
 /**
+ * Reads /reports?reportId=<id> deep-link parameter, e.g. arriving here via a
+ * clicked report-update notification — lets the sub-views scroll to and
+ * highlight that specific report once the list loads.
+ * @returns {string}
+ */
+function readHighlightReportIdFromUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return String(params.get("reportId") || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+/**
  * ReportingPage
  * -------------
  * Thin role-router for the /reports path. Responsibilities:
@@ -35,6 +50,7 @@ function decodeTokenRole() {
 function ReportingPage({ onNavigate }) {
   const isAuthenticated = Boolean(getToken());
   const role = useMemo(() => decodeTokenRole(), []);
+  const highlightReportId = useMemo(() => readHighlightReportIdFromUrl(), []);
 
   const [reports, setReports] = useState([]);
   // Start loading=false for unauthenticated visitors (they see the intercept screen).
@@ -71,7 +87,7 @@ function ReportingPage({ onNavigate }) {
     return <UnauthReportIntercept onNavigate={onNavigate} />;
   }
 
-  const sharedProps = { reports, loading, loadReports, setErrorMessage, setSuccessMessage };
+  const sharedProps = { reports, loading, loadReports, setErrorMessage, setSuccessMessage, highlightReportId };
 
   const renderView = () => {
     if (role === "SURVIVOR") return <SurvivorReportView {...sharedProps} onNavigate={onNavigate} />;

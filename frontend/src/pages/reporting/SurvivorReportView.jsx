@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Inbox } from "lucide-react";
+import useReportHighlight from "./useReportHighlight";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import {
   createReport,
@@ -24,12 +25,13 @@ import {
  * @param {{ reports: object[], loading: boolean, errorMessage: string,
  *   successMessage: string, loadReports: Function,
  *   setErrorMessage: Function, setSuccessMessage: Function,
- *   onNavigate: Function }} props
+ *   onNavigate: Function, highlightReportId: string }} props
  */
 export default function SurvivorReportView({
   reports, loading, loadReports, onNavigate,
-  setErrorMessage, setSuccessMessage
+  setErrorMessage, setSuccessMessage, highlightReportId
 }) {
+  const highlightedId = useReportHighlight(reports, highlightReportId);
   // ── Create report form state ──────────────────────────────────────────────
   const [category, setCategory] = useState("");
   const [severityLevel, setSeverityLevel] = useState("MEDIUM");
@@ -281,7 +283,11 @@ export default function SurvivorReportView({
       ) : (
         <section className="resource-grid" aria-label="Incident reports list">
           {reports.map((report) => (
-            <article className="resource-tile" key={report.reportId}>
+            <article
+              className={`resource-tile${report.reportId === highlightedId ? " resource-tile--highlighted" : ""}`}
+              id={`report-${report.reportId}`}
+              key={report.reportId}
+            >
               <div>
                 <span className="resource-category">{formatStatus(report.reportStatus)}</span>
                 <h2>{report.category}</h2>

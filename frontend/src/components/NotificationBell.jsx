@@ -50,6 +50,61 @@ function getCategoryLabel(category) {
 }
 
 /**
+ * decodeRoleFromToken
+ * -------------------
+ * Reads the role claim out of the stored JWT without a network call.
+ * Mirrors the same inline pattern used in App.jsx/ReportingPage.jsx — this
+ * project has no shared auth-decoding util, so each consumer decodes locally.
+ *
+ * @returns {string} Uppercased role string, or "" when unauthenticated.
+ */
+function decodeRoleFromToken() {
+  const token = getToken();
+  if (!token) return "";
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return String(payload.role || "").toUpperCase();
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * resolveNotificationPath
+ * ------------------------
+ * Maps a notification's category + related entity to the in-app route that
+ * shows the thing it's about, so clicking a row can navigate there directly.
+ * Falls back to the bare page when relatedEntityId is missing (e.g. rows
+ * created before this field existed) — still useful, just not item-specific.
+ * Returns null for categories with nothing to navigate to (e.g. ASSIGNMENT,
+ * which has no active notification-creation path in the backend today).
+ *
+ * @param {object} notification - Row with notificationCategoryType + relatedEntityId.
+ * @returns {string|null}
+ */
+function resolveNotificationPath(notification) {
+  const category = notification.notificationCategoryType;
+  const entityId = notification.relatedEntityId;
+
+  switch (category) {
+    case "NEW_MESSAGE":
+      return entityId ? `/chat?channel=${entityId}` : "/chat";
+    case "REPORT_UPDATE":
+    case "NEW_SUBMISSION":
+      return entityId ? `/reports?reportId=${entityId}` : "/reports";
+    case "MODERATION_ALERT":
+      return entityId ? `/community?room=${entityId}` : "/community";
+    case "CALLBACK_REQUEST":
+      // NGO Admin's USSD callback queue lives at a different route than the
+      // counsellor's "My Callbacks" page — the role-based route maps in
+      // App.jsx resolve each to the correct dashboard section.
+      return decodeRoleFromToken() === "NGO_ADMIN" ? "/ussd-callbacks" : "/callbacks";
+    default:
+      return null;
+  }
+}
+
+/**
  * NotificationBell
  * ----------------
  * Header bell button with unread badge and a dropdown notification panel.
@@ -71,8 +126,10 @@ function getCategoryLabel(category) {
  *
  * Props:
  * @prop {boolean} isAuthenticated - If false, the bell is not rendered.
+ * @prop {Function} onNavigate - App.jsx's pushState navigator; used to jump to
+ *   the chat/report/room/etc. a notification refers to when its row is clicked.
  */
-function NotificationBell({ isAuthenticated }) {
+function NotificationBell({ isAuthenticated, onNavigate }) {
   /** Integer unread count driving the badge display. */
   const [unreadCount, setUnreadCount] = useState(0);
 
@@ -140,7 +197,9 @@ function NotificationBell({ isAuthenticated }) {
           notificationCategoryType: payload.category,
           discreetNotificationMessage: payload.message,
           notificationReadStatus: "UNREAD",
-          notificationCreationTimestamp: payload.createdAt
+          notificationCreationTimestamp: payload.createdAt,
+          relatedEntityType: payload.entityType,
+          relatedEntityId: payload.entityId
         },
         ...prev
       ];
@@ -215,36 +274,43 @@ function NotificationBell({ isAuthenticated }) {
   // ── Notification actions ─────────────────────────────────────────────────
   /**
    * handleRowClick
-   * Marks the notification as READ and decrements the badge.
-   * Optimistically updates local state before awaiting the server call.
+   * Marks the notification as READ (if not already), decrements the badge,
+   * then navigates to the chat/report/room/etc. it refers to and closes the
+   * panel. Optimistically updates local state before awaiting the server call.
    *
    * @param {object} notification - The notification row object.
    */
   async function handleRowClick(notification) {
-    if (notification.notificationReadStatus === "READ") return; // Already read.
-
-    // Optimistic local update — feel instant to the user.
-    setNotifications((prev) =>
-      prev.map((n) =>
-        n.notificationId === notification.notificationId
-          ? { ...n, notificationReadStatus: "READ" }
-          : n
-      )
-    );
-    setUnreadCount((prev) => Math.max(0, prev - 1));
-
-    try {
-      await markNotificationRead(notification.notificationId);
-    } catch {
-      // On failure, revert the optimistic update so the state stays consistent.
+    if (notification.notificationReadStatus !== "READ") {
+      // Optimistic local update — feel instant to the user.
       setNotifications((prev) =>
         prev.map((n) =>
           n.notificationId === notification.notificationId
-            ? { ...n, notificationReadStatus: "UNREAD" }
+            ? { ...n, notificationReadStatus: "READ" }
             : n
         )
       );
-      setUnreadCount((prev) => prev + 1);
+      setUnreadCount((prev) => Math.max(0, prev - 1));
+
+      try {
+        await markNotificationRead(notification.notificationId);
+      } catch {
+        // On failure, revert the optimistic update so the state stays consistent.
+        setNotifications((prev) =>
+          prev.map((n) =>
+            n.notificationId === notification.notificationId
+              ? { ...n, notificationReadStatus: "UNREAD" }
+              : n
+          )
+        );
+        setUnreadCount((prev) => prev + 1);
+      }
+    }
+
+    const path = resolveNotificationPath(notification);
+    if (path && onNavigate) {
+      setPanelOpen(false);
+      onNavigate(path);
     }
   }
 

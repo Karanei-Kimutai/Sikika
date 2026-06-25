@@ -233,6 +233,20 @@ async function ensureSchemaCompatibility(sequelize) {
   );
   results.push(`assignedCounsellorId=${assignedCounsellorId}`);
 
+  // ── Column: inAppNotification.relatedEntityType ───────────────────────────
+  // Lets the notification panel link back to the chat/report/room/callback
+  // that triggered it instead of just showing a discreet message with no target.
+  const relatedEntityType = await ensureColumnExists(
+    sequelize, "inAppNotification", "relatedEntityType", "VARCHAR(30) NULL"
+  );
+  results.push(`relatedEntityType=${relatedEntityType}`);
+
+  // ── Column: inAppNotification.relatedEntityId ──────────────────────────────
+  const relatedEntityId = await ensureColumnExists(
+    sequelize, "inAppNotification", "relatedEntityId", "VARCHAR(36) NULL"
+  );
+  results.push(`relatedEntityId=${relatedEntityId}`);
+
   // Single structured log line for observability.
   // Each token is "name=applied|skipped". "applied" means a change was made;
   // "skipped" means the schema was already correct (the common steady-state path).
