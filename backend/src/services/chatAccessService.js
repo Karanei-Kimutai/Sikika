@@ -1,4 +1,5 @@
 const { randomUUID } = require("crypto");
+const { Op } = require("sequelize");
 const {
   UserAccount,
   SurvivorProfile,
@@ -127,6 +128,32 @@ async function canUserAccessChannel(userId, chatId) {
   return false;
 }
 
+/**
+ * Finds all active direct-chat channels a user participates in, on either
+ * side (survivor or staff counterpart). Used to fan out events (e.g. "my
+ * public key is now available") to every counterpart this user chats with.
+ *
+ * @param {string} userId - UserAccount.userId.
+ * @returns {Promise<import('../models').DirectChatChannel[]>}
+ */
+async function getChannelsForParticipant(userId) {
+  if (!userId) return [];
+
+  const survivor = await SurvivorProfile.findOne({ where: { userId }, attributes: ["survivorId"] });
+
+  const audience = [{ supportStaffCounterpartId: userId }];
+  if (survivor?.survivorId) {
+    audience.push({ survivorId: survivor.survivorId });
+  }
+
+  return DirectChatChannel.findAll({
+    where: {
+      [Op.or]: audience,
+      chatChannelStatus: "active"
+    }
+  });
+}
+
 async function getChannelParticipantUserIds(channel) {
   const ids = new Set();
   if (!channel) return [];
@@ -145,5 +172,6 @@ module.exports = {
   getActorContextByUserId,
   ensureAutoChannelsForSurvivor,
   canUserAccessChannel,
-  getChannelParticipantUserIds
+  getChannelParticipantUserIds,
+  getChannelsForParticipant
 };

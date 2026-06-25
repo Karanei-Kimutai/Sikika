@@ -6,7 +6,7 @@
  * The backend server only ever handles blind ciphertext payloads.
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useReducer } from 'react';
 import { createPortal } from 'react-dom';
 import { Archive, ArchiveRestore, ArrowLeft, MoreHorizontal, Send, Lock, Trash2 } from 'lucide-react';
 import axios from 'axios';
@@ -15,6 +15,7 @@ import { getToken } from '../utils/auth';
 import { deriveSharedKey, encryptMessage, decryptMessage } from '../utils/cryptoUtils';
 import { getOrCreateKeyPair } from '../utils/keyStorage';
 import { fetchPublicKey } from '../services/chatKeys';
+import { getPending, enqueuePending, removePending } from '../utils/pendingMessageQueue';
 import { fadeInUp, staggerIn, pulse } from '../utils/motion';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
@@ -187,6 +188,13 @@ const DirectChatPage = () => {
   const [currentUserRole] = useState((initialPayload?.role || '').toString().toLowerCase());
   const [errorMessage, setErrorMessage] = useState('');
   const [noticeMessage, setNoticeMessage] = useState('');
+  // Non-blocking — shown while the counterpart hasn't completed one-time E2EE
+  // key setup yet. Unlike errorMessage, this never disables the composer.
+  const [keyBanner, setKeyBanner] = useState('');
+  // Forces a re-render whenever the localStorage-backed pending queue changes
+  // (enqueue or flush); the queue itself is the source of truth, not React
+  // state, so channel switches need no separate hydration effect.
+  const [, bumpPendingVersion] = useReducer((c) => c + 1, 0);
   const [isPrivacyMaskActive, setIsPrivacyMaskActive] = useState(false);
   const [showArchivedChannels, setShowArchivedChannels] = useState(false);
   // showDeletedChannels renders the Trash view — only deleted channels, separate from active/archived.
@@ -203,6 +211,7 @@ const DirectChatPage = () => {
   const mainPanelRef = useRef(null);
   const sendBtnRef = useRef(null);
   const prevMessageCountRef = useRef(0);
+  const flushInProgressRef = useRef(false);
 
   useEffect(() => {
     const handleOutsideMenuClick = (event) => {
@@ -297,6 +306,10 @@ const DirectChatPage = () => {
   const activeChannel = channels.find((channel) => channel.chatId === activeChannelId) || null;
   const actionMenuChannel = channels.find((channel) => channel.chatId === menuChannelId) || null;
 
+  // The pending queue's source of truth is localStorage, not React state —
+  // bumpPendingVersion (on enqueue/flush) just forces this cheap re-read.
+  const pendingMessages = activeChannelId ? getPending(activeChannelId) : [];
+
   const updateChannelStatus = async (chatId, status) => {
     if (!chatId) return;
 
@@ -339,7 +352,101 @@ const DirectChatPage = () => {
   };
 
   /**
-   * 2. Handle Active Channel Change (Derive Key, Join Room, Fetch History)
+   * Derives (or re-derives) the E2EE key for a channel and loads/decrypts its
+   * history. Held in a ref (refreshed whenever its inputs change) rather
+   * than returned from useCallback, so the effects below can call the
+   * latest version without taking on its identity as a dependency — it can
+   * also be re-run when the counterpart's public key shows up later, either
+   * pushed via the `chatKey:available` socket event or picked up by the
+   * polling fallback, without the user having to switch chats to retry.
+   *
+   * Leaves cryptoKey null (with a non-blocking keyBanner explanation, not a
+   * hard error) when the counterpart hasn't completed one-time key setup
+   * yet; the composer stays usable and queues messages locally in that case.
+   */
+  const establishSecureChannelRef = useRef(async () => {});
+
+  useEffect(() => {
+    establishSecureChannelRef.current = async (channelId) => {
+      if (!channelId || !currentUserId) return;
+
+      try {
+      const token = getToken();
+      if (!token) {
+        setErrorMessage('Session expired. Please log in again.');
+        return;
+      }
+
+      // Real E2EE key derivation: ECDH between this user's private key
+      // (IndexedDB, never leaves the browser) and the counterpart's public
+      // key (fetched from the server, which only ever brokers public keys).
+      const channel = channels.find((c) => c.chatId === channelId);
+      const counterpartUserId = channel?.counterpartUserId;
+      if (!counterpartUserId) {
+        setCryptoKey(null);
+        setErrorMessage('Unable to resolve the other participant for this chat.');
+        return;
+      }
+
+      const peerPublicKeyJwk = await fetchPublicKey(counterpartUserId);
+      if (!peerPublicKeyJwk) {
+        setCryptoKey(null);
+        setKeyBanner('Secure messaging setup is still pending on the other side — you can keep typing. Your messages will be sent automatically as soon as they log in for the first time.');
+        return;
+      }
+
+      const { privateKey } = await getOrCreateKeyPair(currentUserId);
+      const key = await deriveSharedKey(privateKey, peerPublicKeyJwk);
+      setCryptoKey(key);
+      setKeyBanner('');
+
+      // History endpoint returns ciphertext; decrypt client-side only.
+      const response = await axios.get(`${API_BASE_URL}/api/chat/${channelId}/messages`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      const history = Array.isArray(response.data) ? response.data : [];
+      const decryptedHistory = await Promise.all(
+        history.map(async (dbMessage) => ({
+          messageId: dbMessage.messageId,
+          senderUserId: dbMessage.senderUserId,
+          // Failed decrypts are handled in cryptoUtils with a readable marker.
+          plaintext: await decryptMessage(dbMessage.encryptedMessageContent, key),
+          isMine: dbMessage.senderUserId === currentUserId,
+          senderLabel:
+            dbMessage.senderUserId === currentUserId
+              ? roleLabelFromSession(currentUserRole)
+              : peerRoleLabelFromSession(currentUserRole),
+          // Carry delivery/seen timestamps so ticks render correctly on history load.
+          deliveredAt: dbMessage.deliveredAt || null,
+          seenAt: dbMessage.seenAt || null,
+          sentAt: dbMessage.messageDispatchTimestamp || null
+        }))
+      );
+
+      const demoTranscriptEnabled = String(import.meta.env.VITE_ENABLE_CHAT_DEMO_TRANSCRIPT || '').toLowerCase() === 'true';
+      const shouldAddDemoTranscript = import.meta.env.DEV && demoTranscriptEnabled && decryptedHistory.length < 8;
+      // Demo transcript is now explicit opt-in to avoid confusing real user timelines.
+      setMessages(
+        shouldAddDemoTranscript
+          ? [...decryptedHistory, ...buildDemoTranscript(currentUserRole)]
+          : decryptedHistory
+      );
+      } catch (error) {
+        setCryptoKey(null);
+        setMessages([]);
+        setErrorMessage(error.response?.data?.error || 'Failed to establish secure chat session.');
+      }
+    };
+  }, [channels, currentUserId, currentUserRole]);
+
+  /**
+   * 2. Handle Active Channel Change (Join Room, Derive Key)
+   *
+   * Pending messages queued for this channel aren't hydrated into state here —
+   * they're read directly from localStorage during render (see pendingMessages
+   * below) and bumped via pendingVersion, so no setState happens synchronously
+   * inside this effect.
    */
   useEffect(() => {
     if (!activeChannelId || !currentUserId) return;
@@ -347,80 +454,77 @@ const DirectChatPage = () => {
     // Persisting here ensures both manual chat clicks and automatic opens are remembered.
     persistPreferredChannel(activeChannelId);
 
-    const setupSecureChannel = async () => {
-      try {
-        const token = getToken();
-        if (!token) {
-          setErrorMessage('Session expired. Please log in again.');
-          return;
-        }
+    // Join the Socket room
+    socketRef.current?.emit('joinChannel', activeChannelId);
 
-        // Join the Socket room
-        socketRef.current?.emit('joinChannel', activeChannelId);
+    establishSecureChannelRef.current(activeChannelId);
+  }, [activeChannelId, currentUserId]);
 
-        // Real E2EE key derivation: ECDH between this user's private key
-        // (IndexedDB, never leaves the browser) and the counterpart's public
-        // key (fetched from the server, which only ever brokers public keys).
-        const activeChannel = channels.find((channel) => channel.chatId === activeChannelId);
-        const counterpartUserId = activeChannel?.counterpartUserId;
-        if (!counterpartUserId) {
-          setCryptoKey(null);
-          setErrorMessage('Unable to resolve the other participant for this chat.');
-          return;
-        }
+  /**
+   * 2b. Listen for the counterpart completing key setup (pushed by the
+   * backend when they register their public key) so this tab can retry
+   * derivation immediately instead of waiting on the polling fallback.
+   * Registered independently of cryptoKey so it still fires while we're
+   * waiting for a key to show up.
+   */
+  useEffect(() => {
+    if (!currentUserId) return;
 
-        const peerPublicKeyJwk = await fetchPublicKey(counterpartUserId);
-        if (!peerPublicKeyJwk) {
-          setCryptoKey(null);
-          setErrorMessage('Secure messaging will unlock once the other participant logs in for the first time to generate their encryption key. This only needs to happen once.');
-          return;
-        }
-
-        const { privateKey } = await getOrCreateKeyPair(currentUserId);
-        const key = await deriveSharedKey(privateKey, peerPublicKeyJwk);
-        setCryptoKey(key);
-
-        // History endpoint returns ciphertext; decrypt client-side only.
-        const response = await axios.get(`${API_BASE_URL}/api/chat/${activeChannelId}/messages`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-
-        const history = Array.isArray(response.data) ? response.data : [];
-        const decryptedHistory = await Promise.all(
-          history.map(async (dbMessage) => ({
-            messageId: dbMessage.messageId,
-            senderUserId: dbMessage.senderUserId,
-            // Failed decrypts are handled in cryptoUtils with a readable marker.
-            plaintext: await decryptMessage(dbMessage.encryptedMessageContent, key),
-            isMine: dbMessage.senderUserId === currentUserId,
-            senderLabel:
-              dbMessage.senderUserId === currentUserId
-                ? roleLabelFromSession(currentUserRole)
-                : peerRoleLabelFromSession(currentUserRole),
-            // Carry delivery/seen timestamps so ticks render correctly on history load.
-            deliveredAt: dbMessage.deliveredAt || null,
-            seenAt: dbMessage.seenAt || null,
-            sentAt: dbMessage.messageDispatchTimestamp || null
-          }))
-        );
-
-        const demoTranscriptEnabled = String(import.meta.env.VITE_ENABLE_CHAT_DEMO_TRANSCRIPT || '').toLowerCase() === 'true';
-        const shouldAddDemoTranscript = import.meta.env.DEV && demoTranscriptEnabled && decryptedHistory.length < 8;
-        // Demo transcript is now explicit opt-in to avoid confusing real user timelines.
-        setMessages(
-          shouldAddDemoTranscript
-            ? [...decryptedHistory, ...buildDemoTranscript(currentUserRole)]
-            : decryptedHistory
-        );
-      } catch (error) {
-        setCryptoKey(null);
-        setMessages([]);
-        setErrorMessage(error.response?.data?.error || 'Failed to establish secure chat session.');
+    const handleKeyAvailable = ({ chatId }) => {
+      if (chatId === activeChannelId) {
+        establishSecureChannelRef.current(activeChannelId);
       }
     };
 
-    setupSecureChannel();
-  }, [activeChannelId, currentUserId, currentUserRole, channels]);
+    socketRef.current?.on('chatKey:available', handleKeyAvailable);
+    return () => socketRef.current?.off('chatKey:available', handleKeyAvailable);
+  }, [activeChannelId, currentUserId]);
+
+  /**
+   * 2c. Polling fallback — in case the socket push above is missed (e.g. a
+   * brief disconnect), retry key derivation every 30s while still waiting.
+   * Mirrors the poll-plus-socket-push pattern already used by NotificationBell.
+   */
+  useEffect(() => {
+    if (!activeChannelId || cryptoKey) return;
+
+    const intervalId = window.setInterval(() => {
+      establishSecureChannelRef.current(activeChannelId);
+    }, 30000);
+
+    return () => window.clearInterval(intervalId);
+  }, [activeChannelId, cryptoKey]);
+
+  /**
+   * 2d. Flush the pending queue once a key becomes derivable — encrypts and
+   * sends queued plaintext in order, exactly as a normal send would.
+   */
+  useEffect(() => {
+    if (!cryptoKey || !activeChannelId || flushInProgressRef.current) return;
+
+    const pending = getPending(activeChannelId);
+    if (pending.length === 0) return;
+
+    flushInProgressRef.current = true;
+
+    (async () => {
+      for (const entry of pending) {
+        try {
+          const encryptedPayload = await encryptMessage(entry.plaintext, cryptoKey);
+          socketRef.current?.emit('sendEncryptedMessage', {
+            chatId: activeChannelId,
+            encryptedPayload
+          });
+          removePending(activeChannelId, entry.localId);
+          bumpPendingVersion();
+        } catch (err) {
+          console.error('Failed to flush a queued message:', err);
+          break; // Leave the rest queued — will retry next time this effect runs.
+        }
+      }
+      flushInProgressRef.current = false;
+    })();
+  }, [cryptoKey, activeChannelId]);
 
   /**
    * 3. Listen for Incoming Live Messages
@@ -598,11 +702,21 @@ const DirectChatPage = () => {
    */
   const handleSendMessage = async (e) => {
     e.preventDefault();
-    if (!newMessage.trim() || !cryptoKey || !currentUserId || !activeChannelId) return;
+    if (!newMessage.trim() || !currentUserId || !activeChannelId) return;
 
     // Optimistic clear keeps composer responsive while encryption/socket emits.
     const plaintext = newMessage;
     setNewMessage(''); // Clear input
+
+    if (!cryptoKey) {
+      // Counterpart hasn't completed one-time key setup yet — hold the
+      // message locally instead of blocking the composer. It auto-sends
+      // once a key becomes derivable (see the flush effect above).
+      enqueuePending(activeChannelId, plaintext);
+      bumpPendingVersion();
+      if (sendBtnRef.current) pulse(sendBtnRef.current);
+      return;
+    }
 
     try {
       // Encrypt the message before it ever touches the network
@@ -776,27 +890,40 @@ const DirectChatPage = () => {
               </header>
 
               {activeChannel?.asyncDeliveryHint && <p role="alert" className="status-message warning">{activeChannel.asyncDeliveryHint}</p>}
+              {keyBanner && <p role="status" className="status-message warning">{keyBanner}</p>}
 
               <div className="wa-messages" ref={messagesListRef}>
-                {messages.length === 0 ? (
+                {messages.length === 0 && pendingMessages.length === 0 ? (
                   <p className="wa-empty-state">Messages in this channel are encrypted end-to-end.</p>
                 ) : (
-                  // Render deterministic order from API + realtime appends.
-                  messages.map((msg) => (
-                    <div key={msg.messageId} className={`wa-row ${msg.isMine ? 'mine' : 'theirs'}`}>
-                      <div className={`wa-bubble ${msg.isMine ? 'mine' : 'theirs'}`}>
-                        <small className="wa-msg-role">{msg.senderLabel || (msg.isMine ? 'You' : 'Peer')}</small>
-                        <p>{msg.plaintext}</p>
-                        {msg.sentAt && (
-                          <time className="wa-msg-time" dateTime={msg.sentAt}>
-                            {new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </time>
-                        )}
-                        {/* Delivery/seen ticks — only rendered on sender's own bubbles */}
-                        <MessageTicks msg={msg} />
+                  <>
+                    {/* Render deterministic order from API + realtime appends. */}
+                    {messages.map((msg) => (
+                      <div key={msg.messageId} className={`wa-row ${msg.isMine ? 'mine' : 'theirs'}`}>
+                        <div className={`wa-bubble ${msg.isMine ? 'mine' : 'theirs'}`}>
+                          <small className="wa-msg-role">{msg.senderLabel || (msg.isMine ? 'You' : 'Peer')}</small>
+                          <p>{msg.plaintext}</p>
+                          {msg.sentAt && (
+                            <time className="wa-msg-time" dateTime={msg.sentAt}>
+                              {new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </time>
+                          )}
+                          {/* Delivery/seen ticks — only rendered on sender's own bubbles */}
+                          <MessageTicks msg={msg} />
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    ))}
+                    {/* Queued locally — not yet encrypted/sent, awaiting the counterpart's key setup. */}
+                    {pendingMessages.map((entry) => (
+                      <div key={entry.localId} className="wa-row mine">
+                        <div className="wa-bubble mine">
+                          <small className="wa-msg-role">You</small>
+                          <p>{entry.plaintext}</p>
+                          <span className="msg-ticks msg-ticks--sent" title="Will send once secure setup completes">Pending</span>
+                        </div>
+                      </div>
+                    ))}
+                  </>
                 )}
                 <div ref={messagesEndRef} />
               </div>
@@ -807,9 +934,8 @@ const DirectChatPage = () => {
                   placeholder="Type a message"
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
-                  disabled={!cryptoKey}
                 />
-                <button ref={sendBtnRef} type="submit" className="wa-send-btn" aria-label="Send message" disabled={!cryptoKey || !newMessage.trim()}>
+                <button ref={sendBtnRef} type="submit" className="wa-send-btn" aria-label="Send message" disabled={!newMessage.trim()}>
                   <Send size={14} aria-hidden="true" />
                 </button>
               </form>

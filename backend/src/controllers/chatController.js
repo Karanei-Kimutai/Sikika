@@ -22,7 +22,9 @@ const { Op } = require('sequelize');
 const {
   getActorContextByUserId,
   ensureAutoChannelsForSurvivor,
-  canUserAccessChannel
+  canUserAccessChannel,
+  getChannelsForParticipant,
+  getChannelParticipantUserIds
 } = require('../services/chatAccessService');
 const presenceRegistry = require('../services/presenceRegistry');
 
@@ -256,6 +258,36 @@ const isValidEcdhPublicJwk = (jwkString) => {
 };
 
 /**
+ * notifyCounterpartsKeyAvailable
+ * ------------------------------
+ * Pushes a `chatKey:available` event to every channel counterpart of the
+ * given user, so an open Direct Chat tab can immediately re-attempt E2EE
+ * key derivation instead of waiting on its polling fallback. Mirrors the
+ * `user:<userId>` personal-room broadcast pattern already used for presence
+ * and read-receipt events in chatSocket.js / markChannelRead.
+ *
+ * @param {import('express').Request} req
+ * @param {string} userId - The user whose public key was just registered.
+ */
+async function notifyCounterpartsKeyAvailable(req, userId) {
+  try {
+    const io = req.app.locals.io;
+    if (!io) return;
+
+    const channels = await getChannelsForParticipant(userId);
+    for (const channel of channels) {
+      const participantIds = await getChannelParticipantUserIds(channel);
+      const counterpartIds = participantIds.filter((id) => id && id !== userId);
+      for (const counterpartId of counterpartIds) {
+        io.to(`user:${counterpartId}`).emit('chatKey:available', { chatId: channel.chatId, userId });
+      }
+    }
+  } catch (error) {
+    console.error('notifyCounterpartsKeyAvailable error:', error);
+  }
+}
+
+/**
  * Registers the authenticated user's ECDH public key (JWK JSON string).
  * Called by the frontend on every authenticated app load so a counterpart
  * can always derive a fresh shared key. Idempotent.
@@ -277,6 +309,12 @@ const setPublicKey = async (req, res) => {
     }
 
     await UserAccount.update({ ecdhPublicKey }, { where: { userId } });
+
+    // Best-effort push so any counterpart with the chat open (and pending
+    // queued messages) can flush them immediately rather than waiting on
+    // their 30s polling fallback.
+    await notifyCounterpartsKeyAvailable(req, userId);
+
     return res.status(200).json({ message: 'Public key registered.' });
   } catch (error) {
     return res.status(500).json({ error: 'Failed to register public key.' });

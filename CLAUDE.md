@@ -156,6 +156,8 @@ Note: some API calls are inline `fetch`/`axios` within page components rather th
 
 Real ECDH (P-256) key agreement + AES-GCM 256-bit via Web Crypto API. Each user's private key is generated non-extractable and persisted only in this browser's IndexedDB (`keyStorage.js`); only the public key (`userAccount.ecdhPublicKey`, JWK string) is sent to the server via `GET/PUT /api/chat/public-key`. `App.jsx` registers/refreshes the local keypair's public half on every authenticated app load; `DirectChatPage.jsx` fetches the channel counterpart's public key (via the `counterpartUserId` field on `getChannels`'s response) and derives the shared AES-GCM key client-side. Server stores and relays only ciphertext and public keys; plaintext and private keys never leave the client. No safety-number verification or multi-device support — see `docs/e2ee.md` for the full design and threat model.
 
+If the counterpart hasn't logged in yet (no public key registered), the composer stays usable instead of blocking: messages queue client-side in `localStorage` (`frontend/src/utils/pendingMessageQueue.js`, per-`chatId`) and auto-send once the counterpart's key becomes available, signalled by the `chatKey:available` Socket.io event (`backend/src/controllers/chatController.js` `setPublicKey`, fanned out to channel counterparts via `chatAccessService.getChannelsForParticipant`) with a 30s polling fallback. See `docs/e2ee.md`'s "Pending-message queue" section.
+
 ### Quick Exit Button
 
 Clears auth state and navigates to Google. Auto-collapses after 3 seconds of inactivity.
