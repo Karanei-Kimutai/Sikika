@@ -603,7 +603,7 @@ function CommunityPage() {
 
                   {activeMessageMenuId === message.communityMessageId && (
                     <div className="message-actions-menu">
-                      {message.senderUserId !== currentUserId && (
+                      {message.senderUserId !== currentUserId && !canModerate && (
                         <button type="button" onClick={() => openReportModal(message.communityMessageId)}>
                           Report Message
                         </button>

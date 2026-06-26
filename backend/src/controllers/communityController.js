@@ -602,6 +602,7 @@ async function reviewReport(req, res) {
   }
 
   report.moderationReviewStatus = reviewStatus;
+  report.reviewedAction = action;
   await report.save({ transaction });
 
   const message = await CommunityMessage.findByPk(report.reportedCommunityMessageId, { transaction });
