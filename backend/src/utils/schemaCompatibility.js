@@ -247,6 +247,15 @@ async function ensureSchemaCompatibility(sequelize) {
   );
   results.push(`relatedEntityId=${relatedEntityId}`);
 
+  // ── Column: harmfulContentReport.reviewedAction ───────────────────────────
+  // Records which action was applied when a report was reviewed
+  // (remove_message | ban_user | issue_warning | none).
+  // Null on reports that pre-date this column or are still PENDING.
+  const reviewedAction = await ensureColumnExists(
+    sequelize, "harmfulContentReport", "reviewedAction", "VARCHAR(30) NULL"
+  );
+  results.push(`reviewedAction=${reviewedAction}`);
+
   // Single structured log line for observability.
   // Each token is "name=applied|skipped". "applied" means a change was made;
   // "skipped" means the schema was already correct (the common steady-state path).
