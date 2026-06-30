@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { getToken, getUserId, removeToken, removeUserId } from "./utils/auth";
-import { getOrCreateKeyPair } from "./utils/keyStorage";
+import { deleteKeyPair, getOrCreateKeyPair } from "./utils/keyStorage";
 import { exportPublicKeyJwk } from "./utils/cryptoUtils";
 import { registerPublicKey } from "./services/chatKeys";
 import { fadeInUp } from "./utils/motion";
@@ -86,6 +86,21 @@ const moderatorRoutes = {
   "/join": AuthPage
 };
 
+function NotFoundPage({ onNavigate }) {
+  return (
+    <main className="maintenance-page" role="main" aria-label="Page not found">
+      <section className="maintenance-card">
+        <p className="maintenance-pill">Not Found</p>
+        <h1>Page Not Found</h1>
+        <p className="maintenance-lead">The page you requested does not exist or has moved.</p>
+        <div className="maintenance-actions">
+          <button type="button" className="maintenance-btn maintenance-btn-secondary" onClick={() => onNavigate("/home")}>Go Home</button>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 // Includes role-specific paths so getCurrentPath() doesn't fall back to "/"
 // when an authenticated user lands on a route not present in publicRoutes.
 const knownPaths = new Set([
@@ -116,7 +131,7 @@ function decodeRoleFromToken() {
 }
 
 function getCurrentPath() {
-  return knownPaths.has(window.location.pathname) ? window.location.pathname : "/";
+  return window.location.pathname;
 }
 
 function formatMaintenanceCountdown(value) {
@@ -248,12 +263,22 @@ function App() {
     navigate("/join");
   };
 
-  const handleQuickExit = () => {
+  const handleQuickExit = async () => {
     // If collapsed, first interaction expands the control instead of navigating.
     // This reduces accidental exits from incidental taps.
     if (isQuickExitCollapsed) {
       setIsQuickExitCollapsed(false);
       return;
+    }
+
+    const activeUserId = getUserId();
+    if (activeUserId) {
+      try {
+        // Best-effort forensic minimization: remove this user's local E2EE keypair.
+        await deleteKeyPair(activeUserId);
+      } catch {
+        // Continue quick-exit regardless of local storage cleanup outcome.
+      }
     }
 
     removeToken();
@@ -306,9 +331,10 @@ function App() {
     return resolvedPath;
   })();
   const activeRoutes = getRoutesForRole(role, isAuthenticated);
+  const hasKnownPath = knownPaths.has(currentPath);
   const fallbackPath = isAuthenticated ? "/home" : "/";
-  const finalPath = activeRoutes[roleResolvedPath] ? roleResolvedPath : fallbackPath;
-  const Page = activeRoutes[finalPath] || LandingPage;
+  const finalPath = hasKnownPath ? (activeRoutes[roleResolvedPath] ? roleResolvedPath : fallbackPath) : currentPath;
+  const Page = hasKnownPath ? (activeRoutes[finalPath] || LandingPage) : NotFoundPage;
 
   // During active maintenance, non-admin sessions are redirected to a
   // read-only status card instead of normal app pages.
