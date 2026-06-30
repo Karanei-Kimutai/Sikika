@@ -446,6 +446,8 @@ async function reportMessage(req, res) {
     contentReportId: randomUUID(),
     reportedCommunityMessageId: message.communityMessageId,
     reporterUserId: actor.userId,
+    reportedSenderUserId: message.senderUserId,
+    reportedRoomId: message.roomId,
     reportReasonText: reason,
     moderationReviewStatus: "PENDING"
   });
@@ -545,6 +547,7 @@ async function getModerationReports(req, res) {
               author
             }
           : null,
+        reportedSender: author || (report.reportedSenderUserId ? { userId: report.reportedSenderUserId } : null),
         reporter
       };
     })
@@ -606,10 +609,17 @@ async function reviewReport(req, res) {
   await report.save({ transaction });
 
   const message = await CommunityMessage.findByPk(report.reportedCommunityMessageId, { transaction });
+  const targetUserId = report.reportedSenderUserId || message?.senderUserId || null;
+  const targetRoomId = report.reportedRoomId || message?.roomId || null;
 
   // Only approved reports can trigger moderation side-effects on users/messages.
-  if (reviewStatus === "APPROVED" && message) {
+  if (reviewStatus === "APPROVED") {
     if (action === "remove_message") {
+      if (!message) {
+        await transaction.rollback();
+        return res.status(409).json({ error: "Reported message is no longer available for removal." });
+      }
+
       message.publicMessageContent = "[Removed by moderators for community safety.]";
       await message.save({ transaction });
 
@@ -627,6 +637,11 @@ async function reviewReport(req, res) {
     }
 
     if (action === "ban_user") {
+      if (!targetUserId) {
+        await transaction.rollback();
+        return res.status(409).json({ error: "Unable to resolve report target for ban action." });
+      }
+
       // Resolve ban metadata from the request body, falling back to the report text.
       const banReason = String(req.body.reason || report.reportReasonText || "").trim();
       const rawExpiresAt = req.body.expiresAt || null;
@@ -643,7 +658,7 @@ async function reviewReport(req, res) {
       }
 
       // Fetch the full UserAccount row so we can check role and set ban metadata.
-      const targetAccount = await UserAccount.findByPk(message.senderUserId, { transaction });
+      const targetAccount = await UserAccount.findByPk(targetUserId, { transaction });
 
       // Enforce the same bannable-role policy as the admin ban endpoint — admin accounts
       // cannot be banned through the community moderation path either.
@@ -674,7 +689,7 @@ async function reviewReport(req, res) {
       await ModerationActionLog.create({
         moderationActionId: randomUUID(),
         moderatorUserId: actor.userId,
-        targetUserId: message.senderUserId,
+        targetUserId,
         moderationActionType: "BAN",
         moderationActionReason: banReason
       }, { transaction });
@@ -683,7 +698,7 @@ async function reviewReport(req, res) {
         auditId: randomUUID(),
         actorUserId: actor.userId,
         actionType: "ACCOUNT_BANNED",
-        targetEntity: `${targetAccount?.userRole || "USER"}:${message.senderUserId}`
+        targetEntity: `${targetAccount?.userRole || "USER"}:${targetUserId}`
       }, { transaction });
 
       if (actor.role === "MODERATOR") {
@@ -694,16 +709,21 @@ async function reviewReport(req, res) {
       // frontline staff) cascade-reassign their survivors — same post-commit
       // side effects as the admin ban endpoint. Stashed on req since they must
       // run after transaction.commit().
-      req._banTargetUserId = message.senderUserId;
+      req._banTargetUserId = targetUserId;
       req._banTargetUserRole = targetAccount?.userRole || null;
       req._banReason = banReason;
     }
 
     if (action === "issue_warning") {
+      if (!targetUserId) {
+        await transaction.rollback();
+        return res.status(409).json({ error: "Unable to resolve report target for warning action." });
+      }
+
       await ModerationActionLog.create({
         moderationActionId: randomUUID(),
         moderatorUserId: actor.userId,
-        targetUserId: message.senderUserId,
+        targetUserId,
         moderationActionType: "WARNING",
         moderationActionReason: report.reportReasonText
       }, { transaction });
@@ -711,8 +731,8 @@ async function reviewReport(req, res) {
       // Warnings are stored as discreet in-app notifications so the target user
       // can be informed without exposing sensitive moderation context in plain UI text.
       // createNotification is called after commit to avoid transaction entanglement.
-      req._warnTargetUserId = message.senderUserId;
-      req._warnTargetRoomId = message.roomId;
+      req._warnTargetUserId = targetUserId;
+      req._warnTargetRoomId = targetRoomId;
 
       if (actor.role === "MODERATOR") {
         await incrementModeratorWorkload(actor.userId, transaction);

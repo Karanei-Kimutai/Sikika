@@ -256,6 +256,22 @@ async function ensureSchemaCompatibility(sequelize) {
   );
   results.push(`reviewedAction=${reviewedAction}`);
 
+  // ── Column: harmfulContentReport.reportedSenderUserId ────────────────────
+  // Snapshot of the reported sender's userId so moderation actions can still
+  // target the account if the original message row is deleted later.
+  const reportedSenderUserId = await ensureColumnExists(
+    sequelize, "harmfulContentReport", "reportedSenderUserId", "VARCHAR(36) NULL"
+  );
+  results.push(`reportedSenderUserId=${reportedSenderUserId}`);
+
+  // ── Column: harmfulContentReport.reportedRoomId ──────────────────────────
+  // Snapshot of roomId for moderation notifications/event fan-out when the
+  // original message row no longer exists.
+  const reportedRoomId = await ensureColumnExists(
+    sequelize, "harmfulContentReport", "reportedRoomId", "VARCHAR(36) NULL"
+  );
+  results.push(`reportedRoomId=${reportedRoomId}`);
+
   // Single structured log line for observability.
   // Each token is "name=applied|skipped". "applied" means a change was made;
   // "skipped" means the schema was already correct (the common steady-state path).
