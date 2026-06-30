@@ -61,15 +61,31 @@ Lesson:
 ## 6. Current testing files in this branch
 
 Backend:
+- `backend/tests/authController.test.js`
+- `backend/tests/banCascade.test.js`
+- `backend/tests/banEnforcement.test.js`
+- `backend/tests/chatPresence.test.js`
+- `backend/tests/chatPublicKey.test.js`
+- `backend/tests/chatTrashRestore.test.js`
+- `backend/tests/legalCaseController.test.js`
+- `backend/tests/notificationController.test.js`
+- `backend/tests/notificationService.test.js`
+- `backend/tests/rbac.test.js`
+- `backend/tests/reports.test.js`
 - `backend/tests/systemRoutes.test.js`
+- `backend/tests/ussd.test.js`
 
 Frontend:
 - `frontend/playwright.config.js`
-- `frontend/tests/e2e/system-smoke.spec.js`
 - `frontend/tests/e2e/auth-flows.spec.js`
 - `frontend/tests/e2e/survivor-flows.spec.js`
 - `frontend/tests/e2e/admin-flows.spec.js`
+- `frontend/tests/e2e/chat-trash-restore.spec.js`
+- `frontend/tests/e2e/notification-deep-link.spec.js`
 - `frontend/tests/e2e/profile-library-flows.spec.js`
+- `frontend/tests/e2e/reduced-motion.spec.js`
+- `frontend/tests/e2e/safety.spec.js`
+- `frontend/tests/e2e/system-smoke.spec.js`
 - `frontend/tests/e2e/helpers/mocks.js`
 
 Related docs/config updates:

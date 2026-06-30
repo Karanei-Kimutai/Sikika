@@ -28,7 +28,8 @@ Every auth response includes an `authStage` field. The frontend branches on this
 | authStage | Meaning |
 |-----------|---------|
 | `OTP_VERIFICATION_REQUIRED` | OTP has been sent; show the OTP input. |
-| `PASSWORD_SETUP_REQUIRED` | OTP verified for first-time signup; collect a password. |
+| `DETAILS_REQUIRED` | Signup OTP verified; collect password/profile details and complete signup. |
+| `OTP_2FA_REQUIRED` | Password verified; collect OTP and call verify-2fa. |
 | `PASSWORD_RESET_REQUIRED` | Account flagged for forced reset (staff provisioned by admin); block navigation until reset. |
 | `SIGNUP_REQUIRED` | Phone has no account; redirect to sign-up. |
 | `SIGNIN_REQUIRED` | Account exists; redirect to sign-in. |
@@ -40,14 +41,13 @@ Every auth response includes an `authStage` field. The frontend branches on this
 | authIntent | Flow |
 |------------|------|
 | `SIGNUP_OTP` | New-account creation via OTP. |
-| `SIGNIN_OTP` | OTP-based login for an existing account. |
 | `PASSWORD_RESET` | Forgot-password OTP flow. |
 
 ---
 
 ## Sign-Up Flow
 
-Sign-up is a two-step process: request an OTP, then verify it and set a password.
+Sign-up is a three-step process: request OTP, verify OTP, then complete details.
 
 ### Step 1 — Request OTP
 
@@ -64,10 +64,10 @@ Sign-up is a two-step process: request an OTP, then verify it and set a password
 5. The OTP is sent via Africa's Talking SMS. In dev mode (`SKIP_SMS_IN_DEV=true`), it is returned in the response as `developmentOtp` instead.
 6. Response: `{ authStage: "OTP_VERIFICATION_REQUIRED", authIntent: "SIGNUP_OTP" }`.
 
-### Step 2 — Verify OTP and Set Password
+### Step 2 — Verify OTP
 
 **Endpoint:** `POST /api/auth/verify-otp`  
-**Body:** `{ phoneNumber, otp, password, authIntent: "SIGNUP_OTP", profileDetails? }`
+**Body:** `{ phoneNumber, otp, authIntent: "SIGNUP_OTP" }`
 
 1. The account is fetched. If any unexpired temporary ban has now passed its expiry, it is auto-lifted before anything else.
 2. Account status is checked — `BANNED`, `SUSPENDED`, and `DEACTIVATED` accounts are rejected with `403`. Banned accounts include the `banReason` and `banExpiresAt` in the response.
@@ -78,32 +78,27 @@ Sign-up is a two-step process: request an OTP, then verify it and set a password
    - The OTP must not be past its 10-minute expiry.
    - `bcrypt.compare` is run against the stored hash.
    - Each wrong guess increments `otpAttemptCount`. At 5 failures, the account is locked for 15 minutes and the OTP is voided — the user must request a new one.
-5. Since this is a first-time account, `password` is required (minimum 8 characters). It is bcrypt-hashed and stored.
-6. OTP state is cleared, `isOtpVerified` is set to `true`, and failure counters are reset.
-7. Three side effects fire in a single Sequelize transaction:
+5. OTP state is cleared, `isOtpVerified` is set to `true`, and failure counters are reset.
+6. A short-lived signup ticket is issued (`authStage: DETAILS_REQUIRED`).
+
+### Step 3 — Complete Signup (Password + Profile Details)
+
+**Endpoint:** `POST /api/auth/complete-signup`  
+**Body:** `{ phoneNumber, signupTicket, password, profileDetails? }`
+
+1. Ticket purpose/expiry is validated.
+2. Password is validated and bcrypt-hashed.
+3. Three side effects fire in a single Sequelize transaction:
    - **SurvivorProfile is created** with sanitized `profileDetails` (nickname, gender, county). If `profileDetails` is missing, safe defaults are used (`Survivor-<shortId>`, `UNSPECIFIED` for gender and county).
    - **Staff auto-assignment**: among counsellors/legal counsel whose `UserAccount.accountStatus` is `ACTIVE` (suspended/banned staff are excluded via an inner join — their profile's `availabilityStatus` alone doesn't reflect that), the one with the lowest `currentWorkloadScore` is assigned. Both scores are incremented. Preference is given to staff who are `AVAILABLE` or `BUSY`; if all active staff are `OFFLINE`, the lowest-scored active staff member is assigned anyway.
    - **`StaffAssignmentHistory` record** is written for audit purposes.
-8. `ensureAutoChannelsForSurvivor` eagerly creates direct-chat channels to both assigned staff so they appear immediately on the survivor's chat page.
-9. A 2-hour JWT is issued containing `{ id, userId, role }`.
-10. Response: `{ authStage: "AUTHENTICATED", token, userId, role, authMethod: "OTP" }`.
+4. `ensureAutoChannelsForSurvivor` eagerly creates direct-chat channels to both assigned staff so they appear immediately on the survivor's chat page.
+5. A 2-hour JWT is issued containing `{ id, userId, role }`.
+6. Response: `{ authStage: "AUTHENTICATED", token, userId, role, authMethod: "SIGNUP" }`.
 
 ---
 
 ## Sign-In Flows
-
-### OTP Sign-In
-
-The OTP sign-in flow uses the same two endpoints as sign-up, but with `authIntent: "SIGNIN_OTP"`.
-
-**Step 1 — Request OTP:** `POST /api/auth/request-otp` with `{ phoneNumber, authIntent: "SIGNIN_OTP" }`.  
-- If no completed account (no `hashedPassword`) is found, returns `409` with `authStage: SIGNUP_REQUIRED`.
-- Otherwise, generates and sends the OTP as above.
-
-**Step 2 — Verify OTP:** `POST /api/auth/verify-otp` with `{ phoneNumber, otp, authIntent: "SIGNIN_OTP" }`.  
-- Runs the same OTP validation as sign-up.
-- Since `hashedPassword` already exists, the first-time signup branch is skipped entirely — no profile creation, no staff assignment.
-- A JWT is issued directly.
 
 ### Password Sign-In
 
@@ -117,9 +112,10 @@ The OTP sign-in flow uses the same two endpoints as sign-up, but with `authInten
 5. Lockout check (→ `423` with `retryAfterSeconds`).
 6. `bcrypt.compare` against `hashedPassword`.
    - **Failure**: `registerPasswordFailure` increments `authFailedAttempts`. At 5 failures, the account is locked for 15 minutes (counter resets to 0 so the next lockout period starts fresh). Returns `401`.
-   - **Success**: `clearPasswordFailureState` resets counters. JWT is issued.
+   - **Success**: `clearPasswordFailureState` resets counters and issues a signin OTP with `authStage: OTP_2FA_REQUIRED`.
 7. If `status === 'password_reset_required'`: returns `authStage: PASSWORD_RESET_REQUIRED` with the token. Frontend must gate navigation until `POST /api/auth/set-password` is called.
-8. Response: `{ authStage: "AUTHENTICATED", token, userId, role, authMethod: "PASSWORD" }`.
+8. Complete signin via `POST /api/auth/verify-2fa`.
+9. Response after verify-2fa: `{ authStage: "AUTHENTICATED", token, userId, role, authMethod: "PASSWORD_2FA" }`.
 
 ---
 
@@ -152,7 +148,7 @@ Used when a user cannot remember their password and needs to reset it via SMS OT
 
 ## Forced Password Reset (Staff Accounts)
 
-Staff accounts (Counsellor, Legal Counsel, NGO Admin, System Admin) are provisioned by an NGO or System Admin — they do not self-sign-up. When a staff account is created, it is given a temporary password and `status: 'password_reset_required'` is set on the `UserAccount`.
+Staff accounts (Counsellor, Legal Counsel, NGO Admin, Moderator) are provisioned by NGO admins — they do not self-sign-up. When a staff account is created, it is given a temporary password and `status: 'password_reset_required'` is set on the `UserAccount`.
 
 On first login (either password or OTP path):
 - The server detects `status === 'password_reset_required'` and returns the JWT **plus** `authStage: PASSWORD_RESET_REQUIRED`.
@@ -172,7 +168,7 @@ This endpoint is also available to any authenticated user who wants to change th
 
 ### OTP Security
 
-- OTPs are **4 digits** (1000–9999), generated with `Math.random`.
+- OTPs are **4 digits** (1000–9999), generated with `crypto.randomInt`.
 - They are **bcrypt-hashed (10 rounds)** before storage. The plaintext is never written to the database.
 - Each OTP carries a **purpose** (`otpPurpose`). A signup OTP cannot be used to reset a password, and vice versa — the server checks the purpose on every verify attempt.
 - OTPs expire after **10 minutes** (`AUTH_OTP_TTL_MS`, default 600,000 ms). Expired codes are cleared on attempted use.
