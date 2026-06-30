@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const { Op } = require('sequelize');
-const { randomUUID } = require('crypto');
+const { randomUUID, randomInt } = require('crypto');
 const sequelize = require('../config/database');
 const {
     UserAccount,
@@ -821,7 +821,7 @@ const requestOTP = async (req, res) => {
             });
         }
 
-        const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
+        const otpCode = String(randomInt(1000, 10000));
         const effectiveIntent = resolvedIntent || AUTH_INTENTS.SIGNUP_OTP;
 
         await setOtpForUser(user, otpCode, effectiveIntent);
@@ -1129,7 +1129,7 @@ const loginWithPassword = async (req, res) => {
             });
         }
 
-        const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
+        const otpCode = String(randomInt(1000, 10000));
         await setOtpForUser(user, otpCode, AUTH_INTENTS.SIGNIN_2FA);
         const warning = await sendOtpSms(phoneNumber, otpCode);
 
@@ -1278,7 +1278,7 @@ const requestPasswordReset = async (req, res) => {
             });
         }
 
-        const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
+        const otpCode = String(randomInt(1000, 10000));
         await setOtpForUser(user, otpCode, AUTH_INTENTS.PASSWORD_RESET);
         const warning = await sendOtpSms(phoneNumber, otpCode);
 
@@ -1372,18 +1372,19 @@ const resetPasswordWithOtp = async (req, res) => {
  *    authStage: PASSWORD_RESET_REQUIRED and the frontend gates all navigation
  *    until this endpoint is called successfully.
  *
- * 2. Any authenticated user choosing to change their password in-session
- *    (no current-password verification required — this endpoint trusts the JWT).
+ * 2. Any authenticated user choosing to change their password in-session.
+ *    For this path, currentPassword is required unless the account is in the
+ *    forced-reset state (status='password_reset_required').
  *
  * On success, account status is set to 'active' to clear the forced-reset gate.
  *
  * Requires: valid JWT in the Authorization header (enforced by authMiddleware).
  *
- * @param {import('express').Request}  req - Body: { password }; req.user populated by authMiddleware.
+ * @param {import('express').Request}  req - Body: { password, currentPassword? }; req.user populated by authMiddleware.
  * @param {import('express').Response} res
  */
 const setPassword = async (req, res) => {
-    const { password } = req.body;
+     const { password, currentPassword } = req.body;
 
     try {
         if (!password || password.length < 8) {
@@ -1393,6 +1394,18 @@ const setPassword = async (req, res) => {
         const user = await UserAccount.findByPk(req.user.id);
         if (!user) {
             return res.status(404).json({ error: 'User not found.' });
+        }
+
+        const needsForcedReset = String(user.status || '').toLowerCase() === 'password_reset_required';
+        if (!needsForcedReset) {
+            if (!currentPassword) {
+                return res.status(401).json({ error: 'Current password is required.' });
+            }
+
+            const currentPasswordMatches = await bcrypt.compare(String(currentPassword), user.hashedPassword || '');
+            if (!currentPasswordMatches) {
+                return res.status(401).json({ error: 'Current password is incorrect.' });
+            }
         }
 
         user.hashedPassword = await bcrypt.hash(password, 10);

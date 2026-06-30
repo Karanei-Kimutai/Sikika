@@ -326,4 +326,68 @@ describe('Auth Controller', () => {
         expect(bcrypt.hash).toHaveBeenCalledWith('NewStrongPass!123', 10);
         expect(user.save).toHaveBeenCalled();
     });
+
+    test('set-password requires currentPassword for non-forced-reset accounts', async () => {
+        const user = buildUser({
+            status: 'active',
+            hashedPassword: 'stored-hash'
+        });
+        UserAccount.findByPk.mockResolvedValue(user);
+
+        const response = await request(app)
+            .post('/api/auth/set-password')
+            .send({ password: 'NewStrongPass!123' });
+
+        expect(response.status).toBe(401);
+        expect(response.body.error).toMatch(/current password is required/i);
+    });
+
+    test('set-password rejects wrong currentPassword for non-forced-reset accounts', async () => {
+        const user = buildUser({
+            status: 'active',
+            hashedPassword: 'stored-hash'
+        });
+        UserAccount.findByPk.mockResolvedValue(user);
+        bcrypt.compare.mockResolvedValueOnce(false);
+
+        const response = await request(app)
+            .post('/api/auth/set-password')
+            .send({ password: 'NewStrongPass!123', currentPassword: 'WrongPass!123' });
+
+        expect(response.status).toBe(401);
+        expect(response.body.error).toMatch(/current password is incorrect/i);
+    });
+
+    test('set-password accepts correct currentPassword for non-forced-reset accounts', async () => {
+        const user = buildUser({
+            status: 'active',
+            hashedPassword: 'stored-hash'
+        });
+        UserAccount.findByPk.mockResolvedValue(user);
+        bcrypt.compare.mockResolvedValueOnce(true);
+
+        const response = await request(app)
+            .post('/api/auth/set-password')
+            .send({ password: 'NewStrongPass!123', currentPassword: 'CurrentPass!123' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.message).toMatch(/password set successfully/i);
+        expect(bcrypt.hash).toHaveBeenCalledWith('NewStrongPass!123', 10);
+    });
+
+    test('set-password allows forced-reset flow without currentPassword', async () => {
+        const user = buildUser({
+            status: 'password_reset_required',
+            hashedPassword: 'stored-hash'
+        });
+        UserAccount.findByPk.mockResolvedValue(user);
+
+        const response = await request(app)
+            .post('/api/auth/set-password')
+            .send({ password: 'NewStrongPass!123' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.message).toMatch(/password set successfully/i);
+        expect(user.status).toBe('active');
+    });
 });
