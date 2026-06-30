@@ -103,6 +103,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
   const [reassignmentFilter, setReassignmentFilter] = useState("PENDING");
   const [reviewingRequestId, setReviewingRequestId] = useState("");
   const [selectedModerationRow, setSelectedModerationRow] = useState(null);
+  const [reviewingModerationReportId, setReviewingModerationReportId] = useState("");
   const [ussdCallbacks, setUssdCallbacks] = useState([]);
   const [updatingCallbackId, setUpdatingCallbackId] = useState("");
 
@@ -250,6 +251,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
       setSuccessMessage("User banned successfully.");
       setBanModal(null);
       await loadDashboard();
+      await loadBannedUsersData();
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Failed to apply ban.");
     } finally {
@@ -330,10 +332,23 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
 
   useEffect(() => {
     // Initial load only; explicit refreshes happen after mutation actions.
-    const timerId = window.setTimeout(() => {
-      void loadDashboard();
-    }, 0);
-    return () => window.clearTimeout(timerId);
+    // The mounted flag prevents late setState calls if the component unmounts
+    // while the initial fetch is still in flight.
+    let mounted = true;
+    async function initialLoad() {
+      setLoading(true);
+      setErrorMessage("");
+      try {
+        const data = await getNgoAdminDashboard();
+        if (mounted) setDashboard(data);
+      } catch (error) {
+        if (mounted) setErrorMessage(error.response?.data?.error || "Failed to load NGO admin workspace.");
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    void initialLoad();
+    return () => { mounted = false; };
   }, []);
 
   useEffect(() => {
@@ -501,8 +516,10 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
   }
 
   async function handleModerationAction(reportId, action) {
+    if (reviewingModerationReportId) return;
     setErrorMessage("");
     setSuccessMessage("");
+    setReviewingModerationReportId(reportId);
 
     try {
       await reviewModerationReport(reportId, "APPROVED", action);
@@ -510,6 +527,8 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
       await loadDashboard();
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Failed to apply moderation action.");
+    } finally {
+      setReviewingModerationReportId("");
     }
   }
 
@@ -898,6 +917,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
           selectedModerationRow={selectedModerationRow}
           setSelectedModerationRow={setSelectedModerationRow}
           onModerationAction={handleModerationAction}
+          reviewingModerationReportId={reviewingModerationReportId}
           onOpenBanModal={handleOpenBanModal}
           onUnban={handleUnban}
           bannedUsers={bannedUsers}
@@ -976,6 +996,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
             <form className="admin-search" onSubmit={handleSearch}>
               <input
                 type="search"
+                aria-label="Case intelligence search"
                 autoComplete="off"
                 placeholder="Search by case ID, user ID, or phone number"
                 value={searchTerm}
@@ -1074,12 +1095,14 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
               <div className="report-filter-row">
                 <input
                   type="search"
+                  aria-label="Filter reports by ID, category, or status"
                   autoComplete="off"
                   placeholder="Search report id, category, or status"
                   value={reportFilters.query}
                   onChange={(event) => setReportFilters((prev) => ({ ...prev, query: event.target.value }))}
                 />
                 <select
+                  aria-label="Filter by category"
                   className={reportFilters.category !== "ALL" ? "filter-selected" : ""}
                   value={reportFilters.category}
                   onChange={(event) => setReportFilters((prev) => ({ ...prev, category: event.target.value }))}
@@ -1091,6 +1114,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
                   ))}
                 </select>
                 <select
+                  aria-label="Filter by priority"
                   className={reportFilters.severity !== "ALL" ? "filter-selected" : ""}
                   value={reportFilters.severity}
                   onChange={(event) => setReportFilters((prev) => ({ ...prev, severity: event.target.value }))}

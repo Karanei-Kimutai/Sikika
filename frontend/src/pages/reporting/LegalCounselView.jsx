@@ -54,6 +54,11 @@ export default function LegalCounselView({
     String(s || "").toLowerCase().split("_").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
 
   const handleStatusUpdate = async (reportId, reportStatus) => {
+    if (reportStatus === "RESOLVED" || reportStatus === "WITHDRAWN") {
+      const confirmed = window.confirm(`Set this report to ${reportStatus.replace(/_/g, " ")}? This action can affect active support workflows.`);
+      if (!confirmed) return;
+    }
+
     setErrorMessage(""); setSuccessMessage("");
     try {
       await updateReportStatus(reportId, reportStatus, true);
@@ -119,6 +124,11 @@ export default function LegalCounselView({
   };
 
   const handleUpdateCaseStatus = async (legalCaseId, nextStatus) => {
+    if (nextStatus === "CLOSED") {
+      const confirmed = window.confirm("Close this legal case now? This should only be done when the case is fully complete.");
+      if (!confirmed) return;
+    }
+
     setUpdatingCaseStatusId(legalCaseId);
     setErrorMessage(""); setSuccessMessage("");
     try {

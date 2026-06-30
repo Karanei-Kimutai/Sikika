@@ -53,6 +53,7 @@ function ModerationDashboardPage() {
   const [successMessage, setSuccessMessage] = useState("");
   const [activeTab, setActiveTab] = useState("pending");
   const [selectedHistoryReport, setSelectedHistoryReport] = useState(null);
+  const [reviewingReportId, setReviewingReportId] = useState("");
   const gridRef = useRef(null);
   const historyBodyRef = useRef(null);
 
@@ -80,7 +81,11 @@ function ModerationDashboardPage() {
 
   // Close the detail modal whenever the user leaves the history tab.
   useEffect(() => {
-    if (activeTab !== "history") setSelectedHistoryReport(null);
+    if (activeTab === "history") return;
+    const timerId = window.setTimeout(() => {
+      setSelectedHistoryReport(null);
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, [activeTab]);
 
   async function loadReports() {
@@ -133,8 +138,10 @@ function ModerationDashboardPage() {
    * @param {"remove_message"|"ban_user"|"none"} action - downstream side-effect
    */
   async function review(reportId, reviewStatus, action = "none") {
+    if (reviewingReportId) return;
     setErrorMessage("");
     setSuccessMessage("");
+    setReviewingReportId(reportId);
 
     try {
       await axios.patch(
@@ -146,6 +153,8 @@ function ModerationDashboardPage() {
       await loadReports();
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Failed to review report.");
+    } finally {
+      setReviewingReportId("");
     }
   }
 
@@ -161,6 +170,9 @@ function ModerationDashboardPage() {
           <button
             type="button"
             className={`moderation-tab-btn${activeTab === "pending" ? " active" : ""}`}
+            role="tab"
+            aria-selected={activeTab === "pending"}
+            aria-controls="moderation-pending-panel"
             onClick={() => setActiveTab("pending")}
           >
             Pending Queue
@@ -168,6 +180,9 @@ function ModerationDashboardPage() {
           <button
             type="button"
             className={`moderation-tab-btn${activeTab === "history" ? " active" : ""}`}
+            role="tab"
+            aria-selected={activeTab === "history"}
+            aria-controls="moderation-history-panel"
             onClick={() => setActiveTab("history")}
           >
             Review History
@@ -179,7 +194,7 @@ function ModerationDashboardPage() {
 
         {/* ── Pending Queue tab ── */}
         {activeTab === "pending" && (
-          <>
+          <section id="moderation-pending-panel" role="tabpanel" aria-label="Pending moderation queue">
             {loading ? (
               <p className="wa-empty-state">Loading reports...</p>
             ) : pendingReports.length === 0 ? (
@@ -216,6 +231,7 @@ function ModerationDashboardPage() {
                       <button
                         type="button"
                         className="secondary-btn"
+                        disabled={Boolean(reviewingReportId)}
                         onClick={() => review(report.contentReportId, "REJECTED", "none")}
                       >
                         Reject Report
@@ -223,6 +239,7 @@ function ModerationDashboardPage() {
                       <button
                         type="button"
                         className="secondary-btn"
+                        disabled={Boolean(reviewingReportId)}
                         onClick={() => review(report.contentReportId, "APPROVED", "remove_message")}
                       >
                         Approve + Remove Message
@@ -230,6 +247,7 @@ function ModerationDashboardPage() {
                       <button
                         type="button"
                         className="secondary-btn"
+                        disabled={Boolean(reviewingReportId)}
                         onClick={() => review(report.contentReportId, "APPROVED", "ban_user")}
                       >
                         Approve + Ban User
@@ -239,12 +257,12 @@ function ModerationDashboardPage() {
                 ))}
               </section>
             )}
-          </>
+          </section>
         )}
 
         {/* ── Review History tab ── */}
         {activeTab === "history" && (
-          <>
+          <section id="moderation-history-panel" role="tabpanel" aria-label="Moderation review history">
             {loading ? (
               <p className="wa-empty-state">Loading history...</p>
             ) : reviewedReports.length === 0 ? (
@@ -295,7 +313,7 @@ function ModerationDashboardPage() {
                 </table>
               </div>
             )}
-          </>
+          </section>
         )}
       </section>
 

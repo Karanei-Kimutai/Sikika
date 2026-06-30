@@ -29,6 +29,11 @@ export default function StaffReportView({
     String(s || "").toLowerCase().split("_").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
 
   const handleStatusUpdate = async (reportId, reportStatus) => {
+    if (reportStatus === "RESOLVED" || reportStatus === "WITHDRAWN") {
+      const confirmed = window.confirm(`Set this report to ${reportStatus.replace(/_/g, " ")}? This action can affect active support workflows.`);
+      if (!confirmed) return;
+    }
+
     setErrorMessage(""); setSuccessMessage("");
     try {
       await updateReportStatus(reportId, reportStatus, true);
