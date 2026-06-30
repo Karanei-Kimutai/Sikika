@@ -69,12 +69,7 @@ function AuthPage({ onNavigate }) {
   const switchToSignin = (initialPhone) => {
     clearMessages();
     setAuthMode("signin");
-    // SignInFlow manages its own signinPhone state; we pass initialPhone via a key
-    // reset trick by storing it as a transient signal (handled via key prop on SignInFlow).
-    if (initialPhone) {
-      // Store in sessionStorage transiently so SignInFlow can pre-fill on mount.
-      sessionStorage.setItem("__auth_prefill_phone", initialPhone);
-    }
+    void initialPhone;
   };
 
   /**
@@ -85,9 +80,7 @@ function AuthPage({ onNavigate }) {
   const switchToSignup = (initialPhone) => {
     clearMessages();
     setAuthMode("signup");
-    if (initialPhone) {
-      sessionStorage.setItem("__auth_prefill_phone", initialPhone);
-    }
+    void initialPhone;
   };
 
   return (

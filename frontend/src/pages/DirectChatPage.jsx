@@ -192,6 +192,7 @@ const DirectChatPage = () => {
   const [currentUserId] = useState(initialPayload?.userId || initialPayload?.id || null);
   const [currentUserRole] = useState((initialPayload?.role || '').toString().toLowerCase());
   const [errorMessage, setErrorMessage] = useState('');
+  const [sendErrorMessage, setSendErrorMessage] = useState('');
   const [noticeMessage, setNoticeMessage] = useState('');
   // Non-blocking — shown while the counterpart hasn't completed one-time E2EE
   // key setup yet. Unlike errorMessage, this never disables the composer.
@@ -270,23 +271,16 @@ const DirectChatPage = () => {
 
     socketRef.current = createSocket(token);
 
+    const channelController = new AbortController();
+
     const loadChannels = async () => {
       try {
-        // Channel list is identity-scoped by Authorization token.
-        // Survivors may request archived or deleted views via query params.
-        // Staff always receive active channels only (enforced server-side too).
-        let channelParams;
-        if (currentUserRole === 'survivor') {
-          if (showDeletedChannels) {
-            // Trash view: only deleted channels. Deliberately separate from active/archived.
-            channelParams = { includeDeleted: true };
-          } else if (showArchivedChannels) {
-            channelParams = { includeArchived: true };
-          }
-        }
+        // Survivors fetch all channel states once; archive/trash toggles are
+        // client-side filters so socket lifecycle is not tied to view toggles.
         const response = await axios.get(`${API_BASE_URL}/api/chat/channels`, {
           headers: { Authorization: `Bearer ${token}` },
-          params: channelParams
+          params: currentUserRole === 'survivor' ? { includeArchived: true, includeDeleted: true } : undefined,
+          signal: channelController.signal
         });
         const loadedChannels = Array.isArray(response.data) ? response.data : [];
         setChannels(loadedChannels);
@@ -300,6 +294,8 @@ const DirectChatPage = () => {
         const activeFallback = loadedChannels.find((channel) => channel.chatChannelStatus === 'active')?.chatId || null;
         setActiveChannelId(resolvedPreferred || activeFallback || loadedChannels[0]?.chatId || null);
       } catch (error) {
+        // Ignore cancellation — normal cleanup on unmount, not an error.
+        if (error.name === 'AbortError' || error.code === 'ERR_CANCELED') return;
         setErrorMessage(error.response?.data?.error || 'Failed to load chat channels.');
       }
     };
@@ -307,14 +303,21 @@ const DirectChatPage = () => {
     loadChannels();
 
     return () => {
+      channelController.abort();
       if (socketRef.current) {
         socketRef.current.disconnect();
       }
     };
-  }, [showArchivedChannels, showDeletedChannels, currentUserId, currentUserRole]);
+  }, [currentUserId, currentUserRole]);
 
   const activeChannel = channels.find((channel) => channel.chatId === activeChannelId) || null;
   const actionMenuChannel = channels.find((channel) => channel.chatId === menuChannelId) || null;
+  const displayedChannels = useMemo(() => {
+    if (currentUserRole !== 'survivor') return channels;
+    if (showDeletedChannels) return channels.filter((channel) => channel.chatChannelStatus === 'deleted');
+    if (showArchivedChannels) return channels.filter((channel) => channel.chatChannelStatus === 'archived');
+    return channels.filter((channel) => channel.chatChannelStatus === 'active');
+  }, [channels, currentUserRole, showArchivedChannels, showDeletedChannels]);
 
   // The pending queue's source of truth is localStorage, not React state —
   // bumpPendingVersion (on enqueue/flush) just forces this cheap re-read.
@@ -349,18 +352,9 @@ const DirectChatPage = () => {
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      // Mirror the same param logic as loadChannels so refresh shows the same view.
-      let refreshParams;
-      if (currentUserRole === 'survivor') {
-        if (showDeletedChannels) {
-          refreshParams = { includeDeleted: true };
-        } else if (showArchivedChannels) {
-          refreshParams = { includeArchived: true };
-        }
-      }
       const refreshed = await axios.get(`${API_BASE_URL}/api/chat/channels`, {
         headers: { Authorization: `Bearer ${token}` },
-        params: refreshParams
+        params: currentUserRole === 'survivor' ? { includeArchived: true, includeDeleted: true } : undefined
       });
       const loadedChannels = Array.isArray(refreshed.data) ? refreshed.data : [];
       setChannels(loadedChannels);
@@ -725,7 +719,7 @@ const DirectChatPage = () => {
     if (!items.length) return;
     const mm = staggerIn(items, { y: 8, stagger: 0.04 });
     return () => mm.revert();
-  }, [channels, showArchivedChannels, showDeletedChannels]);
+  }, [displayedChannels]);
 
   // Cross-fade the message panel when the active channel changes, so
   // switching chats reads as a deliberate transition rather than a flicker.
@@ -759,6 +753,7 @@ const DirectChatPage = () => {
 
     // Optimistic clear keeps composer responsive while encryption/socket emits.
     const plaintext = newMessage;
+    setSendErrorMessage('');
     setNewMessage(''); // Clear input
 
     if (!effectiveCryptoKey) {
@@ -785,6 +780,8 @@ const DirectChatPage = () => {
       if (sendBtnRef.current) pulse(sendBtnRef.current);
     } catch (err) {
       console.error('Failed to encrypt and send message:', err);
+      setSendErrorMessage('Message failed to send. Please retry.');
+      setNewMessage((prev) => (prev ? prev : plaintext));
     }
   };
 
@@ -804,7 +801,7 @@ const DirectChatPage = () => {
         <aside className="wa-sidebar">
           <header className="wa-sidebar-header">
             <h2>Chats</h2>
-            <span>{channels.length}</span>
+            <span>{displayedChannels.length}</span>
             {currentUserRole === 'survivor' && (
               <>
                 {/* Archive toggle — mutually exclusive with Trash view. Icon-only, label moved to title/aria-label. */}
@@ -844,7 +841,7 @@ const DirectChatPage = () => {
           <div className="wa-chat-list" ref={chatListRef}>
             {errorMessage && <p className="wa-error">{errorMessage}</p>}
 
-            {channels.map((channel) => (
+            {displayedChannels.map((channel) => (
               <div key={channel.chatId} className={`wa-chat-item ${activeChannelId === channel.chatId ? 'active' : ''}`}>
                 <button
                   type="button"
@@ -902,7 +899,7 @@ const DirectChatPage = () => {
               </div>
             ))}
 
-            {channels.length === 0 && !errorMessage && (
+            {displayedChannels.length === 0 && !errorMessage && (
               <p className="wa-empty-list">
                 {showDeletedChannels
                   ? 'No deleted chats in Trash.'
@@ -945,8 +942,9 @@ const DirectChatPage = () => {
 
               {activeChannel?.asyncDeliveryHint && <p role="alert" className="status-message warning">{activeChannel.asyncDeliveryHint}</p>}
               {effectiveKeyBanner && <p role="status" className="status-message warning">{effectiveKeyBanner}</p>}
+              {sendErrorMessage && <p role="alert" className="status-message warning">{sendErrorMessage}</p>}
 
-              <div className="wa-messages" ref={messagesListRef}>
+              <div className="wa-messages" ref={messagesListRef} aria-live="polite" aria-label="Chat message timeline">
                 {effectiveMessages.length === 0 && pendingMessages.length === 0 ? (
                   <p className="wa-empty-state">Messages in this channel are encrypted end-to-end.</p>
                 ) : (

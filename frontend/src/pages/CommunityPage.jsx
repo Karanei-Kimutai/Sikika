@@ -128,11 +128,13 @@ function CommunityPage() {
   });
 
   // Pulls rooms and preserves selection when possible.
-  async function loadRooms({ silent = false } = {}) {
+  // `signal` is an optional AbortSignal to cancel the request on unmount.
+  async function loadRooms({ silent = false, signal } = {}) {
     if (!silent) setErrorMessage("");
     try {
       const response = await axios.get(`${API_BASE_URL}/api/community/rooms`, {
-        headers: getAuthHeaders()
+        headers: getAuthHeaders(),
+        signal
       });
       const nextRooms = sortRoomsByActivity(response.data.rooms || []);
       setRooms(nextRooms);
@@ -151,6 +153,8 @@ function CommunityPage() {
         return nextRooms[0]?.roomId || "";
       });
     } catch (error) {
+      // Ignore cancellation — normal cleanup on unmount, not an error.
+      if (error.name === "AbortError" || error.code === "ERR_CANCELED") return;
       if (!silent) {
         setErrorMessage(error.response?.data?.error || "Failed to load community rooms.");
       }
@@ -186,10 +190,16 @@ function CommunityPage() {
   }
 
   useEffect(() => {
+    const controller = new AbortController();
+    // Deferred one tick to satisfy the react-hooks/set-state-in-effect rule;
+    // loadRooms calls setState and must not run synchronously inside the effect body.
     const timerId = window.setTimeout(() => {
-      void loadRooms();
+      void loadRooms({ signal: controller.signal });
     }, 0);
-    return () => window.clearTimeout(timerId);
+    return () => {
+      window.clearTimeout(timerId);
+      controller.abort();
+    };
   }, []);
 
   // Light polling keeps room ordering fresh if other users are active.
@@ -569,7 +579,7 @@ function CommunityPage() {
           {errorMessage && <p role="alert" className="status-message warning">{errorMessage}</p>}
           {successMessage && <p className="status-message">{successMessage}</p>}
 
-          <div className="community-messages" ref={messagesViewportRef}>
+          <div className="community-messages" ref={messagesViewportRef} aria-live="polite" aria-label="Community message timeline">
             {canAccessActiveRoom && messages.map((message) => (
               <article
                 key={message.communityMessageId}
@@ -583,6 +593,8 @@ function CommunityPage() {
                     <button
                       type="button"
                       className="message-menu-trigger"
+                      aria-label="Message actions"
+                      aria-expanded={activeMessageMenuId === message.communityMessageId}
                       onClick={() =>
                         setActiveMessageMenuId((current) =>
                           current === message.communityMessageId ? "" : message.communityMessageId
