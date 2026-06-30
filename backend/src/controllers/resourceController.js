@@ -129,6 +129,13 @@ function toApiResource(resource) {
 }
 
 /**
+ * Escapes SQL LIKE wildcard chars so user-entered text is matched literally.
+ */
+function escapeLikePattern(term) {
+  return String(term).replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
+/**
  * Public list endpoint used by guests and authenticated users.
  */
 async function listResources(req, res) {
@@ -144,10 +151,11 @@ async function listResources(req, res) {
 
   // Optional search filter over title, description, and category text.
   if (search) {
+    const pattern = `%${escapeLikePattern(search)}%`;
     where[Op.or] = [
-      { resourceTitle: { [Op.like]: `%${search}%` } },
-      { resourceDescription: { [Op.like]: `%${search}%` } },
-      { resourceCategory: { [Op.like]: `%${search}%` } }
+      { resourceTitle: { [Op.like]: pattern } },
+      { resourceDescription: { [Op.like]: pattern } },
+      { resourceCategory: { [Op.like]: pattern } }
     ];
   }
 
