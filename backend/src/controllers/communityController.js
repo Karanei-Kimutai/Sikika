@@ -24,10 +24,24 @@ const { cascadeReassignOnStaffBan } = require("./adminController");
  * - Moderation actions are logged for NGO-admin accountability.
  */
 
+/**
+ * Extracts the authenticated user's UUID from authMiddleware-attached JWT claims.
+ *
+ * @param {import('express').Request} req
+ * @returns {string|null}
+ */
 function getUserIdFromRequest(req) {
   return req.user?.userId || req.user?.id || null;
 }
 
+/**
+ * Resolves ACTIVE authenticated actor context for community operations.
+ * Returns null if the token is missing, the user does not exist, or the
+ * account is in a non-ACTIVE state (suspended, banned, etc.).
+ *
+ * @param {import('express').Request} req
+ * @returns {Promise<{userId: string, role: string}|null>}
+ */
 async function getActor(req) {
   const userId = getUserIdFromRequest(req);
   if (!userId) return null;
@@ -67,8 +81,12 @@ async function incrementModeratorWorkload(userId, transaction) {
  * ------------------
  * Returns privacy-safe display metadata for public community rendering.
  *
- * Survivors are pseudonymized while verified staff roles are shown with
- * explicit role badges.
+ * Survivors are pseudonymized (shown only by their displayNickname) while
+ * verified staff roles are shown with explicit role badges. This keeps
+ * survivors' real identities out of the community timeline.
+ *
+ * @param {string} userId - The UserAccount UUID of the message sender.
+ * @returns {Promise<{displayName: string, role: string, badge: string|null}>}
  */
 async function getDisplayIdentity(userId) {
   const user = await UserAccount.findByPk(userId, { attributes: ["userId", "userRole"] });

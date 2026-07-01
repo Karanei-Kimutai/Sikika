@@ -1,3 +1,22 @@
+/**
+ * profileController.js
+ * --------------------
+ * Handles reading and updating the authenticated user's own profile.
+ *
+ * Each role has a different set of mutable fields:
+ *   SURVIVOR       → displayNickname, assignedGender, residenceCounty, privacyPreferencesJson
+ *   COUNSELLOR     → professionalSpecialization, availabilityStatus
+ *   LEGAL_COUNSEL  → professionalSpecialization, availabilityStatus
+ *   NGO_ADMIN      → administrativeDepartment
+ *   MODERATOR      → (read-only via this controller — no mutable fields exposed)
+ *
+ * Immutable fields (userId, userRole, phoneNumber) are never updated here even
+ * if included in the request body.
+ *
+ * All endpoints are scoped to the authenticated caller — cross-user reads and
+ * writes are not possible through this controller.
+ */
+
 const {
   UserAccount,
   SurvivorProfile,
@@ -6,12 +25,26 @@ const {
   NgoAdministratorProfile
 } = require('../models');
 
+const { normalizeRole } = require('../utils/roles');
+
+/**
+ * Extracts the authenticated user's ID from the request's JWT claims.
+ * The payload carries both 'userId' and 'id' for backward compatibility.
+ *
+ * @param {import('express').Request} req
+ * @returns {string|null} The user's UUID, or null if no valid claim is present.
+ */
 function getUserIdFromRequest(req) {
   return req.user?.userId || req.user?.id || null;
 }
 
-const { normalizeRole } = require('../utils/roles');
-
+/**
+ * Loads a UserAccount by ID and returns it with its normalized role string.
+ * Returns null when the user does not exist or the ID is falsy.
+ *
+ * @param {string|null} userId - The UserAccount UUID from the JWT.
+ * @returns {Promise<{ user: UserAccount, role: string }|null>}
+ */
 async function getActorWithRole(userId) {
   if (!userId) return null;
 
@@ -27,6 +60,25 @@ async function getActorWithRole(userId) {
   };
 }
 
+/**
+ * getProfile
+ * ----------
+ * GET /api/profile/me
+ *
+ * Returns the authenticated user's account and role-specific profile data.
+ * For SURVIVOR callers, also includes the userId and phoneNumber of their
+ * assigned counsellor and legal counsel (for display in the profile page).
+ *
+ * Response shape:
+ *   {
+ *     user:          { userId, phoneNumber, role, accountStatus, passwordResetRequired, createdAt },
+ *     profile:       <role-specific profile row or null>,
+ *     assignedStaff: { counsellor, legalCounsel } | null  (SURVIVOR only)
+ *   }
+ *
+ * @param {import('express').Request}  req
+ * @param {import('express').Response} res
+ */
 async function getProfile(req, res) {
   try {
     const actorUserId = getUserIdFromRequest(req);
@@ -102,6 +154,24 @@ async function getProfile(req, res) {
   }
 }
 
+/**
+ * updateProfile
+ * -------------
+ * PATCH /api/profile/me
+ *
+ * Updates the mutable fields of the authenticated user's role-specific profile.
+ * Each role has a different allowed field set; fields outside that set are silently
+ * ignored even if included in the request body.
+ *
+ * Validation is applied field-by-field: required strings are trimmed and
+ * length-capped; ENUM fields are validated against allowed values before saving.
+ *
+ * Response:
+ *   200 { message: string, profile: <updated profile row> }
+ *
+ * @param {import('express').Request}  req
+ * @param {import('express').Response} res
+ */
 async function updateProfile(req, res) {
   try {
     const actorUserId = getUserIdFromRequest(req);

@@ -4,15 +4,26 @@ import SikikaLogo from "./SikikaLogo";
  * AdminWorkspace
  * --------------
  * Layout shell for the NGO Admin dashboard (the only admin role — System
- * Admin was removed).
+ * Admin was removed). Renders a two-column sidebar + content grid, a branded
+ * section navigation sidebar, and a topbar identity card.
  *
  * Why this component exists:
  * - centralizes common chrome (identity card, sidebar/actions, module area)
  * - lets the dashboard focus on business logic and section rendering
  *
- * Key props:
- * - `menuItems` + `activeSection`: section navigation metadata/state
- * - `showSidebar`: allows compact single-column mode where page-level nav is external
+ * @param {object} props
+ * @param {string} props.roleLabel - Short role name shown in the sidebar brand block and topbar kicker (e.g. "NGO Admin").
+ * @param {string} props.title - Page heading shown in the content area topbar.
+ * @param {string} props.subtitle - Subheading or context line below the title.
+ * @param {Array<{ label: string, value: string }>} props.profile - Key–value pairs rendered in the identity card (e.g. phone, status).
+ * @param {Array<{ id: string, label: string, description: string }>} props.menuItems - Sidebar navigation entries.
+ * @param {string} props.activeSection - The `id` of the currently selected menu item.
+ * @param {Function} props.onSelectSection - Called with the selected menu item's `id` when a sidebar button is clicked.
+ * @param {Function} props.onNavigate - App.jsx's pushState navigator for the sidebar's Library/Community links.
+ * @param {Function} props.onSignOut - Called when the Sign Out button is clicked.
+ * @param {boolean} [props.showSidebar=true] - When false, hides the sidebar for compact single-column mode.
+ * @param {React.ReactNode} props.children - The active section's content to render in the module area.
+ * @returns {React.ReactElement}
  */
 function AdminWorkspace({
   roleLabel,
