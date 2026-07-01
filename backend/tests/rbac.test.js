@@ -1,3 +1,22 @@
+/**
+ * rbac.test.js
+ * ------------
+ * Smoke tests for role-based access control enforcement on the REST API.
+ *
+ * These tests verify that the authMiddleware + role-guard combination correctly
+ * rejects callers whose role does not match the required permission for an endpoint.
+ * They are intentionally broad — one test per denial scenario — and do not exhaustively
+ * cover every endpoint. Detailed per-endpoint access control is tested alongside the
+ * controller in the relevant test file (e.g. banEnforcement.test.js, banCascade.test.js).
+ *
+ * Covered:
+ * - A SURVIVOR token is denied access to the NGO Admin dashboard (role guard: NGO_ADMIN only).
+ * - A SURVIVOR token cannot read another survivor's incident report (ownership guard).
+ *
+ * All DB models and Cloudinary are mocked. A real JWT is signed with the test secret so
+ * that authMiddleware can verify it without bypassing the auth check.
+ */
+
 const request = require("supertest");
 const express = require("express");
 const jwt = require("jsonwebtoken");
@@ -88,7 +107,7 @@ describe("RBAC API protections", () => {
     });
   });
 
-  test("denies survivor access to NGO admin dashboard", async () => {
+  test("returns 403 Insufficient permissions when a SURVIVOR token is used to call the NGO admin dashboard endpoint", async () => {
     const token = makeToken({ id: "survivor-user", userId: "survivor-user", role: "SURVIVOR" });
 
     const response = await request(app)
@@ -99,7 +118,7 @@ describe("RBAC API protections", () => {
     expect(response.body.error).toContain("Insufficient permissions");
   });
 
-  test("denies survivor access to another survivor report", async () => {
+  test("returns 403 when a SURVIVOR tries to read an incident report that belongs to a different survivor", async () => {
     const token = makeToken({ id: "survivor-user", userId: "survivor-user", role: "SURVIVOR" });
 
     IncidentReport.findByPk.mockResolvedValue({
