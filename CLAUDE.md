@@ -8,6 +8,12 @@ Gender-Based Violence (GBV) Support Platform for Kenya. Dual-channel (Web + USSD
 
 **Stack:** React 19 (frontend) · Node.js + Express 5 + Socket.io (backend) · MySQL + Sequelize · Africa's Talking (USSD + SMS OTP) · Cloudinary (file storage)
 
+## Documentation
+
+**Inline documentation** (JSDoc) is complete across all ~90 source files (10 batches, June 2026). Every function has a JSDoc block with `@param`/`@returns`/`@throws`; every React component documents all props and state variables; every module has a module-level JSDoc header.
+
+**Module-level docs** live in `docs/`. Key files: `data-model.md`, `api-reference.md`, `rbac.md`, `sockets.md`, `direct-chat.md`, `community-moderation.md`, `reporting.md`, `legal-cases.md`, `notifications.md`, `admin-dashboard.md`, `frontend-architecture.md`, `deployment.md`, `troubleshooting.md`, `glossary.md`. See `README.md` for the full index.
+
 ## Code Style
 
 All code in this project must include thorough inline documentation:
