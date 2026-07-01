@@ -54,6 +54,9 @@ export default function LegalCounselView({
     String(s || "").toLowerCase().split("_").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
 
   const handleStatusUpdate = async (reportId, reportStatus) => {
+    // Extra confirmation gate for terminal, hard-to-reverse transitions —
+    // guards against accidentally closing out an active support workflow
+    // with a single misclick.
     if (reportStatus === "RESOLVED" || reportStatus === "WITHDRAWN") {
       const confirmed = window.confirm(`Set this report to ${reportStatus.replace(/_/g, " ")}? This action can affect active support workflows.`);
       if (!confirmed) return;
@@ -124,6 +127,8 @@ export default function LegalCounselView({
   };
 
   const handleUpdateCaseStatus = async (legalCaseId, nextStatus) => {
+    // Same rationale as handleStatusUpdate above: CLOSED is a terminal state
+    // for the case, so require an explicit confirmation before committing to it.
     if (nextStatus === "CLOSED") {
       const confirmed = window.confirm("Close this legal case now? This should only be done when the case is fully complete.");
       if (!confirmed) return;

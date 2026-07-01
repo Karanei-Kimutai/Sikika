@@ -153,6 +153,9 @@ function NotificationBell({ isAuthenticated, onNavigate }) {
 
   // ── Unread count polling ─────────────────────────────────────────────────
   useEffect(() => {
+    // Disconnect on sign-out (isAuthenticated flips to false). When auth is
+    // present the singleton stays connected across re-renders — connecting
+    // happens in the socket-push effect below, not here.
     if (!isAuthenticated) {
       notificationSocket.disconnect();
       return;

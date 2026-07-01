@@ -609,6 +609,9 @@ async function reviewReport(req, res) {
   await report.save({ transaction });
 
   const message = await CommunityMessage.findByPk(report.reportedCommunityMessageId, { transaction });
+  // Prefer the snapshot taken at report-creation time (survives the message
+  // being deleted before review); fall back to the live message for reports
+  // created before reportedSenderUserId/reportedRoomId existed.
   const targetUserId = report.reportedSenderUserId || message?.senderUserId || null;
   const targetRoomId = report.reportedRoomId || message?.roomId || null;
 

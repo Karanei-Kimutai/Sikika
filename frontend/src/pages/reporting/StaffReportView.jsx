@@ -29,6 +29,9 @@ export default function StaffReportView({
     String(s || "").toLowerCase().split("_").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
 
   const handleStatusUpdate = async (reportId, reportStatus) => {
+    // Extra confirmation gate for terminal, hard-to-reverse transitions —
+    // guards against accidentally closing out an active support workflow
+    // with a single misclick.
     if (reportStatus === "RESOLVED" || reportStatus === "WITHDRAWN") {
       const confirmed = window.confirm(`Set this report to ${reportStatus.replace(/_/g, " ")}? This action can affect active support workflows.`);
       if (!confirmed) return;

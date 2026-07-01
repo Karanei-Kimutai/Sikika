@@ -516,6 +516,8 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
   }
 
   async function handleModerationAction(reportId, action) {
+    // Double-submit guard: ignore further review calls while one is in
+    // flight (Moderation Desk action buttons are also disabled via this flag).
     if (reviewingModerationReportId) return;
     setErrorMessage("");
     setSuccessMessage("");

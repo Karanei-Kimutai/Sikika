@@ -80,6 +80,8 @@ function ModerationDashboardPage() {
   }, [reports, activeTab]);
 
   // Close the detail modal whenever the user leaves the history tab.
+  // Deferred one tick to satisfy the react-hooks/set-state-in-effect rule;
+  // the setState below must not run synchronously inside the effect body.
   useEffect(() => {
     if (activeTab === "history") return;
     const timerId = window.setTimeout(() => {
@@ -138,6 +140,8 @@ function ModerationDashboardPage() {
    * @param {"remove_message"|"ban_user"|"none"} action - downstream side-effect
    */
   async function review(reportId, reviewStatus, action = "none") {
+    // Double-submit guard: while a review is in flight for any report, ignore
+    // further review calls (buttons are also disabled via reviewingReportId).
     if (reviewingReportId) return;
     setErrorMessage("");
     setSuccessMessage("");

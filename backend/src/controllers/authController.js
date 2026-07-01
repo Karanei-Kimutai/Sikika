@@ -1396,6 +1396,10 @@ const setPassword = async (req, res) => {
             return res.status(404).json({ error: 'User not found.' });
         }
 
+        // Forced-reset accounts skip current-password verification: they were
+        // just issued a temporary/OTP-gated password they never chose themselves,
+        // so requiring it here would just re-prompt the user for a value the
+        // system generated, not one they control.
         const needsForcedReset = String(user.status || '').toLowerCase() === 'password_reset_required';
         if (!needsForcedReset) {
             if (!currentPassword) {

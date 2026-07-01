@@ -64,23 +64,26 @@ function AuthPage({ onNavigate }) {
   /**
    * Switch to Sign In mode. Called by SignUpFlow when it detects SIGNIN_REQUIRED
    * (the phone already has an account).
-   * @param {string} [initialPhone] - pre-fill the phone field in SignInFlow
+   * @param {string} [initialPhone] - kept for call-site signature compatibility;
+   *   no longer used to pre-fill SignInFlow (the sessionStorage prefill hand-off
+   *   was removed — SignInFlow manages its own phone state independently now).
    */
   const switchToSignin = (initialPhone) => {
     clearMessages();
     setAuthMode("signin");
-    void initialPhone;
+    void initialPhone; // unused — see @param note above
   };
 
   /**
    * Switch to Sign Up mode. Called by SignInFlow when it detects SIGNUP_REQUIRED
    * (the phone hasn't completed signup yet).
-   * @param {string} [initialPhone] - pre-fill the phone field in SignUpFlow
+   * @param {string} [initialPhone] - kept for call-site signature compatibility;
+   *   no longer used to pre-fill SignUpFlow (see switchToSignin's note above).
    */
   const switchToSignup = (initialPhone) => {
     clearMessages();
     setAuthMode("signup");
-    void initialPhone;
+    void initialPhone; // unused — see @param note above
   };
 
   return (

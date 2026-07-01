@@ -312,6 +312,12 @@ const DirectChatPage = () => {
 
   const activeChannel = channels.find((channel) => channel.chatId === activeChannelId) || null;
   const actionMenuChannel = channels.find((channel) => channel.chatId === menuChannelId) || null;
+  // `channels` now always holds every status (active/archived/deleted) for
+  // survivors — see the single fetch in loadChannels above — so the
+  // archive/trash toggles filter client-side here instead of triggering a
+  // re-fetch. This decouples the socket connection's effect dependencies
+  // (currentUserId/currentUserRole only) from the view toggles, so switching
+  // Archive/Trash view no longer tears down and reconnects the socket.
   const displayedChannels = useMemo(() => {
     if (currentUserRole !== 'survivor') return channels;
     if (showDeletedChannels) return channels.filter((channel) => channel.chatChannelStatus === 'deleted');
@@ -781,6 +787,10 @@ const DirectChatPage = () => {
     } catch (err) {
       console.error('Failed to encrypt and send message:', err);
       setSendErrorMessage('Message failed to send. Please retry.');
+      // Restore the failed draft into the composer only if it's still empty —
+      // the optimistic clear above happens before encryption, so if the user
+      // has already typed something new while this failed in the background,
+      // don't clobber it with the stale draft.
       setNewMessage((prev) => (prev ? prev : plaintext));
     }
   };

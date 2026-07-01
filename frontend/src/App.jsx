@@ -86,6 +86,15 @@ const moderatorRoutes = {
   "/join": AuthPage
 };
 
+/**
+ * Rendered for any pathname not present in `knownPaths` (i.e. no route map
+ * has an entry for it), instead of the previous behavior of silently
+ * redirecting unrecognized paths to "/". Offers a single way back in
+ * (`onNavigate("/home")`) rather than leaving the user on a blank/broken page.
+ *
+ * @param {object}   props
+ * @param {Function} props.onNavigate - SPA navigation helper (see `navigate` in `App()`).
+ */
 function NotFoundPage({ onNavigate }) {
   return (
     <main className="maintenance-page" role="main" aria-label="Page not found">
@@ -130,6 +139,11 @@ function decodeRoleFromToken() {
   }
 }
 
+// Returns the raw pathname unfiltered — unlike the old behavior of falling
+// back to "/" for anything outside `knownPaths`, callers now decide what to
+// render for an unrecognized path (see the `hasKnownPath`/`NotFoundPage`
+// branch in `App()`), so a mistyped or stale URL surfaces a 404 instead of
+// silently bouncing to the landing/home page.
 function getCurrentPath() {
   return window.location.pathname;
 }
@@ -333,6 +347,9 @@ function App() {
   const activeRoutes = getRoutesForRole(role, isAuthenticated);
   const hasKnownPath = knownPaths.has(currentPath);
   const fallbackPath = isAuthenticated ? "/home" : "/";
+  // Route resolution only kicks in for recognized paths; an unknown path
+  // (hasKnownPath === false) skips straight to NotFoundPage rather than being
+  // coerced into fallbackPath/LandingPage.
   const finalPath = hasKnownPath ? (activeRoutes[roleResolvedPath] ? roleResolvedPath : fallbackPath) : currentPath;
   const Page = hasKnownPath ? (activeRoutes[finalPath] || LandingPage) : NotFoundPage;
 

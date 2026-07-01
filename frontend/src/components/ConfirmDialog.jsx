@@ -39,6 +39,8 @@ function ConfirmDialog({ isOpen, title, message, confirmLabel = 'Confirm', cance
         return;
       }
 
+      // Focus trap: keep Tab/Shift+Tab cycling inside the modal so keyboard
+      // users can't tab into background content while it's open.
       if (e.key === 'Tab' && overlayRef.current) {
         const focusable = overlayRef.current.querySelectorAll(
           'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
