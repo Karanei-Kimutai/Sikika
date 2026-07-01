@@ -1,8 +1,40 @@
 /**
- * Development fallback data for the public library.
+ * fallbackResources.js
+ * ---------------------
+ * Static fallback data shown in the public Library when the backend is
+ * unreachable (network error or Cloudinary misconfiguration returning 503).
  *
- * These entries match the backend seeder shape after API formatting, allowing
- * the frontend to render useful tiles before the Express API or database is on.
+ * These entries mirror the shape produced by the backend's API after category
+ * formatting, so LibraryPage.jsx can render resource tiles without conditional
+ * branching between live and fallback data.
+ *
+ * Fields per resource object:
+ *   id          {string} — stable slug used as the React list key; matches the
+ *                          backend resourceId UUID convention in spirit.
+ *   title       {string} — display name shown in the tile heading.
+ *   description {string} — one-sentence summary shown below the title.
+ *   category    {string} — snake_case category matching SupportResource ENUM values
+ *                          (emergency_hotlines | legal_guidance | shelters |
+ *                           self_help | safety_planning).
+ *   categoryLabel {string} — human-readable label shown as a chip/tag.
+ *   fileUrl     {string} — placeholder URL; real delivery goes through the
+ *                          backend proxy (GET /api/resources/:id/file) for live data.
+ *   uploadedAt  {string} — ISO 8601 timestamp shown in the tile metadata row.
+ */
+
+/**
+ * Five representative resources covering each supported category.
+ * Rendered by LibraryPage.jsx as static tiles when the live API is unavailable.
+ *
+ * @type {Array<{
+ *   id: string,
+ *   title: string,
+ *   description: string,
+ *   category: string,
+ *   categoryLabel: string,
+ *   fileUrl: string,
+ *   uploadedAt: string
+ * }>}
  */
 export const fallbackResources = [
   {
@@ -52,6 +84,12 @@ export const fallbackResources = [
   }
 ];
 
+/**
+ * Corresponding category filter options, mirroring the live `/api/resources/categories`
+ * response shape. Used to populate the Library's category filter when the API is down.
+ *
+ * @type {Array<{ value: string, label: string }>}
+ */
 export const fallbackCategories = [
   { value: "emergency_hotlines", label: "Emergency Hotlines" },
   { value: "legal_guidance", label: "Legal Guidance" },

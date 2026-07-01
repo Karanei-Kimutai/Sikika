@@ -13,11 +13,19 @@ import { staggerIn } from "../utils/motion";
  * Admin's queue showed who a request landed on — the assigned counsellor
  * had no visibility into their own callbacks beyond a notification.
  */
+/**
+ * @returns {React.ReactElement}
+ */
 export default function MyCallbacksPage() {
+  /** Callback request list fetched from GET /api/ussd/my-callback-requests. */
   const [callbacks, setCallbacks] = useState([]);
+  /** Whether the initial list fetch is in-flight. */
   const [isLoading, setIsLoading] = useState(true);
+  /** Error message to display when fetch or update fails. */
   const [errorMessage, setErrorMessage] = useState("");
+  /** Success message displayed after a status update. */
   const [successMessage, setSuccessMessage] = useState("");
+  /** callbackRequestId of the request currently being updated; used to disable its action buttons. */
   const [updatingId, setUpdatingId] = useState("");
   const tableRef = useRef(null);
 
@@ -30,6 +38,10 @@ export default function MyCallbacksPage() {
     return () => mm.revert();
   }, [callbacks]);
 
+  /**
+   * Fetches the counsellor's own callback queue and updates state.
+   * @returns {Promise<void>}
+   */
   async function loadCallbacks() {
     setIsLoading(true);
     setErrorMessage("");
@@ -50,6 +62,13 @@ export default function MyCallbacksPage() {
     return () => window.clearTimeout(timerId);
   }, []);
 
+  /**
+   * Updates the fulfillment status of a callback request and reloads the queue.
+   *
+   * @param {string} requestId - UssdCallbackRequest.callbackRequestId UUID.
+   * @param {"COMPLETED"|"CANCELLED"} status - New fulfillment status.
+   * @returns {Promise<void>}
+   */
   async function handleUpdate(requestId, status) {
     setUpdatingId(requestId);
     setErrorMessage("");

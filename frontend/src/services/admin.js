@@ -4,18 +4,32 @@ import { getToken } from "../utils/auth";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
 /**
- * Admin API service
- * -----------------
+ * admin.js
+ * --------
  * Centralized axios wrappers for NGO admin features (the only admin role —
  * System Admin and its infrastructure dashboard have been removed).
- * Each request uses the bearer token from sessionStorage via getToken().
+ * Each request attaches the Bearer token from sessionStorage via getToken().
+ * All functions return raw response.data to keep page-level composition flexible.
+ */
+
+/**
+ * Returns the Authorization header for authenticated requests, or an empty
+ * object when no token is present.
+ *
+ * @returns {{ Authorization: string } | {}}
  */
 function getAuthHeaders() {
   const token = getToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-// NGO workspace aggregate payload (operations KPIs + reports + staffing + resources).
+/**
+ * Fetches the NGO admin dashboard aggregate payload:
+ * operations KPIs, report summaries, staffing metrics, and resource counts.
+ * Used by the Command Center section of NgoAdminDashboardPage.
+ *
+ * @returns {Promise<object>} Dashboard aggregate data from the backend.
+ */
 export async function getNgoAdminDashboard() {
   const response = await axios.get(`${API_BASE_URL}/api/admin/ngo/dashboard`, {
     headers: getAuthHeaders()
@@ -23,7 +37,13 @@ export async function getNgoAdminDashboard() {
   return response.data;
 }
 
-// Cross-entity admin lookup used by triage workflows.
+/**
+ * Cross-entity admin search used by triage and team-capacity workflows.
+ * Returns survivors, staff, and reports matching the query string.
+ *
+ * @param {string} query - Free-text search term.
+ * @returns {Promise<{ results: object[] }>}
+ */
 export async function runAdminSearch(query) {
   const response = await axios.get(`${API_BASE_URL}/api/admin/search`, {
     headers: getAuthHeaders(),
@@ -32,8 +52,18 @@ export async function runAdminSearch(query) {
   return response.data;
 }
 
-// Toggle maintenance mode with optional reason and expected return timestamp.
-// NGO_ADMIN-gated — the one System-Admin capability retained, folded into the NGO dashboard.
+/**
+ * Toggles maintenance mode on or off. When enabled, all non-NGO-admin sessions
+ * receive the maintenance screen and the backend returns 503 for API requests.
+ * This capability was formerly owned by System Admin; it is now folded into the
+ * NGO Admin dashboard.
+ *
+ * @param {boolean} enabled - true to enable maintenance, false to disable.
+ * @param {object} [options={}]
+ * @param {string} [options.reason] - Human-readable description shown on the maintenance screen.
+ * @param {string} [options.expectedUntil] - ISO 8601 timestamp for the estimated return time.
+ * @returns {Promise<{ message: string, maintenance: object }>}
+ */
 export async function setMaintenanceMode(enabled, options = {}) {
   const payload = {
     enabled,
@@ -49,13 +79,22 @@ export async function setMaintenanceMode(enabled, options = {}) {
   return response.data;
 }
 
-// NGO-admin staff onboarding entrypoint for counsellor/legal counsel/moderator accounts.
-// Request contract (backend-enforced):
-// - phoneNumber: required
-// - password: required temporary credential
-// - role: COUNSELLOR | LEGAL_COUNSEL | MODERATOR
-// - specialization, availabilityStatus: optional role metadata (ignored for MODERATOR)
-// Response includes created staff summary used for success toasts and refresh.
+/**
+ * Creates a new staff account (onboarding entrypoint for COUNSELLOR, LEGAL_COUNSEL,
+ * and MODERATOR roles). The account is provisioned with a temporary password that
+ * triggers a forced-reset flow on first login.
+ *
+ * Required payload fields (backend-validated):
+ *   phoneNumber — unique phone number for the new staff member
+ *   password    — temporary credential; must meet complexity requirements
+ *   role        — "COUNSELLOR" | "LEGAL_COUNSEL" | "MODERATOR"
+ * Optional:
+ *   specialization     — practice area (ignored for MODERATOR)
+ *   availabilityStatus — initial status (defaults to AVAILABLE; ignored for MODERATOR)
+ *
+ * @param {object} payload - Staff account creation fields.
+ * @returns {Promise<{ message: string, staff: object }>}
+ */
 export async function createNgoStaffAccount(payload) {
   const response = await axios.post(
     `${API_BASE_URL}/api/admin/ngo/staff`,
@@ -65,9 +104,16 @@ export async function createNgoStaffAccount(payload) {
   return response.data;
 }
 
-// Suspends or reactivates a counsellor/legal-counsel account.
-// This mirrors backend's narrow lifecycle model and intentionally does not
-// expose DEACTIVATED state transitions in this client helper.
+/**
+ * Suspends or reactivates a counsellor or legal-counsel account.
+ * Suspended accounts cannot be auto-assigned new survivors. The "SUSPENDED"
+ * state is distinct from "BANNED" — suspension is a reversible operational
+ * toggle; ban is a moderation/safety action with audit metadata.
+ *
+ * @param {string} userId - UserAccount.userId of the staff member.
+ * @param {"ACTIVE"|"SUSPENDED"} status - Target account status.
+ * @returns {Promise<{ message: string, user: object }>}
+ */
 export async function updateNgoStaffStatus(userId, status) {
   const response = await axios.patch(
     `${API_BASE_URL}/api/admin/ngo/staff/${userId}/status`,
@@ -137,7 +183,13 @@ export async function reviewModerationReport(reportId, reviewStatus, action = "n
   return response.data;
 }
 
-// NGO-admin resource create endpoint.
+/**
+ * Creates a support resource via the NGO-admin resource management endpoint.
+ * Payload is expected to be a FormData object (multipart) containing file + metadata.
+ *
+ * @param {FormData} payload - Multipart payload with title, description, category, file.
+ * @returns {Promise<{ message: string, resource: object }>}
+ */
 export async function createNgoResource(payload) {
   const response = await axios.post(`${API_BASE_URL}/api/admin/ngo/resources`, payload, {
     headers: getAuthHeaders()
@@ -145,7 +197,14 @@ export async function createNgoResource(payload) {
   return response.data;
 }
 
-// NGO-admin resource update endpoint.
+/**
+ * Updates an existing support resource via the NGO-admin endpoint.
+ * Payload can include metadata changes only, or a file replacement.
+ *
+ * @param {string} resourceId - SupportResource.resourceId UUID.
+ * @param {FormData|object} payload - Updated fields (partial update supported).
+ * @returns {Promise<{ message: string, resource: object }>}
+ */
 export async function updateNgoResource(resourceId, payload) {
   const response = await axios.patch(
     `${API_BASE_URL}/api/admin/ngo/resources/${resourceId}`,
@@ -155,7 +214,13 @@ export async function updateNgoResource(resourceId, payload) {
   return response.data;
 }
 
-// NGO-admin manual survivor case reassignment endpoint.
+/**
+ * Applies a manual survivor case reassignment chosen by the NGO admin.
+ * The payload must specify survivorId, counsellorId, and/or legalCounselId.
+ *
+ * @param {{ survivorId: string, counsellorId?: string, legalCounselId?: string }} payload
+ * @returns {Promise<{ message: string, survivor: object }>}
+ */
 export async function reassignSurvivorCase(payload) {
   const response = await axios.patch(`${API_BASE_URL}/api/admin/ngo/reassignments`, payload, {
     headers: getAuthHeaders()
@@ -163,7 +228,14 @@ export async function reassignSurvivorCase(payload) {
   return response.data;
 }
 
-// Recommended (least-loaded) counsellor/legal-counsel for a survivor's manual reassignment.
+/**
+ * Returns the recommended (least-loaded, ACTIVE) counsellor and legal counsel
+ * for a survivor, shown as a "Recommended" badge in the Team Capacity reassignment
+ * form. The admin can apply or ignore the suggestions.
+ *
+ * @param {string} survivorId - SurvivorProfile.survivorId UUID.
+ * @returns {Promise<{ suggestedCounsellor: object|null, suggestedLegalCounsel: object|null }>}
+ */
 export async function getReassignmentSuggestions(survivorId) {
   const response = await axios.get(`${API_BASE_URL}/api/admin/ngo/reassignments/suggestions`, {
     headers: getAuthHeaders(),
@@ -172,7 +244,11 @@ export async function getReassignmentSuggestions(survivorId) {
   return response.data;
 }
 
-// Survivor reassignment request lifecycle helpers.
+/**
+ * Fetches the authenticated survivor's own reassignment request history, newest first.
+ *
+ * @returns {Promise<{ requests: object[] }>}
+ */
 export async function getMyReassignmentRequests() {
   const response = await axios.get(`${API_BASE_URL}/api/reassignment-requests/me`, {
     headers: getAuthHeaders()
@@ -180,6 +256,12 @@ export async function getMyReassignmentRequests() {
   return response.data;
 }
 
+/**
+ * Submits a new staff reassignment request on behalf of the authenticated survivor.
+ *
+ * @param {{ requestedScope: "COUNSELLOR"|"LEGAL_COUNSEL"|"BOTH", requestReasonText: string }} payload
+ * @returns {Promise<{ message: string, request: object }>}
+ */
 export async function createMyReassignmentRequest(payload) {
   const response = await axios.post(`${API_BASE_URL}/api/reassignment-requests/me`, payload, {
     headers: getAuthHeaders()
@@ -187,6 +269,12 @@ export async function createMyReassignmentRequest(payload) {
   return response.data;
 }
 
+/**
+ * Cancels a pending reassignment request by its ID. Only the owning survivor can cancel.
+ *
+ * @param {string} requestId - StaffReassignmentRequest.requestId UUID.
+ * @returns {Promise<{ message: string, request: object }>}
+ */
 export async function cancelMyReassignmentRequest(requestId) {
   const response = await axios.patch(
     `${API_BASE_URL}/api/reassignment-requests/me/${requestId}/cancel`,
@@ -196,7 +284,13 @@ export async function cancelMyReassignmentRequest(requestId) {
   return response.data;
 }
 
-// NGO-admin reassignment request triage helpers.
+/**
+ * Fetches the reassignment request queue for NGO admin review.
+ * Defaults to PENDING requests; pass "ALL" to see the full history.
+ *
+ * @param {"PENDING"|"APPROVED"|"REJECTED"|"CANCELLED"|"ALL"} [status="PENDING"]
+ * @returns {Promise<{ requests: object[] }>}
+ */
 export async function getNgoReassignmentRequests(status = "PENDING") {
   const response = await axios.get(`${API_BASE_URL}/api/reassignment-requests/ngo`, {
     headers: getAuthHeaders(),
@@ -205,6 +299,14 @@ export async function getNgoReassignmentRequests(status = "PENDING") {
   return response.data;
 }
 
+/**
+ * Submits the NGO admin's decision (APPROVED or REJECTED) on a survivor reassignment request.
+ * An APPROVED decision triggers actual staff reassignment via the backend.
+ *
+ * @param {string} requestId - StaffReassignmentRequest.requestId UUID.
+ * @param {{ requestStatus: "APPROVED"|"REJECTED", ngoAdminReviewNote?: string }} payload
+ * @returns {Promise<{ message: string, request: object }>}
+ */
 export async function reviewNgoReassignmentRequest(requestId, payload) {
   const response = await axios.patch(
     `${API_BASE_URL}/api/reassignment-requests/ngo/${requestId}/review`,
@@ -245,8 +347,8 @@ export async function getMyCallbackRequests() {
  * NGO admin can update any request; a counsellor can only update one
  * auto-assigned to them (enforced server-side).
  *
- * @param {string} requestId
- * @param {'COMPLETED'|'CANCELLED'} status
+ * @param {string} requestId - UssdCallbackRequest.requestId UUID.
+ * @param {'COMPLETED'|'CANCELLED'} status - New fulfillment status.
  * @returns {Promise<{message: string, request: object}>}
  */
 export async function updateUssdCallbackRequest(requestId, status) {
