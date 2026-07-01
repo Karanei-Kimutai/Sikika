@@ -1,3 +1,19 @@
+/**
+ * reports.test.js
+ * ---------------
+ * Tests for the incident report submission endpoint (POST /api/reports).
+ *
+ * Covered:
+ * - Unauthenticated callers are rejected with a survivor-specific 401 payload that
+ *   includes emergency contact numbers (the /reports route is accessible without login
+ *   so the error message must guide a caller in crisis, not just say "Unauthorized").
+ * - An authenticated SURVIVOR can submit a report; the controller links it to the
+ *   survivor's profile (survivorId, not userId) and returns the created report.
+ *
+ * All DB models and Cloudinary are mocked. Real JWT signing is used so the
+ * authMiddleware can verify the token without mocking the auth layer itself.
+ */
+
 const request = require("supertest");
 const express = require("express");
 const jwt = require("jsonwebtoken");
@@ -106,7 +122,7 @@ describe("Report submission routes", () => {
     });
   });
 
-  test("rejects unauthenticated report creation", async () => {
+  test("returns 401 with emergency contact numbers when the caller has no auth token", async () => {
     const response = await request(app)
       .post("/api/reports")
       .send({
@@ -119,7 +135,7 @@ describe("Report submission routes", () => {
     expect(response.body.error).toContain("registered and authenticated survivors");
   });
 
-  test("allows authenticated survivor to create report and link to survivor profile", async () => {
+  test("creates an incident report linked to the survivor's profile and returns 201 with the new report", async () => {
     const token = makeToken({
       id: "user-survivor-1",
       userId: "user-survivor-1",

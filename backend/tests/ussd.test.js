@@ -1,3 +1,20 @@
+/**
+ * ussd.test.js
+ * ------------
+ * Tests for the USSD webhook controller (POST /api/ussd/callback).
+ *
+ * Africa's Talking posts to this endpoint on every dial and menu selection.
+ * The controller must respond with `text/plain` starting with either:
+ *   - "CON " — keep the session open and show the next menu prompt
+ *   - "END " — terminate the session and show a final message
+ *
+ * Covered:
+ * - Initial dial (text=""): controller returns a CON response displaying the main menu.
+ *
+ * The UssdCallbackRequest model is mocked so no database connection is needed.
+ * Africa's Talking does not sign USSD requests, so the endpoint is public — no auth mock required.
+ */
+
 const request = require("supertest");
 const express = require("express");
 
@@ -36,12 +53,12 @@ function buildApp() {
   return app;
 }
 
-describe("USSD webhook", () => {
+describe("USSD webhook (POST /api/ussd/callback)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  test("starts a new session with a CON response", async () => {
+  test("returns a CON text/plain response displaying the main menu when the session starts (text is empty)", async () => {
     const app = buildApp();
 
     const response = await request(app)
@@ -54,6 +71,8 @@ describe("USSD webhook", () => {
       });
 
     expect(response.status).toBe(200);
+    // Africa's Talking requires the response body to begin with exactly "CON " (with a space)
+    // to keep the session open and show another prompt to the user.
     expect(response.text.startsWith("CON ")).toBe(true);
   });
 

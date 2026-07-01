@@ -1,3 +1,27 @@
+/**
+ * systemRoutes.test.js
+ * --------------------
+ * Smoke tests that verify the Express app wiring is correct end-to-end: routes are
+ * mounted, authMiddleware is applied to protected endpoints, and the maintenance guard
+ * is in place.
+ *
+ * These are integration-level tests that use the real route files and real middleware
+ * (including authMiddleware) against mocked DB models — they confirm the full
+ * request pipeline rather than individual controller logic.
+ *
+ * Covered:
+ * - Public health/status endpoints (GET /api/hello, /api/health, /api/system/public-status)
+ *   respond 200 without a token.
+ * - All protected routes return 401 when no Authorization header is provided, confirming
+ *   that authMiddleware is actually applied (not accidentally bypassed in any route file).
+ * - The reports 401 payload includes emergency contact numbers because /api/reports
+ *   is reachable without login and may be accessed by a person in crisis.
+ * - Invalid bearer tokens are rejected with a clear "Invalid or expired token" message
+ *   rather than a generic 500.
+ *
+ * No DB mocks are required because the rejected requests never reach a controller.
+ */
+
 const request = require('supertest');
 const express = require('express');
 
@@ -57,7 +81,7 @@ describe('System Route Smoke Tests', () => {
     app = buildSystemTestApp();
   });
 
-  test('serves public health/status endpoints', async () => {
+  test('returns 200 for all public health and status endpoints without requiring a token', async () => {
     const hello = await request(app).get('/api/hello');
     const health = await request(app).get('/api/health');
     const status = await request(app).get('/api/system/public-status');
@@ -73,7 +97,7 @@ describe('System Route Smoke Tests', () => {
     expect(status.body.maintenanceMode).toHaveProperty('enabled');
   });
 
-  test('rejects protected routes without auth header', async () => {
+  test('returns 401 for every protected route when the Authorization header is absent, confirming authMiddleware is wired up', async () => {
     const checks = [
       ['get', '/api/chat/channels'],
       ['get', '/api/chat/test-chat/messages'],
@@ -93,7 +117,7 @@ describe('System Route Smoke Tests', () => {
     }
   });
 
-  test('returns report-specific unauthorized payload on reports endpoints', async () => {
+  test('returns emergency contact numbers in the 401 body for /api/reports so a caller in crisis has immediate help', async () => {
     const response = await request(app).get('/api/reports');
 
     expect(response.status).toBe(401);
@@ -102,7 +126,7 @@ describe('System Route Smoke Tests', () => {
     expect(Array.isArray(response.body.emergencyContacts)).toBe(true);
   });
 
-  test('rejects invalid bearer tokens', async () => {
+  test('returns 401 Invalid or expired token for a bearer token that fails JWT verification', async () => {
     const response = await request(app)
       .get('/api/chat/channels')
       .set('Authorization', 'Bearer invalid-token');
