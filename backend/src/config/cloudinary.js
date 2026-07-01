@@ -18,6 +18,8 @@ cloudinary.config({
 
 /**
  * Returns true when the minimum Cloudinary credentials are present.
+ *
+ * @returns {boolean} `true` if all three required env vars are set; `false` otherwise.
  */
 function isCloudinaryConfigured() {
   return Boolean(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET);
@@ -25,6 +27,8 @@ function isCloudinaryConfigured() {
 
 /**
  * Throws a clear startup/runtime error when Cloudinary configuration is missing.
+ *
+ * @throws {Error} If any of the three required Cloudinary env vars are absent.
  */
 function assertCloudinaryConfigured() {
   if (!isCloudinaryConfigured()) {
@@ -42,6 +46,12 @@ function assertCloudinaryConfigured() {
  * Explicit resource_type mapping (via resolveCloudinaryResourceType) is used
  * instead of "auto" to prevent Cloudinary from misclassifying PDFs as "image",
  * which would cause a resource_type mismatch and break the proxy download.
+ *
+ * @param {object} options
+ * @param {Buffer} options.buffer   - Raw file bytes to upload.
+ * @param {string} options.reportId - UUID of the incident report; used to namespace the Cloudinary folder.
+ * @param {string} options.mimeType - MIME type of the file (e.g. "image/jpeg", "application/pdf").
+ * @returns {Promise<object>} Cloudinary upload result containing `public_id`, `secure_url`, and metadata.
  */
 function uploadEvidenceBuffer({ buffer, reportId, mimeType }) {
   assertCloudinaryConfigured();
@@ -99,6 +109,14 @@ function resolveCloudinaryResourceType(mimeType) {
  *
  * Resource assets are grouped by category and resourceId to make moderation,
  * lifecycle cleanup, and Cloudinary console browsing easier.
+ *
+ * @param {object} options
+ * @param {Buffer} options.buffer            - Raw file bytes to upload.
+ * @param {string} options.resourceId        - UUID of the support resource record; used in the Cloudinary path.
+ * @param {string} options.category          - Resource category (e.g. "legal-aid"); sanitised before use in the path.
+ * @param {string} options.originalFileName  - Original filename from the upload; used to preserve the file extension.
+ * @param {string} options.mimeType          - MIME type of the file; determines Cloudinary resource_type.
+ * @returns {Promise<object>} Cloudinary upload result containing `public_id`, `secure_url`, and metadata.
  */
 function uploadSupportResourceBuffer({ buffer, resourceId, category, originalFileName, mimeType }) {
   assertCloudinaryConfigured();
@@ -155,6 +173,12 @@ function uploadSupportResourceBuffer({ buffer, resourceId, category, originalFil
  *
  * We accept `not found` as a successful cleanup outcome because records can
  * be deleted out-of-band in Cloudinary during operational maintenance.
+ *
+ * @param {object} options
+ * @param {string} options.publicId      - Cloudinary public_id of the asset to delete.
+ * @param {string} [options.resourceType="raw"] - Cloudinary resource type ("image", "video", or "raw").
+ * @returns {Promise<void>}
+ * @throws {Error} If Cloudinary returns an unexpected result (not "ok" or "not found").
  */
 async function deleteSupportResourceAsset({ publicId, resourceType }) {
   assertCloudinaryConfigured();
@@ -234,7 +258,14 @@ function generateLegalDocumentSignedUrl({ publicId, expiresInSeconds = 300 }) {
 }
 
 /**
- * Maps stored evidence type to the correct Cloudinary delivery resource type.
+ * Maps the stored `evidenceType` enum value to the Cloudinary `resource_type`
+ * string required for signed URL generation and streaming proxy requests.
+ *
+ * Cloudinary stores audio under "video" resource_type, matching the upload-time
+ * mapping from `resolveCloudinaryResourceType`.
+ *
+ * @param {string} evidenceType - Value from `EvidenceFile.evidenceType` ("image", "audio", or other).
+ * @returns {"image"|"video"|"raw"} The corresponding Cloudinary resource_type.
  */
 function getResourceTypeForEvidence(evidenceType) {
   if (evidenceType === "image") return "image";
@@ -244,6 +275,15 @@ function getResourceTypeForEvidence(evidenceType) {
 
 /**
  * Generates a short-lived, signed URL for authenticated evidence access.
+ *
+ * Signed URLs expire after `expiresInSeconds` (default 5 minutes) to limit
+ * the window during which a captured URL could be replayed by an attacker.
+ *
+ * @param {object} options
+ * @param {string} options.publicId               - Cloudinary public_id of the evidence asset.
+ * @param {string} options.evidenceType           - Stored evidence type; passed to `getResourceTypeForEvidence`.
+ * @param {number} [options.expiresInSeconds=300] - Validity window in seconds for the signed URL.
+ * @returns {string} A short-lived, cryptographically signed Cloudinary URL.
  */
 function generateEvidenceSignedUrl({ publicId, evidenceType, expiresInSeconds = 300 }) {
   assertCloudinaryConfigured();

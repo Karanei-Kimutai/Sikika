@@ -4,8 +4,15 @@
  * Sequelize model for the `incidentReport` table.
  *
  * Central to the platform's reporting workflow. A survivor submits an
- * incident report which then progresses through a defined status lifecycle as NGO staff review and respond to it. Each report is linked
- * 
+ * incident report that progresses through a 7-state lifecycle as NGO staff
+ * review, support, investigate, and resolve it. Each report links to zero
+ * or one legal case (auto-created on escalation) and zero or many evidence
+ * files uploaded at submission time.
+ *
+ * Status state machine (see docs/reporting.md for full transition graph):
+ *   SUBMITTED → UNDER_REVIEW → ACTIVE_SUPPORT → UNDER_INVESTIGATION
+ *            → LEGAL_REVIEW → ESCALATED_TO_LEGAL_CASE
+ *            → RESOLVED | WITHDRAWN
  *
  * Relationships defined in models/index.js:
  *   - incidentReport.belongsTo(survivorProfile)

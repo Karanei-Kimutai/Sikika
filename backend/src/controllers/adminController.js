@@ -58,10 +58,27 @@ let _maintenanceCache = {
 // MAINTENANCE_SETTING_KEY is the SystemSetting PK for durable maintenance state.
 const MAINTENANCE_SETTING_KEY = 'maintenance';
 
+/**
+ * Extracts the authenticated user's UUID from authMiddleware-attached JWT claims.
+ * The payload carries both 'userId' and 'id' for backward compatibility.
+ *
+ * @param {import('express').Request} req
+ * @returns {string|null} The user's UUID, or null if no claim is present.
+ */
 function getUserIdFromRequest(req) {
   return req.user?.userId || req.user?.id || null;
 }
 
+/**
+ * Maps a normalized userRole ENUM value to the lowercase legacy role format
+ * used by older frontend payloads and some dashboard query shape expectations.
+ *
+ * The mapping is intentionally explicit so new roles must be consciously added;
+ * an unmapped role returns 'survivor' (the default / least privileged fallback).
+ *
+ * @param {string} role - Raw or normalized role string from UserAccount.userRole.
+ * @returns {"legal_counsel"|"ngo_admin"|"moderator"|"counsellor"|"survivor"}
+ */
 function compatibilityRoleForUserRole(role) {
   const normalized = normalizeRole(role);
   if (normalized === 'LEGAL_COUNSEL') return 'legal_counsel';
@@ -71,6 +88,16 @@ function compatibilityRoleForUserRole(role) {
   return 'survivor';
 }
 
+/**
+ * Reads and decodes the Bearer token from the Authorization header without
+ * trusting authMiddleware's req.user — used for role checks that need to
+ * verify the caller without relying on middleware order.
+ *
+ * Returns null if no Bearer token is present or the token is invalid/expired.
+ *
+ * @param {import('express').Request} req
+ * @returns {string|null} The normalized role string from the token's claims.
+ */
 function getRoleFromAuthHeader(req) {
   const header = req.headers?.authorization || '';
   if (!header.startsWith('Bearer ')) return null;
@@ -106,6 +133,14 @@ async function getActor(req) {
   };
 }
 
+/**
+ * Sends a standardized 403 JSON response when the caller's role is not
+ * in the allowed set for a particular endpoint.
+ *
+ * @param {import('express').Response} res
+ * @param {string[]} allowedRoles - Roles that are permitted to call this endpoint.
+ * @returns {import('express').Response}
+ */
 function roleForbidden(res, allowedRoles) {
   return res.status(403).json({
     error: 'Insufficient permissions for this admin endpoint.',
@@ -113,6 +148,13 @@ function roleForbidden(res, allowedRoles) {
   });
 }
 
+/**
+ * Formats a date value into a UTC "YYYY-MM-DD" string for use as a
+ * time-series bucket key in analytics aggregations.
+ *
+ * @param {Date|string|number} value - Any value accepted by the Date constructor.
+ * @returns {string} UTC date string in "YYYY-MM-DD" format.
+ */
 function formatDateKey(value) {
   const date = new Date(value);
   const year = date.getUTCFullYear();
