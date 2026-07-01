@@ -19,6 +19,10 @@ import SikikaLogo from "../components/SikikaLogo";
  *
  * Security note: `sessionStorage` is used instead of `localStorage` so the
  * session token clears when the browser tab is closed — safer on shared/surveilled devices.
+ *
+ * @param {object} props
+ * @param {Function} props.onNavigate - App.jsx's pushState navigator; used to redirect after login or mode switch.
+ * @returns {React.ReactElement}
  */
 function AuthPage({ onNavigate }) {
   const [authMode, setAuthMode] = useState("signin");

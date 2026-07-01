@@ -8,36 +8,58 @@ const sequelize = require('../config/database');
  * usage analytics (most accessed resources and category usage trends).
  */
 const ResourceAccessEvent = sequelize.define('resourceAccessEvent', {
-  // Stable UUID for idempotent event references.
+
+  /** Stable UUID primary key — used for idempotent event references in analytics. */
   accessEventId: {
-    type: DataTypes.STRING(36),
+    type:      DataTypes.STRING(36),
     primaryKey: true,
-    allowNull: false
+    allowNull: false,
+    comment:   'UUID primary key for this access event'
   },
-  // Resource the user opened.
+
+  /**
+   * The resource that was opened.
+   * CASCADE: access events are removed when the resource is deleted.
+   */
   resourceId: {
-    type: DataTypes.STRING(36),
-    allowNull: false
+    type:      DataTypes.STRING(36),
+    allowNull: false,
+    comment:   'FK to supportResource — the resource that was accessed'
   },
-  // Optional user id; null when visitor is anonymous.
+
+  /**
+   * The user who accessed the resource.
+   * NULL for anonymous visitors — the library is public, no login required.
+   * SET NULL on user delete to preserve analytics without a dangling FK.
+   */
   accessorUserId: {
-    type: DataTypes.STRING(36),
-    allowNull: true
+    type:      DataTypes.STRING(36),
+    allowNull: true,
+    comment:   'FK to userAccount — NULL when an unauthenticated visitor opens the resource'
   },
-  // Channel marker for future expansion (e.g., WEB, MOBILE_APP).
+
+  /**
+   * Delivery channel for the access event.
+   * Currently always "WEB". Reserved for future mobile or USSD channels.
+   */
   accessChannel: {
-    type: DataTypes.STRING(40),
-    allowNull: false,
-    defaultValue: 'WEB'
+    type:         DataTypes.STRING(40),
+    allowNull:    false,
+    defaultValue: 'WEB',
+    comment:      'Delivery channel — WEB | (future: MOBILE_APP, USSD)'
   },
-  // Server-side event creation time used in analytics windows.
+
+  /** UTC timestamp of the access event — used to compute analytics time windows. */
   accessTimestamp: {
-    type: DataTypes.DATE,
-    allowNull: false,
-    defaultValue: DataTypes.NOW
+    type:         DataTypes.DATE,
+    allowNull:    false,
+    defaultValue: DataTypes.NOW,
+    comment:      'UTC timestamp of the access event'
   }
+
 }, {
-  tableName: 'resourceAccessEvent'
+  tableName:  'resourceAccessEvent',
+  comment:    'Tracks each resource open — powers NGO dashboard usage analytics'
 });
 
 module.exports = ResourceAccessEvent;

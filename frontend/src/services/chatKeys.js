@@ -11,6 +11,9 @@ import { getToken } from '../utils/auth';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
+/**
+ * @returns {{ Authorization: string }} Bearer auth header for the current session.
+ */
 function authHeaders() {
   const token = getToken();
   return { Authorization: `Bearer ${token}` };
@@ -36,9 +39,12 @@ export async function fetchPublicKey(userId) {
 }
 
 /**
- * Registers the authenticated user's ECDH public key. Idempotent.
+ * Registers or refreshes the authenticated user's ECDH public key on the server.
+ * Idempotent — safe to call on every app load (App.jsx does exactly this).
+ * Once registered, counterparts can derive a shared AES-GCM chat key.
  *
- * @param {string} ecdhPublicKeyJwk - JWK JSON string
+ * @param {string} ecdhPublicKeyJwk - Exported JWK JSON string from `exportPublicKeyJwk`.
+ * @returns {Promise<void>}
  */
 export async function registerPublicKey(ecdhPublicKeyJwk) {
   await axios.put(

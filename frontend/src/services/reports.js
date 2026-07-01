@@ -12,11 +12,24 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000
  * - Upload/download flows use multipart + short-lived signed URLs.
  */
 
+/**
+ * Returns the Authorization header for authenticated requests, or an empty
+ * object when the session has no token (caller is responsible for redirecting).
+ *
+ * @returns {{ Authorization: string } | {}}
+ */
 function getAuthHeaders() {
   const token = getToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/**
+ * Fetches all incident reports visible to the authenticated user.
+ * Survivors see only their own reports; counsellors, legal counsel, and
+ * NGO admins see reports assigned or relevant to their role.
+ *
+ * @returns {Promise<{ reports: object[] }>}
+ */
 export async function getReports() {
   const response = await axios.get(`${API_BASE_URL}/api/reports`, {
     headers: getAuthHeaders()
@@ -25,6 +38,12 @@ export async function getReports() {
   return response.data;
 }
 
+/**
+ * Fetches a single incident report by its UUID.
+ *
+ * @param {string} reportId - IncidentReport.reportId UUID.
+ * @returns {Promise<{ report: object }>}
+ */
 export async function getReportById(reportId) {
   const response = await axios.get(`${API_BASE_URL}/api/reports/${reportId}`, {
     headers: getAuthHeaders()
@@ -33,6 +52,13 @@ export async function getReportById(reportId) {
   return response.data;
 }
 
+/**
+ * Creates a new incident report. The payload shape is validated by the backend
+ * (incidentType, incidentDate, description are required for survivors).
+ *
+ * @param {object} payload - Report fields (incidentType, description, incidentDate, etc.).
+ * @returns {Promise<{ message: string, report: object }>}
+ */
 export async function createReport(payload) {
   const response = await axios.post(`${API_BASE_URL}/api/reports`, payload, {
     headers: getAuthHeaders()
@@ -41,6 +67,14 @@ export async function createReport(payload) {
   return response.data;
 }
 
+/**
+ * Updates editable fields on a survivor's own report (e.g. description, location).
+ * Only available while the report is in SUBMITTED status.
+ *
+ * @param {string} reportId - IncidentReport.reportId UUID.
+ * @param {object} payload - Partial report fields to update.
+ * @returns {Promise<{ message: string, report: object }>}
+ */
 export async function updateOwnReport(reportId, payload) {
   const response = await axios.patch(`${API_BASE_URL}/api/reports/${reportId}`, payload, {
     headers: getAuthHeaders()
@@ -49,6 +83,17 @@ export async function updateOwnReport(reportId, payload) {
   return response.data;
 }
 
+/**
+ * Advances the report to a new status. Role-scoped transition rules are enforced
+ * by the backend — see the 7-state machine in reportController.js.
+ * The `survivorConsent` flag is required by the backend when escalating to
+ * LEGAL_REVIEW or ESCALATED_TO_LEGAL_CASE to confirm the survivor agreed.
+ *
+ * @param {string} reportId - IncidentReport.reportId UUID.
+ * @param {string} reportStatus - Target status (e.g. "UNDER_REVIEW", "LEGAL_REVIEW").
+ * @param {boolean} [survivorConsent=false] - Must be true when escalating to legal stages.
+ * @returns {Promise<{ message: string, report: object }>}
+ */
 export async function updateReportStatus(reportId, reportStatus, survivorConsent = false) {
   // survivorConsent is required by backend when escalating to legal case.
   const response = await axios.patch(
@@ -60,6 +105,13 @@ export async function updateReportStatus(reportId, reportStatus, survivorConsent
   return response.data;
 }
 
+/**
+ * Transitions the report to WITHDRAWN status. Requires the survivor's own
+ * session — backend enforces survivor-only access for withdrawals.
+ *
+ * @param {string} reportId - IncidentReport.reportId UUID.
+ * @returns {Promise<{ message: string, report: object }>}
+ */
 export async function withdrawReport(reportId) {
   const response = await axios.patch(
     `${API_BASE_URL}/api/reports/${reportId}/withdraw`,
@@ -70,6 +122,16 @@ export async function withdrawReport(reportId) {
   return response.data;
 }
 
+/**
+ * Uploads an evidence file (image, video, audio, or document) attached to a report.
+ * Sends as multipart/form-data with the file under the field name "file" (multer
+ * expectation on the backend). Files are stored privately on Cloudinary; use
+ * `getEvidenceAccessUrl` to retrieve a time-limited streaming URL.
+ *
+ * @param {string} reportId - IncidentReport.reportId UUID.
+ * @param {File} file - The browser File object selected by the user.
+ * @returns {Promise<{ message: string, evidence: object }>}
+ */
 export async function uploadEvidence(reportId, file) {
   // Multer expects the file field name to be exactly "file".
   const formData = new FormData();
@@ -89,6 +151,13 @@ export async function uploadEvidence(reportId, file) {
   return response.data;
 }
 
+/**
+ * Permanently deletes a survivor's own report. Only available in SUBMITTED status.
+ * Requires `confirmWithdraw: true` in the request body as a safety guard.
+ *
+ * @param {string} reportId - IncidentReport.reportId UUID.
+ * @returns {Promise<{ message: string }>}
+ */
 export async function deleteOwnReport(reportId) {
   const response = await axios.delete(`${API_BASE_URL}/api/reports/${reportId}`, {
     headers: getAuthHeaders(),
@@ -112,8 +181,8 @@ export async function deleteOwnReport(reportId) {
  * Returns the same { signedUrl } shape as before so all call sites are
  * unchanged.
  *
- * @param {string} reportId
- * @param {string} evidenceId
+ * @param {string} reportId - IncidentReport.reportId UUID.
+ * @param {string} evidenceId - EvidenceFile.evidenceId UUID.
  * @returns {Promise<{ signedUrl: string }>}
  */
 export async function getEvidenceAccessUrl(reportId, evidenceId) {

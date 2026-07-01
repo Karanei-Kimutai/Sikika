@@ -118,6 +118,16 @@ const knownPaths = new Set([
   ...Object.keys(moderatorRoutes),
 ]);
 
+/**
+ * Returns the route map appropriate for the current session state.
+ * Unauthenticated visitors and standard authenticated roles (SURVIVOR,
+ * COUNSELLOR, LEGAL_COUNSEL) share `publicRoutes`. Role-specific maps
+ * remap overlapping paths to role-appropriate views.
+ *
+ * @param {string} role - Uppercase role string decoded from the JWT (e.g. "NGO_ADMIN").
+ * @param {boolean} isAuthenticated - Whether a valid auth token exists in sessionStorage.
+ * @returns {Record<string, React.ComponentType>} Path→component map for the active role.
+ */
 function getRoutesForRole(role, isAuthenticated) {
   if (!isAuthenticated) return publicRoutes;
   if (role === "NGO_ADMIN") return ngoAdminRoutes;
@@ -126,7 +136,14 @@ function getRoutesForRole(role, isAuthenticated) {
   return publicRoutes;
 }
 
-// UI-only route gating helper; API authorization still happens on the backend.
+/**
+ * Decodes the `role` claim from the JWT stored in sessionStorage without
+ * verifying the signature (verification happens server-side on every API call).
+ * The result is used only for UI-level routing decisions — the backend still
+ * enforces role guards independently on every request.
+ *
+ * @returns {string} Uppercase role string (e.g. "SURVIVOR"), or "" when no valid token exists.
+ */
 function decodeRoleFromToken() {
   const token = getToken();
   if (!token) return "";
@@ -139,15 +156,27 @@ function decodeRoleFromToken() {
   }
 }
 
-// Returns the raw pathname unfiltered — unlike the old behavior of falling
-// back to "/" for anything outside `knownPaths`, callers now decide what to
-// render for an unrecognized path (see the `hasKnownPath`/`NotFoundPage`
-// branch in `App()`), so a mistyped or stale URL surfaces a 404 instead of
-// silently bouncing to the landing/home page.
+/**
+ * Reads the current browser pathname and returns it unfiltered. Unlike the
+ * old behavior of falling back to "/" for anything outside `knownPaths`,
+ * callers now decide what to render for an unrecognized path (see the
+ * `hasKnownPath`/`NotFoundPage` branch in `App()`), so a mistyped or stale
+ * URL surfaces a 404 instead of silently bouncing to the landing/home page.
+ *
+ * @returns {string} The raw `window.location.pathname`.
+ */
 function getCurrentPath() {
   return window.location.pathname;
 }
 
+/**
+ * Converts an `expectedUntil` ISO timestamp into a human-readable countdown
+ * string for the maintenance status card (e.g. "2h 14m remaining").
+ * Returns a static message when the timestamp is missing or in the past.
+ *
+ * @param {string|null|undefined} value - ISO 8601 timestamp set by the NGO Admin.
+ * @returns {string} Countdown label, or "" when no value is provided.
+ */
 function formatMaintenanceCountdown(value) {
   if (!value) return "";
   const ms = new Date(value).getTime() - Date.now();
@@ -186,6 +215,11 @@ function RouteLoadingFallback() {
  * Wraps the active route's page in a subtle fade/lift entrance.
  * Keyed by `path` so every navigation (a genuine route change, not a
  * within-page state update) replays the animation once.
+ *
+ * @param {object} props
+ * @param {string} props.path - Current resolved route path; changing this value triggers the animation.
+ * @param {React.ReactNode} props.children - The page component to animate.
+ * @returns {React.ReactElement}
  */
 function PageTransition({ path, children }) {
   const ref = useRef(null);
@@ -199,6 +233,19 @@ function PageTransition({ path, children }) {
   return <div ref={ref}>{children}</div>;
 }
 
+/**
+ * Root application shell.
+ *
+ * Owns the custom SPA router (pushState-based, no React Router), the global
+ * auth state derived from sessionStorage, role-based route resolution, the
+ * maintenance-mode polling loop, and the Quick Exit safety control.
+ *
+ * All page components receive `onNavigate` (the `navigate` function), `role`,
+ * and `onSignOut` as props so they can trigger top-level navigation changes
+ * without needing a router context or global state store.
+ *
+ * @returns {React.ReactElement}
+ */
 function App() {
   const [currentPath, setCurrentPath] = useState(getCurrentPath);
   // Full pathname+search, used only as a remount key for the routed page —
@@ -264,6 +311,14 @@ function App() {
     };
   }, []);
 
+  /**
+   * Navigates to a new route by pushing a history entry and updating both
+   * path-tracking state slices. Scrolls to the top of the page after routing
+   * so users are not left mid-scroll on the new view.
+   *
+   * @param {string} path - Target pathname (e.g. "/chat", "/reports").
+   * @returns {void}
+   */
   const navigate = (path) => {
     window.history.pushState({}, "", path);
     setCurrentPath(getCurrentPath());
@@ -271,12 +326,25 @@ function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  /**
+   * Clears the session and redirects to the sign-in page.
+   * Used by the sign-out button in `SiteHeader` and the maintenance screen.
+   * @returns {void}
+   */
   const handleSignOut = () => {
     removeToken();
     removeUserId();
     navigate("/join");
   };
 
+  /**
+   * Quick Exit button handler — clears session and navigates away from the
+   * platform entirely to Google. When the button is in the collapsed state,
+   * the first interaction expands it to reduce accidental exits from incidental taps.
+   * Also best-effort deletes this browser's local E2EE keypair for the
+   * signed-in user before clearing session state (forensic minimization).
+   * @returns {Promise<void>}
+   */
   const handleQuickExit = async () => {
     // If collapsed, first interaction expands the control instead of navigating.
     // This reduces accidental exits from incidental taps.

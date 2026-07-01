@@ -232,9 +232,49 @@ Check the server logs for `[USSD] Failed to save callback request` — this indi
 
 ---
 
+## Session Timeout and Retry Behaviour
+
+Africa's Talking enforces a **30-second response timeout** per menu step. If the backend does not return a `CON` or `END` response within 30 seconds, AT terminates the session and shows the user a network error message. Causes:
+- Database write taking too long (check MySQL connection pool size and `UssdCallbackRequest` table locks)
+- Server cold-start or high load
+
+There is no automatic retry mechanism at the USSD layer. If a session ends due to timeout, the user must dial again. Keeping the `handleCallback` controller response path fast (target < 2 seconds) is important.
+
+**Error recovery in the menu**: unrecognised inputs respond with `END` ("Invalid selection. Please dial again.") rather than looping. This is a deliberate design decision — re-prompting with `CON` risks confusing users on metered connections where each request incurs a charge. The user dials again from the top.
+
+**Database write failure**: if saving the `UssdCallbackRequest` fails (e.g. MySQL is unreachable), the controller responds with `END "Unable to process your request. Please call our hotline directly."` along with the emergency number. The user is never left with a silent failure.
+
+---
+
+## Sandbox-to-Live Migration
+
+To switch from the Africa's Talking sandbox to a live production account:
+
+1. **Create a live Africa's Talking account** at [africastalking.com](https://africastalking.com) and complete business verification.
+2. **Register a USSD shortcode** — either a dedicated shortcode (e.g. `*344*1#`) or a shared shortcode with a unique service code suffix. AT assigns the shortcode after review.
+3. **Register a callback URL** on the live account dashboard pointing to `https://your-production-domain.com/api/ussd/callback`.
+4. **Update environment variables**:
+   ```
+   AFRICASTALKING_USERNAME=your_live_account_username   # NOT "sandbox"
+   AFRICASTALKING_API_KEY=your_live_api_key
+   ```
+5. **IP allowlist**: restrict `POST /api/ussd/callback` at the Nginx or firewall level to [Africa's Talking's published IP ranges](https://developers.africastalking.com/docs/ussd/before_you_start). The endpoint has no token authentication by design.
+6. **Test with a real device** using the live shortcode before announcing it publicly.
+
+The `validateEnv()` boot guard enforces `AFRICASTALKING_USERNAME !== "sandbox"` when `NODE_ENV=production`, preventing accidental production deploys with sandbox credentials.
+
+---
+
+## Auto-Assignment of Callbacks
+
+When a USSD callback request is saved, `pickLeastLoadedCounsellor` automatically assigns it to the counsellor with the lowest `currentWorkloadScore` whose `UserAccount.accountStatus` is `ACTIVE`. The NGO Admin queue shows the "Assigned To" column populated immediately — no manual triage step is needed, though the admin can reassign via the PATCH endpoint.
+
+---
+
 ## Production Considerations
 
 - Replace the ngrok tunnel with a stable public URL (your deployed server).
 - Restrict `POST /api/ussd/callback` to Africa's Talking's IP ranges at the reverse-proxy or firewall level — the endpoint has no auth by design.
 - Update `AFRICASTALKING_USERNAME` from `sandbox` to your live AT account username.
 - The shortcode will change from the sandbox shortcode to a production shortcode assigned by AT.
+- See [docs/deployment.md](deployment.md) for the full production environment checklist.

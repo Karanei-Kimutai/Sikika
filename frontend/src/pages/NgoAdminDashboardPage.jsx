@@ -44,6 +44,12 @@ import BanUserModal from "./ngo-admin/BanUserModal";
  * State and async handlers all live here and are passed down as props.
  */
 
+/**
+ * Sidebar navigation items for the NGO Admin workspace. Each entry maps a
+ * section `id` to the label and short description shown in the menu button.
+ *
+ * @type {Array<{ id: string, label: string, description: string }>}
+ */
 const ngoMenu = [
   { id: "command-center", label: "Command Center", description: "Live KPIs and movement trends" },
   { id: "case-triage", label: "Case Triage", description: "Urgent case routing and alerts" },
@@ -58,6 +64,20 @@ const ngoMenu = [
   // and the top nav does not expose it as a standalone section.
 ];
 
+/**
+ * NGO Admin Dashboard — top-level page component.
+ * Consolidates all NGO-operations views into one route-driven workspace.
+ * Data is loaded once on mount from GET /api/admin/ngo/dashboard and made
+ * available to all section sub-components via props.
+ *
+ * @param {object} props
+ * @param {Function} props.onNavigate - App.jsx's pushState navigator for cross-section links.
+ * @param {Function} props.onSignOut - Clears the session and redirects to /join.
+ * @param {string} [props.initialSection="command-center"] - Section to display on mount.
+ *   Set by the ngoAdminRoutes map in App.jsx so nav links like /reports open the
+ *   correct section directly rather than always defaulting to command-center.
+ * @returns {React.ReactElement}
+ */
 function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "command-center" }) {
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);

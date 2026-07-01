@@ -22,6 +22,9 @@ import { staggerIn } from "../utils/motion";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 const moderationSocket = io(API_BASE_URL, { autoConnect: false });
 
+/**
+ * @returns {{ Authorization: string } | {}}
+ */
 function getAuthHeaders() {
   const token = getToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -46,19 +49,34 @@ function resolveOutcomeLabel(report) {
   return report.moderationReviewStatus === "APPROVED" ? "Action taken" : "Report dismissed";
 }
 
+/**
+ * ModerationDashboardPage component.
+ * Reused by both MODERATOR sessions (their primary view) and NGO_ADMIN sessions
+ * on the /moderation route. The backend enforces role-scoped permissions
+ * independently on every API call regardless of which role renders this page.
+ *
+ * @returns {React.ReactElement}
+ */
 function ModerationDashboardPage() {
+  /** Full list of HarmfulContentReports returned by the backend. */
   const [reports, setReports] = useState([]);
+  /** Whether the initial report list fetch is in-flight. */
   const [loading, setLoading] = useState(true);
+  /** Error message shown above the tabs when a fetch or action fails. */
   const [errorMessage, setErrorMessage] = useState("");
+  /** Success message shown after a moderation action is saved. */
   const [successMessage, setSuccessMessage] = useState("");
+  /** Active tab identifier — "pending" or "history". */
   const [activeTab, setActiveTab] = useState("pending");
+  /** The reviewed report whose detail modal is currently open (null = closed). */
   const [selectedHistoryReport, setSelectedHistoryReport] = useState(null);
   const [reviewingReportId, setReviewingReportId] = useState("");
   const gridRef = useRef(null);
   const historyBodyRef = useRef(null);
 
-  // Derive pending and reviewed sub-lists from the full report set.
+  /** Reports still awaiting a moderation decision. */
   const pendingReports = reports.filter(r => r.moderationReviewStatus === "PENDING");
+  /** Reports that have already been APPROVED or REJECTED. */
   const reviewedReports = reports.filter(r => r.moderationReviewStatus !== "PENDING");
 
   // Stagger-reveal pending cards whenever the tab or data changes.
@@ -90,6 +108,11 @@ function ModerationDashboardPage() {
     return () => window.clearTimeout(timerId);
   }, [activeTab]);
 
+  /**
+   * Fetches all harmful-content reports from the backend and updates state.
+   * The tab split (pending vs. reviewed) is done client-side on the returned list.
+   * @returns {Promise<void>}
+   */
   async function loadReports() {
     setLoading(true);
     setErrorMessage("");
@@ -135,9 +158,14 @@ function ModerationDashboardPage() {
   }, []);
 
   /**
-   * @param {string} reportId - contentReportId of the report to review
-   * @param {"APPROVED"|"REJECTED"} reviewStatus
-   * @param {"remove_message"|"ban_user"|"none"} action - downstream side-effect
+   * Submits a moderation decision and reloads the report list on success.
+   * The backend atomically applies the side-effect action (remove message, ban user, or no-op)
+   * and updates the report's status in the same transaction.
+   *
+   * @param {string} reportId - HarmfulContentReport.contentReportId UUID.
+   * @param {"APPROVED"|"REJECTED"} reviewStatus - Decision to record.
+   * @param {"remove_message"|"ban_user"|"none"} [action="none"] - Downstream side-effect action.
+   * @returns {Promise<void>}
    */
   async function review(reportId, reviewStatus, action = "none") {
     // Double-submit guard: while a review is in flight for any report, ignore

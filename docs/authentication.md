@@ -6,16 +6,17 @@ This document covers how authentication works on Sikika — sign-up, sign-in, pa
 
 ## Overview
 
-The platform supports two authentication methods:
-
-| Method | When used |
-|--------|-----------|
-| OTP (SMS) + Password | Survivor sign-up and ongoing login |
-| Password only | Faster login for users with an existing account |
+The platform uses a **password + mandatory 2FA** model. OTP alone is not a standalone login method — it serves as:
+- The first step of the 3-step signup flow (phone verification before password is set)
+- The mandatory second factor after every successful password login
 
 Every authentication attempt ends with one of two outcomes:
-- A 2-hour JWT is issued and stored in `sessionStorage` by the frontend.
-- An `authStage` value is returned that tells the frontend exactly what to do next (show OTP input, show password setup, redirect to forced reset, etc.).
+- A JWT is issued and stored in `sessionStorage` by the frontend.
+- An `authStage` value is returned that tells the frontend exactly what to do next.
+
+**JWT lifetime:** 2 hours. Stored in `sessionStorage` (tab-scoped; cleared on tab close — safer for devices that may be shared or monitored).
+
+**Password complexity:** Minimum 8 characters. No upper-case or symbol requirements are enforced server-side beyond length, though the frontend encourages strong passwords.
 
 All auth logic lives in `backend/src/controllers/authController.js`.
 
@@ -28,26 +29,25 @@ Every auth response includes an `authStage` field. The frontend branches on this
 | authStage | Meaning |
 |-----------|---------|
 | `OTP_VERIFICATION_REQUIRED` | OTP has been sent; show the OTP input. |
-| `DETAILS_REQUIRED` | Signup OTP verified; collect password/profile details and complete signup. |
-| `OTP_2FA_REQUIRED` | Password verified; collect OTP and call verify-2fa. |
-| `PASSWORD_RESET_REQUIRED` | Account flagged for forced reset (staff provisioned by admin); block navigation until reset. |
+| `DETAILS_REQUIRED` | OTP verified for signup; signup ticket issued; collect password + profile. |
+| `OTP_2FA_REQUIRED` | Password accepted; 2FA OTP sent; show the OTP input to finish signing in. |
+| `PASSWORD_RESET_REQUIRED` | Account flagged for forced reset (staff provisioned by admin); block navigation until `POST /api/auth/set-password` is called. |
 | `SIGNUP_REQUIRED` | Phone has no account; redirect to sign-up. |
-| `SIGNIN_REQUIRED` | Account exists; redirect to sign-in. |
-| `PASSWORD_RESET_OTP_REQUIRED` | Forgot-password OTP sent; show OTP and new-password fields. |
+| `SIGNIN_REQUIRED` | Account already has a password; redirect to sign-in. |
 | `AUTHENTICATED` | Auth complete; JWT issued; user may proceed. |
 
-`authIntent` is the caller-supplied signal that tells the server which flow is being started:
+`authIntent` is the caller-supplied discriminator that tells the server which flow is being started (used to apply the correct OTP purpose):
 
 | authIntent | Flow |
 |------------|------|
-| `SIGNUP_OTP` | New-account creation via OTP. |
+| `SIGNUP_OTP` | New-account creation — OTP purpose set to `SIGNUP_OTP`. |
 | `PASSWORD_RESET` | Forgot-password OTP flow. |
 
 ---
 
 ## Sign-Up Flow
 
-Sign-up is a three-step process: request OTP, verify OTP, then complete details.
+Sign-up is a **3-step OTP-first** process: verify phone via OTP, receive a signup ticket, then submit password and profile details.
 
 ### Step 1 — Request OTP
 
@@ -64,10 +64,10 @@ Sign-up is a three-step process: request OTP, verify OTP, then complete details.
 5. The OTP is sent via Africa's Talking SMS. In dev mode (`SKIP_SMS_IN_DEV=true`), it is returned in the response as `developmentOtp` instead.
 6. Response: `{ authStage: "OTP_VERIFICATION_REQUIRED", authIntent: "SIGNUP_OTP" }`.
 
-### Step 2 — Verify OTP
+### Step 2 — Verify OTP → Receive Signup Ticket
 
 **Endpoint:** `POST /api/auth/verify-otp`  
-**Body:** `{ phoneNumber, otp, authIntent: "SIGNUP_OTP" }`
+**Body:** `{ phoneNumber, otp, authIntent: "SIGNUP_OTP" }` — no password yet
 
 1. The account is fetched. If any unexpired temporary ban has now passed its expiry, it is auto-lifted before anything else.
 2. Account status is checked — `BANNED`, `SUSPENDED`, and `DEACTIVATED` accounts are rejected with `403`. Banned accounts include the `banReason` and `banExpiresAt` in the response.
@@ -79,18 +79,21 @@ Sign-up is a three-step process: request OTP, verify OTP, then complete details.
    - `bcrypt.compare` is run against the stored hash.
    - Each wrong guess increments `otpAttemptCount`. At 5 failures, the account is locked for 15 minutes and the OTP is voided — the user must request a new one.
 5. OTP state is cleared, `isOtpVerified` is set to `true`, and failure counters are reset.
-6. A short-lived signup ticket is issued (`authStage: DETAILS_REQUIRED`).
+6. On success: the server issues a **signup ticket** — a short-lived token stored the same way as an OTP (bcrypt-hashed, 10-minute expiry, purpose `SIGNUP_TICKET`). The plaintext ticket is returned to the client.
+7. Response: `{ authStage: "DETAILS_REQUIRED", signupTicket: "<plaintext>" }`.
+
+The signup ticket proves that the client completed OTP verification. It is consumed exactly once in step 3.
 
 ### Step 3 — Complete Signup (Password + Profile Details)
 
 **Endpoint:** `POST /api/auth/complete-signup`  
 **Body:** `{ phoneNumber, signupTicket, password, profileDetails? }`
 
-1. Ticket purpose/expiry is validated.
-2. Password is validated and bcrypt-hashed.
-3. Three side effects fire in a single Sequelize transaction:
+1. The server validates the signup ticket (`bcrypt.compare` against stored hash, purpose check, expiry check). An expired or wrong ticket is rejected — the user must restart from step 1.
+2. `password` is required (minimum 8 characters). It is bcrypt-hashed and saved.
+3. The following side effects fire in a single Sequelize transaction (`ensureSurvivorStaffAutoAssignment`):
    - **SurvivorProfile is created** with sanitized `profileDetails` (nickname, gender, county). If `profileDetails` is missing, safe defaults are used (`Survivor-<shortId>`, `UNSPECIFIED` for gender and county).
-   - **Staff auto-assignment**: among counsellors/legal counsel whose `UserAccount.accountStatus` is `ACTIVE` (suspended/banned staff are excluded via an inner join — their profile's `availabilityStatus` alone doesn't reflect that), the one with the lowest `currentWorkloadScore` is assigned. Both scores are incremented. Preference is given to staff who are `AVAILABLE` or `BUSY`; if all active staff are `OFFLINE`, the lowest-scored active staff member is assigned anyway.
+   - **Staff auto-assignment**: among counsellors/legal counsel whose `UserAccount.accountStatus` is `ACTIVE` (suspended/banned staff are excluded via an inner join — their profile's `availabilityStatus` alone doesn't reflect that), the one with the lowest `currentWorkloadScore` is assigned as counsellor and legal counsel respectively. Both scores are incremented. Preference is given to staff who are `AVAILABLE` or `BUSY`; if all active staff are `OFFLINE`, the lowest-scored active staff member is assigned anyway.
    - **`StaffAssignmentHistory` record** is written for audit purposes.
 4. `ensureAutoChannelsForSurvivor` eagerly creates direct-chat channels to both assigned staff so they appear immediately on the survivor's chat page.
 5. A 2-hour JWT is issued containing `{ id, userId, role }`.
@@ -98,9 +101,11 @@ Sign-up is a three-step process: request OTP, verify OTP, then complete details.
 
 ---
 
-## Sign-In Flows
+## Sign-In Flow (Password + Mandatory 2FA)
 
-### Password Sign-In
+Sign-in is a **2-step** process. OTP is not a standalone login method — it is enforced as the second factor after every successful password match.
+
+### Step 1 — Password Validation
 
 **Endpoint:** `POST /api/auth/login-password`  
 **Body:** `{ phoneNumber, password }`
@@ -112,10 +117,19 @@ Sign-up is a three-step process: request OTP, verify OTP, then complete details.
 5. Lockout check (→ `423` with `retryAfterSeconds`).
 6. `bcrypt.compare` against `hashedPassword`.
    - **Failure**: `registerPasswordFailure` increments `authFailedAttempts`. At 5 failures, the account is locked for 15 minutes (counter resets to 0 so the next lockout period starts fresh). Returns `401`.
-   - **Success**: `clearPasswordFailureState` resets counters and issues a signin OTP with `authStage: OTP_2FA_REQUIRED`.
-7. If `status === 'password_reset_required'`: returns `authStage: PASSWORD_RESET_REQUIRED` with the token. Frontend must gate navigation until `POST /api/auth/set-password` is called.
-8. Complete signin via `POST /api/auth/verify-2fa`.
-9. Response after verify-2fa: `{ authStage: "AUTHENTICATED", token, userId, role, authMethod: "PASSWORD_2FA" }`.
+   - **Success**: `clearPasswordFailureState` resets counters.
+7. **If `status === 'password_reset_required'`** (staff provisioned by NGO Admin): a temporary JWT is issued immediately and `authStage: PASSWORD_RESET_REQUIRED` is returned. Frontend must gate navigation until `POST /api/auth/set-password` is called. 2FA is deferred until their next login after they set a real password.
+8. **Normal path**: a `SIGNIN_2FA` OTP is generated and sent via SMS. **No JWT is issued yet.**  
+   Response: `{ authStage: "OTP_2FA_REQUIRED" }` (plus `developmentOtp` in dev mode).
+
+### Step 2 — 2FA OTP Verification
+
+**Endpoint:** `POST /api/auth/verify-2fa`  
+**Body:** `{ phoneNumber, otp }`
+
+1. OTP is validated (purpose must be `SIGNIN_2FA`, expiry, bcrypt.compare).
+2. On success: a 2-hour JWT is issued.
+3. Response: `{ authStage: "AUTHENTICATED", token, userId, role, authMethod: "PASSWORD_2FA" }`.
 
 ---
 
@@ -157,10 +171,10 @@ On first login (either password or OTP path):
 - On success, `status` is updated to `'active'` and normal navigation is permitted.
 
 **Endpoint:** `POST /api/auth/set-password`  
-**Body:** `{ password }`  
+**Body:** `{ password, currentPassword? }`  
 **Auth:** JWT required (via `Authorization: Bearer <token>` header).
 
-This endpoint is also available to any authenticated user who wants to change their password mid-session, not just staff on first login.
+This endpoint is also available to any authenticated user who wants to change their password mid-session, not just staff on first login. For that in-session path, `currentPassword` must be supplied and verified (`bcrypt.compare`) before the new password is accepted — `401` otherwise. Accounts still in the forced-reset state (`status === 'password_reset_required'`) skip this check, since they were just issued a temporary password they never chose themselves.
 
 ---
 
@@ -259,13 +273,37 @@ Africa's Talking can return `HTTP 200` while still rejecting a recipient. The se
 
 ---
 
+## Logout and Session Clearing
+
+There is no backend `/api/auth/logout` endpoint — the JWT is stateless and expires automatically after 2 hours.
+
+**Normal sign-out** (user clicks Sign Out in the SiteHeader):
+- `removeToken()` clears `authToken` from `sessionStorage`.
+- `removeUserId()` clears `userId` from `sessionStorage`.
+- The frontend navigates to `/join` (the auth page).
+- The JWT is orphaned — it remains technically valid until expiry, but has no session storage reference and will not be sent with future requests.
+
+**Quick Exit** (the always-visible escape button):
+- Same `removeToken()` / `removeUserId()` calls.
+- `window.location.replace('https://www.google.com')` navigates the browser to Google, replacing the history entry so the Back button does not return to Sikika.
+- Auto-collapses after 3 seconds of inactivity; first click on the collapsed state expands rather than exits.
+
+**Tab close**: `sessionStorage` is tab-scoped — closing the tab automatically clears `authToken` and `userId` without any JavaScript needed.
+
+**IndexedDB keypairs** (E2EE private keys) are **not cleared on sign-out**. They are keyed by `userId` and persist across sessions. This is intentional — a private key loss makes past messages permanently undecryptable. See [docs/e2ee.md](e2ee.md) for the key-loss threat model.
+
+---
+
 ## API Reference
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| `POST` | `/api/auth/request-otp` | None | Request a signup or signin OTP. |
-| `POST` | `/api/auth/verify-otp` | None | Verify OTP; completes signup or issues signin token. |
-| `POST` | `/api/auth/login-password` | None | Password-based signin. |
+| `POST` | `/api/auth/request-otp` | None | Send a SIGNUP_OTP to a phone number (step 1 of signup). |
+| `POST` | `/api/auth/verify-otp` | None | Verify OTP; issues signup ticket (step 2 of signup). |
+| `POST` | `/api/auth/complete-signup` | None | Submit signup ticket + password + profile (step 3 of signup). |
+| `POST` | `/api/auth/login-password` | None | Validate password; sends 2FA OTP (step 1 of signin). |
+| `POST` | `/api/auth/verify-2fa` | None | Verify 2FA OTP; issues JWT (step 2 of signin). |
 | `POST` | `/api/auth/forgot-password/request` | None | Request a password-reset OTP. |
-| `POST` | `/api/auth/forgot-password/reset` | None | Submit reset OTP and new password. |
+| `POST` | `/api/auth/forgot-password/reset` | None | Submit reset OTP + new password. |
 | `POST` | `/api/auth/set-password` | JWT | Set or change password for the authenticated user. |
+| `GET` | `/api/auth/session` | JWT | Return the decoded session payload (`{ id, userId, role }`). |

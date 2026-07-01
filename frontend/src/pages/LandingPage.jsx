@@ -4,10 +4,19 @@ import SikikaLogo from "../components/SikikaLogo";
 import { staggerIn, revealOnScroll } from "../utils/motion";
 
 /**
- * Public landing page for unregistered visitors.
+ * LandingPage.jsx
+ * ---------------
+ * Public landing page shown to unregistered visitors at "/" and "/home".
  *
- * This page sets the product tone and routes users toward the two primary
- * actions agreed for this module: browsing resources and joining the community.
+ * Sets the product tone and routes users toward the two primary entry actions:
+ * browsing resources (no auth required) and joining the community (auth required).
+ * All content sections have GSAP scroll-reveal animations gated behind the platform's
+ * reduced-motion media query guard (see motion.js).
+ */
+
+/**
+ * Feature-overview tiles shown in the "What we offer" section.
+ * @type {Array<{ title: string, text: string }>}
  */
 const offers = [
   {
@@ -24,20 +33,34 @@ const offers = [
   }
 ];
 
+/**
+ * Numbered onboarding steps listed in the "How it works" section.
+ * @type {string[]}
+ */
 const steps = [
   "Browse public resources",
   "Join with a phone-based secure login",
   "Access support and community spaces"
 ];
 
-// Reassurance strip shown beneath the hero actions — survivors arriving here
-// need to know immediately that looking is safe before they commit to anything.
+/**
+ * Trust-signal chips displayed below the hero call-to-action buttons.
+ * Reassures survivors that browsing is safe before they commit to anything.
+ * Each item has an icon component and a short label.
+ *
+ * @type {Array<{ icon: React.ComponentType, text: string }>}
+ */
 const trustSignals = [
   { icon: EyeOff, text: "Browse anonymously" },
   { icon: ShieldCheck, text: "No account needed to look around" },
   { icon: DoorOpen, text: "Quick Exit always available" }
 ];
 
+/**
+ * @param {object} props
+ * @param {Function} props.onNavigate - App.jsx's pushState navigator; used for CTA and footer link clicks.
+ * @returns {React.ReactElement}
+ */
 function LandingPage({ onNavigate }) {
   const heroRef = useRef(null);
   const offersRef = useRef(null);

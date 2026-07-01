@@ -22,13 +22,21 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000
 
 const socket = io(API_BASE_URL, { autoConnect: false });
 
+/**
+ * @returns {{ Authorization: string } | {}}
+ */
 function getAuthHeaders() {
   const token = getToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-// Role claim is read client-side only for UI toggles (e.g., create-room button).
-// Actual authorization remains enforced by backend endpoints.
+/**
+ * Reads the role claim from the JWT for UI-only visibility decisions
+ * (e.g., whether to show the "Create Room" button). Actual authorization
+ * remains enforced by backend endpoints on every mutating request.
+ *
+ * @returns {string} Uppercase role string (e.g. "NGO_ADMIN"), or "" if absent/invalid.
+ */
 function readRoleFromToken() {
   try {
     const token = getToken() || "";
@@ -43,8 +51,12 @@ function readRoleFromToken() {
   }
 }
 
-// Reads /community?room=<roomId> deep-link parameter when a preferred room is provided
-// (e.g. arriving here via a clicked moderation-alert notification).
+/**
+ * Reads the `room` query parameter from the URL, supporting deep-links from
+ * moderation-alert notifications (e.g. /community?room=<roomId>).
+ *
+ * @returns {string} The roomId string, or "" when the parameter is absent.
+ */
 function readPreferredRoomFromUrl() {
   try {
     const params = new URLSearchParams(window.location.search);
@@ -54,13 +66,25 @@ function readPreferredRoomFromUrl() {
   }
 }
 
-// Converts potentially invalid timestamps into sortable epoch values.
+/**
+ * Converts a potentially invalid timestamp value into a sortable epoch integer.
+ * Returns 0 for null, undefined, or unparseable strings so those items sort last.
+ *
+ * @param {string|null|undefined} value - Raw timestamp from the API (ISO 8601 or similar).
+ * @returns {number} Millisecond epoch integer, or 0 on parse failure.
+ */
 function toEpoch(value) {
   const parsed = Date.parse(String(value || ""));
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-// Keeps most recently active rooms at the top of the room list.
+/**
+ * Sorts rooms by their most recent activity (latest message timestamp, falling
+ * back to room creation time) so the most active rooms appear at the top.
+ *
+ * @param {object[]} roomList - Array of CommunityRoom API response objects.
+ * @returns {object[]} New array sorted descending by activity time.
+ */
 function sortRoomsByActivity(roomList) {
   return [...roomList].sort((a, b) => {
     const aTime = toEpoch(a.latestMessageDispatchTimestamp) || toEpoch(a.roomCreationTimestamp);
