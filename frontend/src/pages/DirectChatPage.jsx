@@ -372,8 +372,14 @@ const DirectChatPage = () => {
       const nextActive = loadedChannels.find((channel) => channel.chatChannelStatus === 'active')?.chatId || loadedChannels[0]?.chatId || null;
       if (status === 'deleted' && activeChannelId === chatId) {
         setActiveChannelId(nextActive);
+        // Archiving/deleting the channel currently open in the composer must not
+        // leave a stale edit draft carrying over into whatever becomes active next.
+        setEditingMessageId(null);
+        setNewMessage('');
       } else if (!loadedChannels.some((channel) => channel.chatId === activeChannelId)) {
         setActiveChannelId(nextActive);
+        setEditingMessageId(null);
+        setNewMessage('');
       }
     } catch (error) {
       setErrorMessage(error.response?.data?.error || 'Failed to update chat channel status.');
@@ -1026,26 +1032,33 @@ const DirectChatPage = () => {
                         <div className={`wa-bubble ${msg.isMine ? 'mine' : 'theirs'}`}>
                           <small className="wa-msg-role">{msg.senderLabel || (msg.isMine ? 'You' : 'Peer')}</small>
                           <p>{msg.plaintext}</p>
-                          {msg.sentAt && (
-                            <time className="wa-msg-time" dateTime={msg.sentAt}>
-                              {new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </time>
-                          )}
-                          {msg.editedAt && <small className="wa-msg-edited">(edited)</small>}
-                          {/* Delivery/seen ticks — only rendered on sender's own bubbles */}
-                          <MessageTicks msg={msg} />
-                          {/* Only the sender may edit their own message; server enforces this too. */}
-                          {msg.isMine && (
-                            <button
-                              type="button"
-                              className="wa-msg-edit-btn"
-                              aria-label="Edit message"
-                              title="Edit message"
-                              onClick={() => handleStartEdit(msg)}
-                            >
-                              <Pencil size={12} aria-hidden="true" />
-                            </button>
-                          )}
+                          {/* Inline footer row — keeps the edit control inside the bubble's own
+                              box (no absolute positioning) and always visible, since hover-only
+                              affordances don't work on touch devices. */}
+                          <span className="wa-msg-footer">
+                            <span className="wa-msg-meta">
+                              {msg.sentAt && (
+                                <time className="wa-msg-time" dateTime={msg.sentAt}>
+                                  {new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </time>
+                              )}
+                              {msg.editedAt && <small className="wa-msg-edited">(edited)</small>}
+                              {/* Delivery/seen ticks — only rendered on sender's own bubbles */}
+                              <MessageTicks msg={msg} />
+                            </span>
+                            {/* Only the sender may edit their own message; server enforces this too. */}
+                            {msg.isMine && (
+                              <button
+                                type="button"
+                                className="wa-msg-edit-btn"
+                                aria-label="Edit message"
+                                title="Edit message"
+                                onClick={() => handleStartEdit(msg)}
+                              >
+                                <Pencil size={12} aria-hidden="true" />
+                              </button>
+                            )}
+                          </span>
                         </div>
                       </div>
                     ))}
