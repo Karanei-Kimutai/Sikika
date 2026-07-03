@@ -566,9 +566,11 @@ async function seed() {
     for (let i = 0; i < additionalReportDays.length; i += 1) {
       const template   = bulkReportTemplates[i % bulkReportTemplates.length];
       const survivorId = survivorIds[i % survivorIds.length];
+      const bulkReportId = id();
+      const bulkReportCreatedAt = daysAgo(additionalReportDays[i]);
 
       await IncidentReport.create({
-        reportId: id(),
+        reportId: bulkReportId,
         survivorId,
         incidentCategory:        template.category,
         severityLevel:           template.severity,
@@ -576,8 +578,22 @@ async function seed() {
         incidentLocation:        template.location,
         incidentDate:            new Date(Date.now() - (additionalReportDays[i] + 2) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
         currentReportStatus:     template.status,
-        reportCreationTimestamp: daysAgo(additionalReportDays[i])
+        reportCreationTimestamp: bulkReportCreatedAt
       });
+
+      // Reports seeded directly into LEGAL_REVIEW bypass the
+      // ensureLegalCaseForWorkflow() findOrCreate that the real status-update
+      // endpoint runs on every transition into LEGAL_REVIEW — without this,
+      // the report shows "Legal Review" with no LegalCaseFile behind it, so
+      // legal counsel can never see the drafting panel for it.
+      if (template.status === 'LEGAL_REVIEW') {
+        await LegalCaseFile.create({
+          legalCaseId:         id(),
+          reportId:            bulkReportId,
+          currentCaseStatus:   'UNDER_INVESTIGATION',
+          escalationTimestamp: bulkReportCreatedAt
+        });
+      }
     }
 
 

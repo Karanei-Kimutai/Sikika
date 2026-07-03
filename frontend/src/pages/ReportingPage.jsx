@@ -87,7 +87,7 @@ function ReportingPage({ onNavigate }) {
     return <UnauthReportIntercept onNavigate={onNavigate} />;
   }
 
-  const sharedProps = { reports, loading, loadReports, setErrorMessage, setSuccessMessage, highlightReportId };
+  const sharedProps = { reports, loading, loadReports, setErrorMessage, setSuccessMessage, highlightReportId, role };
 
   const renderView = () => {
     if (role === "SURVIVOR") return <SurvivorReportView {...sharedProps} onNavigate={onNavigate} />;
