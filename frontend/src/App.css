@@ -2426,6 +2426,48 @@ input:focus {
   margin-top: 2px;
 }
 
+.wa-msg-edited {
+  font-size: 0.68rem;
+  opacity: 0.6;
+  font-style: italic;
+  display: block;
+  text-align: right;
+}
+
+.wa-msg-edit-btn {
+  position: absolute;
+  top: 6px;
+  right: -26px;
+  border: none;
+  background: transparent;
+  color: var(--brown-dark);
+  opacity: 0.45;
+  cursor: pointer;
+  padding: 2px;
+  display: none;
+}
+
+.wa-bubble.mine:hover .wa-msg-edit-btn {
+  display: inline-flex;
+}
+
+.wa-msg-edit-btn:hover {
+  opacity: 1;
+}
+
+.wa-edit-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.wa-edit-banner .link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
 .wa-bubble.mine {
   /* Outgoing bubble uses warm tan tint from the site's brown palette. */
   background: #e8d5b7;

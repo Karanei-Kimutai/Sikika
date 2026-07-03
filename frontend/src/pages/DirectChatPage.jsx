@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useRef, useReducer, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { Archive, ArchiveRestore, ArrowLeft, MoreHorizontal, Send, Lock, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, ArrowLeft, MoreHorizontal, Pencil, Send, Lock, Trash2, X } from 'lucide-react';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import { getToken } from '../utils/auth';
@@ -207,6 +207,9 @@ const DirectChatPage = () => {
   const [showDeletedChannels, setShowDeletedChannels] = useState(false);
   const [menuChannelId, setMenuChannelId] = useState(null);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
+  // messageId currently loaded into the composer for editing, or null when
+  // composing a brand-new message. Drives handleSendMessage's edit-vs-send branch.
+  const [editingMessageId, setEditingMessageId] = useState(null);
   
   const messagesEndRef = useRef(null);
   const socketRef = useRef(null);
@@ -465,7 +468,8 @@ const DirectChatPage = () => {
             // Carry delivery/seen timestamps so ticks render correctly on history load.
             deliveredAt: dbMessage.deliveredAt || null,
             seenAt: dbMessage.seenAt || null,
-            sentAt: dbMessage.messageDispatchTimestamp || null
+            sentAt: dbMessage.messageDispatchTimestamp || null,
+            editedAt: dbMessage.editedAt || null
           }))
         );
         if (isStale()) return;
@@ -606,7 +610,8 @@ const DirectChatPage = () => {
         // Delivery/seen ticks — pre-populated if the counterpart was already online.
         deliveredAt: dbMessage.deliveredAt || null,
         seenAt: dbMessage.seenAt || null,
-        sentAt: dbMessage.messageDispatchTimestamp || null
+        sentAt: dbMessage.messageDispatchTimestamp || null,
+        editedAt: dbMessage.editedAt || null
       };
 
       setMessages((prev) => [...prev, decryptedMsg]);
@@ -652,10 +657,22 @@ const DirectChatPage = () => {
       );
     };
 
+    // ── message:edited — a message (ours or the counterpart's) was edited ─────
+    // Decrypt the replacement ciphertext with the same channel key and swap the
+    // plaintext in place so both sides see the edit live.
+    const handleMessageEdited = async ({ chatId, messageId, encryptedPayload, editedAt }) => {
+      if (chatId !== activeChannelId) return;
+      const plaintext = await decryptMessage(encryptedPayload, effectiveCryptoKey);
+      setMessages((prev) =>
+        prev.map((m) => (m.messageId === messageId ? { ...m, plaintext, editedAt } : m))
+      );
+    };
+
     socketRef.current?.on('receiveMessage', handleNewMessage);
     socketRef.current?.on('presence:update', handlePresenceUpdate);
     socketRef.current?.on('message:delivered', handleMessageDelivered);
     socketRef.current?.on('message:seen', handleMessageSeen);
+    socketRef.current?.on('message:edited', handleMessageEdited);
 
     // Cleanup listeners to prevent duplicates on re-register
     return () => {
@@ -663,6 +680,7 @@ const DirectChatPage = () => {
       socketRef.current?.off('presence:update', handlePresenceUpdate);
       socketRef.current?.off('message:delivered', handleMessageDelivered);
       socketRef.current?.off('message:seen', handleMessageSeen);
+      socketRef.current?.off('message:edited', handleMessageEdited);
     };
   }, [activeChannelId, effectiveCryptoKey, currentUserId, currentUserRole]);
 
@@ -751,7 +769,23 @@ const DirectChatPage = () => {
   }, [effectiveMessages]);
 
   /**
-   * 4. Encrypt and Dispatch Message
+   * Loads an existing message of ours into the composer for editing.
+   * Only ever called for msg.isMine bubbles (enforced by the render below);
+   * the server independently rejects edits to another user's message.
+   */
+  const handleStartEdit = (msg) => {
+    setEditingMessageId(msg.messageId);
+    setNewMessage(msg.plaintext);
+    setSendErrorMessage('');
+  };
+
+  const handleCancelEdit = () => {
+    setEditingMessageId(null);
+    setNewMessage('');
+  };
+
+  /**
+   * 4. Encrypt and Dispatch Message (new send, or edit of an existing one)
    */
   const handleSendMessage = async (e) => {
     e.preventDefault();
@@ -759,14 +793,24 @@ const DirectChatPage = () => {
 
     // Optimistic clear keeps composer responsive while encryption/socket emits.
     const plaintext = newMessage;
+    const editTargetId = editingMessageId;
     setSendErrorMessage('');
     setNewMessage(''); // Clear input
+    setEditingMessageId(null);
 
     if (!effectiveCryptoKey) {
       // Counterpart hasn't completed one-time key setup yet (or this
       // channel's key is still being derived after a switch) — hold the
       // message locally instead of sending under a stale/wrong key. It
       // auto-sends once a key becomes derivable (see the flush effect above).
+      // Edits are not queued this way — the shared key must already exist for
+      // an edit to even be possible, since the original message required it.
+      if (editTargetId) {
+        setSendErrorMessage('Cannot edit right now — secure channel is still being established.');
+        setNewMessage(plaintext);
+        setEditingMessageId(editTargetId);
+        return;
+      }
       enqueuePending(activeChannelId, plaintext);
       bumpPendingVersion();
       if (sendBtnRef.current) pulse(sendBtnRef.current);
@@ -777,21 +821,30 @@ const DirectChatPage = () => {
       // Encrypt the message before it ever touches the network
       const encryptedPayload = await encryptMessage(plaintext, effectiveCryptoKey);
 
-      // Emit the ciphertext payload over WebSockets
-      socketRef.current?.emit('sendEncryptedMessage', {
-        chatId: activeChannelId,
-        encryptedPayload: encryptedPayload
-      });
+      if (editTargetId) {
+        socketRef.current?.emit('editEncryptedMessage', {
+          chatId: activeChannelId,
+          messageId: editTargetId,
+          encryptedPayload
+        });
+      } else {
+        // Emit the ciphertext payload over WebSockets
+        socketRef.current?.emit('sendEncryptedMessage', {
+          chatId: activeChannelId,
+          encryptedPayload: encryptedPayload
+        });
+      }
 
       if (sendBtnRef.current) pulse(sendBtnRef.current);
     } catch (err) {
       console.error('Failed to encrypt and send message:', err);
-      setSendErrorMessage('Message failed to send. Please retry.');
+      setSendErrorMessage(editTargetId ? 'Message failed to save. Please retry.' : 'Message failed to send. Please retry.');
       // Restore the failed draft into the composer only if it's still empty —
       // the optimistic clear above happens before encryption, so if the user
       // has already typed something new while this failed in the background,
       // don't clobber it with the stale draft.
       setNewMessage((prev) => (prev ? prev : plaintext));
+      if (editTargetId) setEditingMessageId(editTargetId);
     }
   };
 
@@ -858,6 +911,10 @@ const DirectChatPage = () => {
                   onClick={() => {
                     setActiveChannelId(channel.chatId);
                     setMenuChannelId(null);
+                    // Leaving edit mode when switching channels avoids submitting an
+                    // edit against a message from a different, no-longer-visible conversation.
+                    setEditingMessageId(null);
+                    setNewMessage('');
                   }}
                   className="wa-chat-open"
                 >
@@ -930,7 +987,11 @@ const DirectChatPage = () => {
                   type="button"
                   className="wa-back-btn"
                   aria-label="Back to chat list"
-                  onClick={() => setActiveChannelId(null)}
+                  onClick={() => {
+                    setActiveChannelId(null);
+                    setEditingMessageId(null);
+                    setNewMessage('');
+                  }}
                 >
                   <ArrowLeft size={18} aria-hidden="true" />
                 </button>
@@ -970,8 +1031,21 @@ const DirectChatPage = () => {
                               {new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </time>
                           )}
+                          {msg.editedAt && <small className="wa-msg-edited">(edited)</small>}
                           {/* Delivery/seen ticks — only rendered on sender's own bubbles */}
                           <MessageTicks msg={msg} />
+                          {/* Only the sender may edit their own message; server enforces this too. */}
+                          {msg.isMine && (
+                            <button
+                              type="button"
+                              className="wa-msg-edit-btn"
+                              aria-label="Edit message"
+                              title="Edit message"
+                              onClick={() => handleStartEdit(msg)}
+                            >
+                              <Pencil size={12} aria-hidden="true" />
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -990,15 +1064,29 @@ const DirectChatPage = () => {
                 <div ref={messagesEndRef} />
               </div>
 
+              {editingMessageId && (
+                <p className="status-message wa-edit-banner" role="status">
+                  Editing message
+                  <button type="button" className="link-btn" onClick={handleCancelEdit} aria-label="Cancel editing">
+                    <X size={14} aria-hidden="true" /> Cancel
+                  </button>
+                </p>
+              )}
               <form onSubmit={handleSendMessage} className="wa-composer">
                 <input
                   type="text"
-                  placeholder="Type a message"
+                  placeholder={editingMessageId ? 'Edit your message' : 'Type a message'}
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
                 />
-                <button ref={sendBtnRef} type="submit" className="wa-send-btn" aria-label="Send message" disabled={!newMessage.trim()}>
-                  <Send size={14} aria-hidden="true" />
+                <button
+                  ref={sendBtnRef}
+                  type="submit"
+                  className="wa-send-btn"
+                  aria-label={editingMessageId ? 'Save edited message' : 'Send message'}
+                  disabled={!newMessage.trim()}
+                >
+                  {editingMessageId ? <Pencil size={14} aria-hidden="true" /> : <Send size={14} aria-hidden="true" />}
                 </button>
               </form>
             </>

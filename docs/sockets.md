@@ -53,6 +53,7 @@ Handles private direct-chat between a survivor and a support staff member.
 |---|---|---|
 | `joinChannel` | `chatId: string` | Joins the socket.io room for a specific direct-chat channel. Membership is verified via `canUserAccessChannel` before the join is accepted. |
 | `sendEncryptedMessage` | `{ chatId, encryptedPayload }` | Persists an encrypted message and broadcasts it to the channel room. Account status and channel access are re-checked on every call. The server stores and relays only ciphertext — plaintext is never seen. |
+| `editEncryptedMessage` | `{ chatId, messageId, encryptedPayload }` | Overwrites an existing message's ciphertext and sets `editedAt`. Only the original sender may edit (checked server-side against `senderUserId`); rejected with `messageError` otherwise. No edit history is kept. |
 
 **Server → Client events:**
 
@@ -60,6 +61,7 @@ Handles private direct-chat between a survivor and a support staff member.
 |---|---|---|
 | `receiveMessage` | Saved `DirectChatMessage` row | Broadcast to everyone in the `chatId` room when a new message is persisted. |
 | `message:delivered` | `{ chatId, messageIds[], deliveredAt }` | Sent to the channel room and the sender's personal `user:<userId>` room when delivery is confirmed. |
+| `message:edited` | `{ chatId, messageId, encryptedPayload, editedAt }` | Broadcast to the channel room when a message is edited. Clients decrypt the new ciphertext and replace the displayed text. |
 | `presence:update` | `{ staffUserId, chatId, presence }` | Sent to a survivor's `user:<userId>` room when their staff member's online/offline status changes. |
 | `messageError` | `{ error: string }` | Sent to the emitting socket when auth fails, channel access is denied, or a message cannot be saved. |
 

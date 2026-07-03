@@ -398,6 +398,71 @@ module.exports = (io) => {
       }
     });
 
+    // ── Handle message edits ────────────────────────────────────────────────────
+    // Client re-encrypts the edited plaintext under the same shared channel key
+    // and sends the new ciphertext here. The server never sees plaintext, so it
+    // cannot verify the edit is meaningfully different — it only enforces that
+    // the editor is the original sender and the channel is still active.
+    socket.on('editEncryptedMessage', async (data) => {
+      const { chatId, messageId, encryptedPayload } = data || {};
+
+      try {
+        if (!chatId || !messageId || !encryptedPayload) {
+          socket.emit('messageError', { error: 'chatId, messageId, and encryptedPayload are required.' });
+          return;
+        }
+
+        // Re-check account status the same way sendEncryptedMessage does, so a
+        // ban applied mid-session also blocks edits, not just new sends.
+        const stillActive = await isUserAccountActive(socket.data.userId);
+        if (!stillActive) {
+          socket.emit('messageError', { error: 'Account access restricted. Please contact support.' });
+          socket.disconnect(true);
+          return;
+        }
+
+        const allowed = await canUserAccessChannel(socket.data.userId, chatId);
+        if (!allowed) {
+          socket.emit('messageError', { error: 'Not authorized to edit messages in this chat channel.' });
+          return;
+        }
+
+        const channel = await DirectChatChannel.findByPk(chatId);
+        if (!channel || channel.chatChannelStatus !== 'active') {
+          socket.emit('messageError', { error: 'Chat channel is unavailable.' });
+          return;
+        }
+
+        const message = await DirectChatMessage.findOne({ where: { messageId, chatId } });
+        if (!message) {
+          socket.emit('messageError', { error: 'Message not found.' });
+          return;
+        }
+
+        // Only the original sender may edit their own message.
+        if (message.senderUserId !== socket.data.userId) {
+          socket.emit('messageError', { error: 'You can only edit your own messages.' });
+          return;
+        }
+
+        const editedAt = new Date();
+        message.encryptedMessageContent = encryptedPayload;
+        message.editedAt = editedAt;
+        await message.save();
+
+        // Broadcast to everyone in the channel room (both parties may have it open).
+        io.to(chatId).emit('message:edited', {
+          chatId,
+          messageId,
+          encryptedPayload,
+          editedAt
+        });
+      } catch (error) {
+        console.error('Failed to edit and relay message:', error);
+        socket.emit('messageError', { error: 'Failed to edit message securely.' });
+      }
+    });
+
     // ── Disconnect — update presence registry ──────────────────────────────────
     socket.on('disconnect', async () => {
       console.log(`🔌 Client disconnected: ${socket.id} (userId: ${userId})`);

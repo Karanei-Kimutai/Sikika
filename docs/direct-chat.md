@@ -138,6 +138,7 @@ The `counterpartUserId` field is how `DirectChatPage.jsx` knows whose public key
 | `messageReadStatus` | ENUM | `'UNREAD'` on creation; `'READ'` after the recipient opens the channel. |
 | `deliveredAt` | `DATETIME\|NULL` | Set when the recipient's socket is online at send time, or in bulk on reconnect. |
 | `seenAt` | `DATETIME\|NULL` | Set when `GET /api/chat/:chatId/messages` is called by the non-sender. |
+| `editedAt` | `DATETIME\|NULL` | Set when the sender edits this message via `editEncryptedMessage`. `NULL` means never edited. No edit history is kept — `encryptedMessageContent` is overwritten in place. |
 
 ### Delivery states (shown as ticks in the UI)
 
@@ -178,9 +179,20 @@ chatSocket.js
   → createDiscreetNotifications()
   → io.to(chatId).emit('receiveMessage', savedMessage)
   → if recipient online: io.to('user:<senderId>').emit('message:delivered', ...)
+        │
+        │  emit('editEncryptedMessage', { chatId, messageId, encryptedPayload })
+        ▼
+  → isUserAccountActive() check
+  → canUserAccessChannel() check
+  → DirectChatMessage.findOne({ messageId, chatId }) — must exist
+  → reject unless message.senderUserId === socket.data.userId
+  → message.encryptedMessageContent = encryptedPayload; message.editedAt = now
+  → io.to(chatId).emit('message:edited', { chatId, messageId, encryptedPayload, editedAt })
 ```
 
-**Security note:** Account status is checked on **every** `sendEncryptedMessage` event, not just at connection time. A ban applied mid-session takes effect on the next message attempt.
+**Security note:** Account status is checked on **every** `sendEncryptedMessage` and `editEncryptedMessage` event, not just at connection time. A ban applied mid-session takes effect on the next message/edit attempt.
+
+**Editing:** Only the original sender may edit a message — enforced server-side by comparing `senderUserId` to the authenticated socket's `userId`, independent of any client-side UI restriction. The client re-encrypts the edited plaintext under the same shared channel key it already holds and sends the new ciphertext; the server has no way to verify the edit is meaningful since it never sees plaintext. There is no time limit on edits and no edit history — `message:edited` recipients decrypt the new ciphertext and replace the displayed text, tagging it "(edited)" using `editedAt`.
 
 ---
 
