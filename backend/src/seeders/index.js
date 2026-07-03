@@ -39,7 +39,7 @@ if (process.env.NODE_ENV === 'production') {
   process.exit(1);
 }
 
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID } = require('crypto');
 const bcrypt = require('bcrypt');
 const PDFDocument = require('pdfkit');
 const {
@@ -85,7 +85,7 @@ async function hash(plaintext) {
 }
 
 // ── Helper: generate a UUID ────────────────────────────────────────────────
-const id = () => uuidv4();
+const id = () => randomUUID();
 
 /**
  * Returns a Date set to 10:00 AM on `days` days ago.

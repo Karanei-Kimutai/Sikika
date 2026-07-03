@@ -1,4 +1,4 @@
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID } = require('crypto');
 const { Op } = require('sequelize');
 const db = require('../models');
 const { UssdCallbackRequest, UserAccount, CounsellorProfile } = db;
@@ -125,7 +125,7 @@ async function handleCallback(req, res) {
           return null;
         });
 
-        const callbackRequestId = uuidv4();
+        const callbackRequestId = randomUUID();
 
         await UssdCallbackRequest.create({
           callbackRequestId,
