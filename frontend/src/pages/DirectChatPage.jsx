@@ -110,12 +110,35 @@ function persistPreferredChannel(channelId) {
 // Socket auth token is attached during connection setup so backend can enforce
 // per-channel authorization before room joins and sends.
 
+// Maps a session role string to its display label. Falls back to 'Staff'
+// for any future staff role added without an explicit entry here.
+const ROLE_LABELS = { survivor: 'Survivor', counsellor: 'Counsellor', legal_counsel: 'Legal Counsel' };
+
+/**
+ * Resolves the display label for the currently signed-in user's own role.
+ *
+ * @param {string} role - The session's role string (e.g. 'survivor', 'counsellor', 'legal_counsel').
+ * @returns {string} Display label, or 'Staff' if the role isn't in ROLE_LABELS.
+ */
 function roleLabelFromSession(role) {
-  return role === 'survivor' ? 'Survivor' : 'Counsellor';
+  return ROLE_LABELS[role] || 'Staff';
 }
 
-function peerRoleLabelFromSession(role) {
-  return role === 'survivor' ? 'Counsellor' : 'Survivor';
+/**
+ * Resolves the display label for the other party in a channel. A staff
+ * member's counterpart is always the survivor. A survivor's counterpart is
+ * a Counsellor or Legal Counsel depending on the channel's type
+ * (`channel.chatChannelType`, the same field already used for the sidebar
+ * avatar badge and header label elsewhere in this file) — the viewer's own
+ * role alone isn't enough to disambiguate that.
+ *
+ * @param {string} role - The viewer's own session role.
+ * @param {string} [channelType] - The channel's `chatChannelType` ('counsellor_channel' or 'legal_counsel_channel').
+ * @returns {string} Display label for the peer.
+ */
+function peerRoleLabelFromSession(role, channelType) {
+  if (role !== 'survivor') return ROLE_LABELS.survivor;
+  return channelType === 'legal_counsel_channel' ? ROLE_LABELS.legal_counsel : ROLE_LABELS.counsellor;
 }
 
 function buildDemoTranscript(currentRole) {
@@ -221,6 +244,15 @@ const DirectChatPage = () => {
   const sendBtnRef = useRef(null);
   const prevMessageCountRef = useRef(0);
   const flushInProgressRef = useRef(false);
+  // Mirrors effectiveCryptoKey for use inside socket handlers that must not
+  // themselves be re-created (and thus re-subscribed) every time the key
+  // changes — see effectiveCryptoKeyRef sync effect and the listener effect below.
+  const effectiveCryptoKeyRef = useRef(null);
+  // Raw (still-encrypted) receiveMessage/message:edited payloads that arrived
+  // while effectiveCryptoKey was momentarily null (e.g. mid channel-switch key
+  // derivation). Drained once the key becomes available again so events are
+  // never silently dropped — see the drain effect below.
+  const pendingSocketEventsRef = useRef([]);
   // Tracks the latest activeChannelId synchronously, so an in-flight
   // establishSecureChannelRef call for a channel the user has since switched
   // away from can detect that and bail out instead of overwriting the newly
@@ -348,6 +380,15 @@ const DirectChatPage = () => {
   );
   const effectiveKeyBanner = isChannelDataCurrent ? keyBanner : '';
 
+  // Kept in sync so the live-message listener effect (below) can read the
+  // current key without needing effectiveCryptoKey in its dependency array —
+  // that dependency previously forced the whole effect (all 5 socket
+  // listeners) to tear down and re-register on every key-readiness change,
+  // dropping any event that arrived mid channel-switch key derivation.
+  useEffect(() => {
+    effectiveCryptoKeyRef.current = effectiveCryptoKey;
+  }, [effectiveCryptoKey]);
+
   const updateChannelStatus = async (chatId, status) => {
     if (!chatId) return;
 
@@ -470,7 +511,7 @@ const DirectChatPage = () => {
             senderLabel:
               dbMessage.senderUserId === currentUserId
                 ? roleLabelFromSession(currentUserRole)
-                : peerRoleLabelFromSession(currentUserRole),
+                : peerRoleLabelFromSession(currentUserRole, channel?.chatChannelType),
             // Carry delivery/seen timestamps so ticks render correctly on history load.
             deliveredAt: dbMessage.deliveredAt || null,
             seenAt: dbMessage.seenAt || null,
@@ -510,6 +551,15 @@ const DirectChatPage = () => {
   useEffect(() => {
     activeChannelIdRef.current = activeChannelId;
   }, [activeChannelId]);
+
+  // Lets the live-message listener effect read the current channel list (for
+  // chatChannelType lookups) without needing `channels` in its own dependency
+  // array — adding it there would re-subscribe all 5 socket listeners on
+  // every channel-list refresh, not just on channel switch.
+  const channelsRef = useRef([]);
+  useEffect(() => {
+    channelsRef.current = channels;
+  }, [channels]);
 
   useEffect(() => {
     if (!activeChannelId || !currentUserId) return;
@@ -593,15 +643,24 @@ const DirectChatPage = () => {
    * 3. Listen for Incoming Live Messages
    */
   useEffect(() => {
-    if (!effectiveCryptoKey || !currentUserId || !activeChannelId) return;
+    if (!currentUserId || !activeChannelId) return;
 
     // ── receiveMessage — new incoming or echoed outgoing message ──────────────
     const handleNewMessage = async (dbMessage) => {
       // Ignore events for other channels when user switches rapidly.
       if (dbMessage.chatId !== activeChannelId) return;
 
+      // Key derivation for the newly-active channel may still be in flight
+      // (network + IndexedDB + ECDH). Rather than dropping this event, queue
+      // the raw payload and replay it once the key is ready — see the drain
+      // effect below.
+      if (!effectiveCryptoKeyRef.current) {
+        pendingSocketEventsRef.current.push({ type: 'receiveMessage', payload: dbMessage });
+        return;
+      }
+
       // Decrypt the incoming ciphertext payload
-      const plaintext = await decryptMessage(dbMessage.encryptedMessageContent, effectiveCryptoKey);
+      const plaintext = await decryptMessage(dbMessage.encryptedMessageContent, effectiveCryptoKeyRef.current);
 
       const decryptedMsg = {
         messageId: dbMessage.messageId,
@@ -612,7 +671,7 @@ const DirectChatPage = () => {
         senderLabel:
           dbMessage.senderUserId === currentUserId
             ? roleLabelFromSession(currentUserRole)
-            : peerRoleLabelFromSession(currentUserRole),
+            : peerRoleLabelFromSession(currentUserRole, channelsRef.current.find((c) => c.chatId === dbMessage.chatId)?.chatChannelType),
         // Delivery/seen ticks — pre-populated if the counterpart was already online.
         deliveredAt: dbMessage.deliveredAt || null,
         seenAt: dbMessage.seenAt || null,
@@ -668,7 +727,18 @@ const DirectChatPage = () => {
     // plaintext in place so both sides see the edit live.
     const handleMessageEdited = async ({ chatId, messageId, encryptedPayload, editedAt }) => {
       if (chatId !== activeChannelId) return;
-      const plaintext = await decryptMessage(encryptedPayload, effectiveCryptoKey);
+
+      // Same rationale as handleNewMessage — queue instead of dropping if the
+      // key for this channel hasn't finished deriving yet.
+      if (!effectiveCryptoKeyRef.current) {
+        pendingSocketEventsRef.current.push({
+          type: 'message:edited',
+          payload: { chatId, messageId, encryptedPayload, editedAt }
+        });
+        return;
+      }
+
+      const plaintext = await decryptMessage(encryptedPayload, effectiveCryptoKeyRef.current);
       setMessages((prev) =>
         prev.map((m) => (m.messageId === messageId ? { ...m, plaintext, editedAt } : m))
       );
@@ -688,7 +758,60 @@ const DirectChatPage = () => {
       socketRef.current?.off('message:seen', handleMessageSeen);
       socketRef.current?.off('message:edited', handleMessageEdited);
     };
-  }, [activeChannelId, effectiveCryptoKey, currentUserId, currentUserRole]);
+    // Intentionally NOT keyed on effectiveCryptoKey — see effectiveCryptoKeyRef
+    // above. Keeping listeners registered across key-readiness changes is the
+    // whole point of this effect's design; re-subscribing on every channel
+    // switch's key-derivation window is what dropped live events before.
+  }, [activeChannelId, currentUserId, currentUserRole]);
+
+  /**
+   * 3b. Drain any receiveMessage/message:edited events that arrived while
+   * effectiveCryptoKey was momentarily null (channel switch mid key
+   * derivation) — replays each buffered event through the same decrypt path
+   * used for live events, in arrival order, once the key becomes available.
+   */
+  useEffect(() => {
+    if (!effectiveCryptoKey || pendingSocketEventsRef.current.length === 0) return;
+
+    const queued = pendingSocketEventsRef.current;
+    pendingSocketEventsRef.current = [];
+
+    (async () => {
+      for (const event of queued) {
+        if (event.type === 'receiveMessage') {
+          const dbMessage = event.payload;
+          if (dbMessage.chatId !== activeChannelId) continue;
+          const plaintext = await decryptMessage(dbMessage.encryptedMessageContent, effectiveCryptoKey);
+          const decryptedMsg = {
+            messageId: dbMessage.messageId,
+            senderUserId: dbMessage.senderUserId,
+            plaintext,
+            isMine: dbMessage.senderUserId === currentUserId,
+            senderLabel:
+              dbMessage.senderUserId === currentUserId
+                ? roleLabelFromSession(currentUserRole)
+                : peerRoleLabelFromSession(currentUserRole, channels.find((c) => c.chatId === dbMessage.chatId)?.chatChannelType),
+            deliveredAt: dbMessage.deliveredAt || null,
+            seenAt: dbMessage.seenAt || null,
+            sentAt: dbMessage.messageDispatchTimestamp || null,
+            editedAt: dbMessage.editedAt || null
+          };
+          setMessages((prev) => [...prev, decryptedMsg]);
+          if (dbMessage.senderUserId !== currentUserId) {
+            setNoticeMessage('You have a new update.');
+            window.setTimeout(() => setNoticeMessage(''), 2800);
+          }
+        } else if (event.type === 'message:edited') {
+          const { chatId, messageId, encryptedPayload, editedAt } = event.payload;
+          if (chatId !== activeChannelId) continue;
+          const plaintext = await decryptMessage(encryptedPayload, effectiveCryptoKey);
+          setMessages((prev) =>
+            prev.map((m) => (m.messageId === messageId ? { ...m, plaintext, editedAt } : m))
+          );
+        }
+      }
+    })();
+  }, [effectiveCryptoKey, activeChannelId, currentUserId, currentUserRole, channels]);
 
   useEffect(() => {
     const markRead = async () => {

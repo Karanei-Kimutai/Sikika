@@ -275,6 +275,17 @@ See [`docs/e2ee.md`](./e2ee.md) — "Pending-message queue" section — for the 
 
 The component derives the counterpart's public key from `counterpartUserId` returned by the channel list, then performs ECDH client-side to get the shared AES-GCM key stored in memory for the session. Private keys are stored in IndexedDB and are non-extractable.
 
+### Channel-switch event queue
+
+Deriving the shared AES-GCM key for a newly-selected channel is asynchronous (network + IndexedDB + ECDH + a one-time history fetch). Socket listener registration is intentionally **decoupled** from that derivation so live events arriving mid-switch are never silently dropped:
+
+- The listener-registration effect keys only on `activeChannelId`/`currentUserId` (not on the derived crypto key), so `receiveMessage`, `presence:update`, `message:delivered`, `message:seen`, and `message:edited` listeners stay attached across a channel switch instead of being torn down and re-attached once the key is ready.
+- The two handlers that need to decrypt (`handleNewMessage`, `handleMessageEdited`) check a ref-mirrored copy of the crypto key (`effectiveCryptoKeyRef`); if it isn't ready yet they push the raw event onto `pendingSocketEventsRef` instead of decrypting immediately.
+- A separate effect, keyed on the crypto key becoming available, drains `pendingSocketEventsRef` in arrival order and replays each event through its handler now that decryption is possible, then clears the queue.
+- `presence:update`/`message:delivered`/`message:seen` don't decrypt anything, so they're applied immediately regardless of key readiness — only the two decrypting handlers use the queue.
+
+Net effect: switching channels while the counterpart is actively sending a message no longer loses that message — it's buffered and replayed once the new channel's key is derived, instead of arriving while the listener is unregistered.
+
 ---
 
 ## Cloudinary Integration (Evidence)
