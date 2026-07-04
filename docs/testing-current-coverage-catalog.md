@@ -116,6 +116,10 @@ Current coverage (`backend/tests/reports.test.js` + route guards):
 - Action: request reset OTP, submit OTP + new password.
 - Assertion: success message shown.
 
+4. Global 401 handling
+- Action: an authenticated API call (via the shared `apiClient.js`) returns 401.
+- Assertion: session is cleared and the app redirects to `/join`.
+
 
 ### B. Survivor Flows (`frontend/tests/e2e/survivor-flows.spec.js`) — CURRENTLY COVERED
 
@@ -127,7 +131,11 @@ Current coverage (`backend/tests/reports.test.js` + route guards):
 - Action: join room, open message menu, report message.
 - Assertion: join success and report success messages.
 
-3. Direct chat list load
+3. Community composer double-submit guard
+- Action: fill the composer, click Send, then attempt a rapid second click while the (delayed) request is still in flight.
+- Assertion: Send button stays disabled for the whole in-flight window and exactly one message is posted.
+
+4. Direct chat list load
 - Action: open chat page.
 - Assertion: chats render with expected survivor labels and archived toggle.
 
@@ -141,6 +149,10 @@ Current coverage (`backend/tests/reports.test.js` + route guards):
 2. NGO admin maintenance controls
 - Action: enable/disable maintenance mode.
 - Assertion: success message shown and dashboard state refreshes.
+
+3. Lift Ban double-submit guard
+- Action: click "Lift Ban" from the Moderation Desk queue.
+- Assertion: the button shows a "Lifting…" loading state and all visible Lift Ban buttons disable for the duration of the request.
 
 
 ### D. Profile & Library Flows (`frontend/tests/e2e/profile-library-flows.spec.js`) — CURRENTLY COVERED
@@ -173,7 +185,8 @@ Current coverage (`backend/tests/reports.test.js` + route guards):
 
 `frontend/tests/e2e/safety.spec.js` exists on disk and covers Quick Exit behavior.
 1. Click Quick Exit → assert redirect to safe URL.
-2. Assert session keys are cleared after exit.
+2. Assert session keys are cleared after exit, including the local `pendingMessages:<chatId>` queue and the IndexedDB E2EE keypair.
+3. Sign out (not just Quick Exit) also purges any queued `pendingMessages:<chatId>` entries from `localStorage`.
 
 
 ## 3. Summary for Proposal (Simple)
@@ -194,6 +207,7 @@ Additional suites also present (not listed in the original proposal but fully im
 - `backend/tests/banCascade.test.js` — cascadeReassignOnStaffBan auto-reassignment
 - `backend/tests/banEnforcement.test.js` — ban metadata guards, liftExpiredBan, authMiddleware enforcement
 - `backend/tests/chatPresence.test.js` — presence registry and delivery catch-up
+- `backend/tests/socketAuthService.test.js` — unit tests for the shared `socketAuthService.js` helpers (JWT extraction from handshake, userId claim resolution, `isUserAccountActive` across ACTIVE/BANNED/SUSPENDED/missing-account/DB-error cases)
 - `backend/tests/legalCaseController.test.js` — legal case workflow transitions
 - `backend/tests/notificationController.test.js` — notification read/dismiss endpoints
 - `backend/tests/notificationService.test.js` — notification write-path (notificationService)

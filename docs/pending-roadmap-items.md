@@ -397,3 +397,70 @@ freshly-provisioned staff accounts and freshly auto-assigned counsellor/legal-co
   composer stays enabled and queues a message while the counsellor has no key, the pending
   message survives a page reload, and it auto-flushes within seconds of the counsellor
   completing their first login. Full existing backend suite (113 tests) still passes.
+
+## 13) 13-bug review-pass fix batch
+Status: Done
+
+A prior code-review pass surfaced 13 correctness/safety/cosmetic bugs across the backend and
+frontend. All 13 are fixed and verified (155/155 backend Jest tests, frontend lint clean, and
+the touched Playwright specs run and passing):
+
+- **Reports**: `withdrawReport` now enforces the same status-transition guard as staff-facing
+  updates (a report already RESOLVED/WITHDRAWN/ESCALATED_TO_LEGAL_CASE can no longer be
+  withdrawn). The report-status dropdown (`frontend/src/utils/reportStatusRules.js`, see
+  `docs/reporting.md`) only ever offers transitions the backend will actually accept.
+- **Ban cascade**: `cascadeReassignOnStaffBan` now picks a fresh least-loaded replacement per
+  affected survivor instead of once for the whole batch, so multiple survivors spread across
+  different staff as workload increments, rather than all landing on one person.
+- **USSD**: `pickLeastLoadedCounsellor` now excludes counsellors whose account isn't `ACTIVE`
+  before auto-routing a callback (mirrors `adminController.js`'s `getLeastLoadedStaff`); a
+  separate, unrelated bug in the same file (`role` vs `userRole` in the admin-notify query,
+  which silently matched zero rows) was fixed alongside it.
+- **Auth**: `resetPasswordWithOtp` now checks lockout/ban status before comparing the OTP,
+  matching `loginWithPassword`. `completeSignup`'s password-set + profile-creation +
+  chat-channel-provisioning sequence is now one Sequelize transaction, so a failure partway
+  through can no longer strand a password-set account with no profile or no chat channels.
+- **Sockets**: JWT-extraction and account-status-check helpers, previously duplicated
+  byte-for-byte in `chatSocket.js` and `communitySocket.js`, are now a single shared
+  `backend/src/services/socketAuthService.js` module (see `docs/sockets.md`).
+  `communitySocket.js` now re-checks account status on `joinCommunityRoom`/`joinModerationFeed`,
+  not just at connection, so a mid-session ban blocks a room/feed join without needing a
+  reconnect. `chatSocket.js`'s `sendEncryptedMessage` re-reads live presence immediately before
+  the `message:delivered` emit decision, closing a narrow window where a recipient disconnecting
+  during the DB write could otherwise get an emit sent to an empty room.
+- **Direct Chat**: role labels correctly distinguish Legal Counsel from Counsellor (previously
+  a Legal Counsel's own messages showed as "Counsellor"). Live socket listeners
+  (`receiveMessage`, `message:edited`, etc.) now stay registered across a channel switch instead
+  of tearing down while the new channel's E2EE key is still being derived — events arriving in
+  that window are queued and replayed once the key is ready instead of being silently dropped
+  (see `docs/direct-chat.md`'s "Channel-switch event queue" section).
+- **Quick Exit / Sign Out**: both now purge the local `pendingMessages:<chatId>` plaintext queue
+  (`frontend/src/utils/pendingMessageQueue.js`'s `purgeAllPending()`), not just Quick Exit's
+  existing IndexedDB keypair deletion — previously Sign Out left queued plaintext behind.
+- **Community Chat**: the message composer now guards against a double-click firing two
+  identical POSTs (`isSending` state, Send button disabled while in flight).
+- **NGO Admin**: "Lift Ban" (and a couple of other admin actions found during the same
+  double-submit sweep) now disable while a request is in flight instead of allowing a second
+  concurrent click.
+- **Frontend API layer**: a shared `frontend/src/services/apiClient.js` (axios instance with a
+  request interceptor for the Bearer token and a response interceptor that clears the session
+  and redirects to `/join` on any 401) replaced 11 files' worth of duplicated manual
+  header/base-URL construction and gives the app, for the first time, a single place where an
+  expired/invalidated session is handled consistently.
+- **Docs**: `docs/troubleshooting.md` now documents the single-process (no Redis adapter)
+  limitation of the Socket.io layer as an accepted, documented gap rather than a silent one.
+
+**Accepted gaps, called out rather than silently left uncovered:**
+- No socket-handler-level integration test exists for the `communitySocket.js`
+  per-event account-status recheck or `chatSocket.js`'s fresh-presence-read fix — this repo has
+  no Socket.io integration-test harness (`chatPresence.test.js` unit-tests `presenceRegistry`
+  directly, not real connections); the extracted `socketAuthService.js` helpers themselves are
+  unit-tested directly instead.
+- No automated test covers the Direct Chat channel-switch race end-to-end (real-time races are
+  the hardest case to automate reliably); it was verified by code review and manual reasoning
+  about the effect dependency arrays, not by a Playwright scenario.
+- While auditing the admin double-submit sweep, an unrelated pre-existing gap was noticed but
+  **not fixed** (out of scope for this pass): the "Create/Save Resource" submit button in
+  `NgoAdminDashboardPage.jsx` (`handleResourceSubmit`) has no in-flight/disabled guard, so it's
+  susceptible to the same double-submit class of bug as the ones fixed above. Worth a follow-up
+  pass.
