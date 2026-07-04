@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const { Op } = require('sequelize');
-const { randomUUID } = require('crypto');
+const { randomUUID, randomInt } = require('crypto');
 const sequelize = require('../config/database');
 const {
     UserAccount,
@@ -443,14 +443,17 @@ async function setOtpForUser(user, otpCode, purpose) {
  * be replayed after first use.
  *
  * @param {UserAccount} user - UserAccount instance (mutated and saved).
+ * @param {import('sequelize').Transaction} [transaction] - An existing transaction to save
+ *   within, e.g. so the signup-ticket clear commits/rolls back with the rest of signup
+ *   completion. When omitted, the save runs outside any transaction.
  * @returns {Promise<void>}
  */
-async function clearOtpForUser(user) {
+async function clearOtpForUser(user, transaction) {
     user.otpHash = null;
     user.otpPurpose = null;
     user.otpExpiresAt = null;
     user.otpAttemptCount = 0;
-    await user.save();
+    await user.save({ transaction });
 }
 
 /**
@@ -707,10 +710,13 @@ async function pickLeastLoadedStaff(ProfileModel, idField, transaction) {
  *
  * @param {UserAccount} user              - The verified UserAccount.
  * @param {object|null} profileOverrides  - Sanitized profile fields from signup form (may be null).
+ * @param {import('sequelize').Transaction|null} [transaction] - An existing transaction to
+ *   run inside (e.g. so the caller can commit/rollback this together with other signup-completion
+ *   writes such as the password set). When omitted, a new transaction is opened and managed here.
  * @returns {Promise<SurvivorProfile>} The created (or existing) SurvivorProfile instance.
  */
-async function ensureSurvivorStaffAutoAssignment(user, profileOverrides = null) {
-    return sequelize.transaction(async (transaction) => {
+async function ensureSurvivorStaffAutoAssignment(user, profileOverrides = null, transaction = null) {
+    const runAssignment = async (transaction) => {
         const existingProfile = await SurvivorProfile.findOne({
             where: { userId: user.userId },
             transaction
@@ -754,7 +760,10 @@ async function ensureSurvivorStaffAutoAssignment(user, profileOverrides = null) 
         }, { transaction });
 
         return survivorProfile;
-    });
+    };
+
+    if (transaction) return runAssignment(transaction);
+    return sequelize.transaction(runAssignment);
 }
 
 // ---------------------------------------------------------------------------
@@ -821,7 +830,7 @@ const requestOTP = async (req, res) => {
             });
         }
 
-        const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
+        const otpCode = String(randomInt(1000, 10000));
         const effectiveIntent = resolvedIntent || AUTH_INTENTS.SIGNUP_OTP;
 
         await setOtpForUser(user, otpCode, effectiveIntent);
@@ -1018,16 +1027,29 @@ const completeSignup = async (req, res) => {
             return res.status(401).json({ error: 'Invalid signup ticket.' });
         }
 
-        user.hashedPassword = await bcrypt.hash(password, 10);
-        await clearOtpForUser(user); // also calls user.save()
+        // Signup completion bundles four writes (password, OTP-ticket clear, profile
+        // creation, channel provisioning) in one transaction so a failure partway
+        // through can never strand a password-set account with no SurvivorProfile,
+        // or a profile with no chat channels.
+        const signupTransaction = await sequelize.transaction();
+        let survivorProfile;
+        try {
+            user.hashedPassword = await bcrypt.hash(password, 10);
+            await clearOtpForUser(user, signupTransaction); // also calls user.save()
 
-        // Signup completion bundles three side effects:
-        // 1) sanitize/persist survivor profile fields from the onboarding UI
-        // 2) auto-assign least-loaded counsellor and legal counsel
-        // 3) pre-create direct chat channels for immediate visibility on the chat page
-        const sanitizedProfileInput = sanitizeSignupSurvivorProfileInput(profileDetails, user);
-        const survivorProfile = await ensureSurvivorStaffAutoAssignment(user, sanitizedProfileInput);
-        await ensureAutoChannelsForSurvivor(survivorProfile);
+            // Signup completion bundles three side effects:
+            // 1) sanitize/persist survivor profile fields from the onboarding UI
+            // 2) auto-assign least-loaded counsellor and legal counsel
+            // 3) pre-create direct chat channels for immediate visibility on the chat page
+            const sanitizedProfileInput = sanitizeSignupSurvivorProfileInput(profileDetails, user);
+            survivorProfile = await ensureSurvivorStaffAutoAssignment(user, sanitizedProfileInput, signupTransaction);
+            await ensureAutoChannelsForSurvivor(survivorProfile, signupTransaction);
+
+            await signupTransaction.commit();
+        } catch (err) {
+            await signupTransaction.rollback();
+            throw err;
+        }
 
         const token = issueAuthToken(user);
 
@@ -1129,7 +1151,7 @@ const loginWithPassword = async (req, res) => {
             });
         }
 
-        const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
+        const otpCode = String(randomInt(1000, 10000));
         await setOtpForUser(user, otpCode, AUTH_INTENTS.SIGNIN_2FA);
         const warning = await sendOtpSms(phoneNumber, otpCode);
 
@@ -1278,7 +1300,7 @@ const requestPasswordReset = async (req, res) => {
             });
         }
 
-        const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
+        const otpCode = String(randomInt(1000, 10000));
         await setOtpForUser(user, otpCode, AUTH_INTENTS.PASSWORD_RESET);
         const warning = await sendOtpSms(phoneNumber, otpCode);
 
@@ -1329,6 +1351,22 @@ const resetPasswordWithOtp = async (req, res) => {
             return res.status(401).json({ error: 'Invalid reset request.' });
         }
 
+        // Enforce the same ban/lockout gates every other OTP-verification entry
+        // point applies before comparing the OTP, so a locked-out or banned
+        // account can't have OTPs brute-forced against it via this endpoint.
+        await liftExpiredBan(user);
+
+        if (!isAccountActive(user)) {
+            return res.status(403).json({ error: 'This account is suspended or deactivated.' });
+        }
+
+        if (isLocked(user)) {
+            return res.status(423).json({
+                error: 'Account temporarily locked due to repeated failed attempts.',
+                retryAfterSeconds: getLockoutSecondsRemaining(user)
+            });
+        }
+
         // OTP must exist and must have been issued for the PASSWORD_RESET flow specifically.
         if (!user.otpHash || user.otpPurpose !== AUTH_INTENTS.PASSWORD_RESET) {
             return res.status(401).json({ error: 'Invalid or expired OTP.' });
@@ -1372,18 +1410,19 @@ const resetPasswordWithOtp = async (req, res) => {
  *    authStage: PASSWORD_RESET_REQUIRED and the frontend gates all navigation
  *    until this endpoint is called successfully.
  *
- * 2. Any authenticated user choosing to change their password in-session
- *    (no current-password verification required — this endpoint trusts the JWT).
+ * 2. Any authenticated user choosing to change their password in-session.
+ *    For this path, currentPassword is required unless the account is in the
+ *    forced-reset state (status='password_reset_required').
  *
  * On success, account status is set to 'active' to clear the forced-reset gate.
  *
  * Requires: valid JWT in the Authorization header (enforced by authMiddleware).
  *
- * @param {import('express').Request}  req - Body: { password }; req.user populated by authMiddleware.
+ * @param {import('express').Request}  req - Body: { password, currentPassword? }; req.user populated by authMiddleware.
  * @param {import('express').Response} res
  */
 const setPassword = async (req, res) => {
-    const { password } = req.body;
+     const { password, currentPassword } = req.body;
 
     try {
         if (!password || password.length < 8) {
@@ -1393,6 +1432,22 @@ const setPassword = async (req, res) => {
         const user = await UserAccount.findByPk(req.user.id);
         if (!user) {
             return res.status(404).json({ error: 'User not found.' });
+        }
+
+        // Forced-reset accounts skip current-password verification: they were
+        // just issued a temporary/OTP-gated password they never chose themselves,
+        // so requiring it here would just re-prompt the user for a value the
+        // system generated, not one they control.
+        const needsForcedReset = String(user.status || '').toLowerCase() === 'password_reset_required';
+        if (!needsForcedReset) {
+            if (!currentPassword) {
+                return res.status(401).json({ error: 'Current password is required.' });
+            }
+
+            const currentPasswordMatches = await bcrypt.compare(String(currentPassword), user.hashedPassword || '');
+            if (!currentPasswordMatches) {
+                return res.status(401).json({ error: 'Current password is incorrect.' });
+            }
         }
 
         user.hashedPassword = await bcrypt.hash(password, 10);

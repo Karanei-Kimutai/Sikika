@@ -64,11 +64,13 @@ jest.mock('../src/models', () => ({
   },
   CounsellorProfile: {
     findOne: jest.fn(),
-    findAll: jest.fn()
+    findAll: jest.fn(),
+    findByPk: jest.fn()
   },
   LegalCounselProfile: {
     findOne: jest.fn(),
-    findAll: jest.fn()
+    findAll: jest.fn(),
+    findByPk: jest.fn()
   },
   StaffAssignmentHistory: { create: jest.fn().mockResolvedValue({}) },
   ModerationActionLog: { create: jest.fn().mockResolvedValue({}) },
@@ -159,8 +161,10 @@ describe('Ban cascade and role-guard parity', () => {
     SurvivorProfile.findAll.mockResolvedValue([]);
     CounsellorProfile.findAll.mockResolvedValue([]);
     CounsellorProfile.findOne.mockResolvedValue(null);
+    CounsellorProfile.findByPk.mockResolvedValue({ counsellorId: 'default-counsellor' });
     LegalCounselProfile.findAll.mockResolvedValue([]);
     LegalCounselProfile.findOne.mockResolvedValue(null);
+    LegalCounselProfile.findByPk.mockResolvedValue({ legalCounselId: 'default-legal' });
   });
 
   // ── banUser endpoint ────────────────────────────────────────────────────────
@@ -246,6 +250,193 @@ describe('Ban cascade and role-guard parity', () => {
       expect(res.status).toBe(400);
       expect(res.body.error).toMatch(/future date/i);
     });
+
+    it('cascade reassignment preserves legal counsel when counsellor is banned', async () => {
+      const actor = buildAccount({ userId: ACTOR_ID, userRole: 'NGO_ADMIN', accountStatus: 'ACTIVE' });
+      const bannedCounsellorUser = buildAccount({ userId: 'counsellor-user-1', userRole: 'COUNSELLOR', accountStatus: 'ACTIVE' });
+
+      UserAccount.findByPk
+        .mockResolvedValueOnce(actor) // authMiddleware
+        .mockResolvedValueOnce(actor) // getActor
+        .mockResolvedValueOnce(bannedCounsellorUser); // target user lookup
+
+      CounsellorProfile.findOne.mockResolvedValueOnce({ counsellorId: 'counsellor-old' });
+      CounsellorProfile.findAll.mockResolvedValueOnce([
+        {
+          counsellorId: 'counsellor-new',
+          availabilityStatus: 'AVAILABLE',
+          userAccount: { accountStatus: 'ACTIVE' }
+        }
+      ]);
+
+      const survivorUpdate = jest.fn().mockResolvedValue();
+      SurvivorProfile.findAll.mockResolvedValueOnce([
+        {
+          survivorId: 'survivor-1',
+          assignedCounsellorId: 'counsellor-old',
+          assignedLegalCounselId: 'legal-keep'
+        }
+      ]);
+      SurvivorProfile.findByPk.mockResolvedValueOnce({
+        survivorId: 'survivor-1',
+        assignedCounsellorId: 'counsellor-old',
+        assignedLegalCounselId: 'legal-keep',
+        update: survivorUpdate
+      });
+
+      const app = buildAdminApp();
+      const res = await request(app)
+        .patch('/api/admin/ngo/users/counsellor-user-1/ban')
+        .set('Authorization', 'Bearer token')
+        .send({ reason: 'Safety violation' });
+
+      expect(res.status).toBe(200);
+
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(survivorUpdate).toHaveBeenCalledWith({
+        assignedCounsellorId: 'counsellor-new',
+        assignedLegalCounselId: 'legal-keep'
+      });
+    });
+
+    it('cascade reassignment preserves counsellor when legal counsel is banned', async () => {
+      const actor = buildAccount({ userId: ACTOR_ID, userRole: 'NGO_ADMIN', accountStatus: 'ACTIVE' });
+      const bannedLegalUser = buildAccount({ userId: 'legal-user-1', userRole: 'LEGAL_COUNSEL', accountStatus: 'ACTIVE' });
+
+      UserAccount.findByPk
+        .mockResolvedValueOnce(actor) // authMiddleware
+        .mockResolvedValueOnce(actor) // getActor
+        .mockResolvedValueOnce(bannedLegalUser); // target user lookup
+
+      LegalCounselProfile.findOne.mockResolvedValueOnce({ legalCounselId: 'legal-old' });
+      LegalCounselProfile.findAll.mockResolvedValueOnce([
+        {
+          legalCounselId: 'legal-new',
+          availabilityStatus: 'AVAILABLE',
+          userAccount: { accountStatus: 'ACTIVE' }
+        }
+      ]);
+
+      const survivorUpdate = jest.fn().mockResolvedValue();
+      SurvivorProfile.findAll.mockResolvedValueOnce([
+        {
+          survivorId: 'survivor-2',
+          assignedCounsellorId: 'counsellor-keep',
+          assignedLegalCounselId: 'legal-old'
+        }
+      ]);
+      SurvivorProfile.findByPk.mockResolvedValueOnce({
+        survivorId: 'survivor-2',
+        assignedCounsellorId: 'counsellor-keep',
+        assignedLegalCounselId: 'legal-old',
+        update: survivorUpdate
+      });
+
+      const app = buildAdminApp();
+      const res = await request(app)
+        .patch('/api/admin/ngo/users/legal-user-1/ban')
+        .set('Authorization', 'Bearer token')
+        .send({ reason: 'Safety violation' });
+
+      expect(res.status).toBe(200);
+
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(survivorUpdate).toHaveBeenCalledWith({
+        assignedCounsellorId: 'counsellor-keep',
+        assignedLegalCounselId: 'legal-new'
+      });
+    });
+
+    it('spreads multiple survivors across different replacement counsellors instead of dumping them all on one (regression for hoisted-before-loop bug)', async () => {
+      const actor = buildAccount({ userId: ACTOR_ID, userRole: 'NGO_ADMIN', accountStatus: 'ACTIVE' });
+      const bannedCounsellorUser = buildAccount({ userId: 'counsellor-user-1', userRole: 'COUNSELLOR', accountStatus: 'ACTIVE' });
+
+      UserAccount.findByPk
+        .mockResolvedValueOnce(actor) // authMiddleware
+        .mockResolvedValueOnce(actor) // getActor
+        .mockResolvedValueOnce(bannedCounsellorUser); // target user lookup
+
+      CounsellorProfile.findOne.mockResolvedValueOnce({ counsellorId: 'counsellor-old' });
+
+      // Two survivors are affected by the ban.
+      SurvivorProfile.findAll.mockResolvedValueOnce([
+        { survivorId: 'survivor-1', assignedCounsellorId: 'counsellor-old', assignedLegalCounselId: null },
+        { survivorId: 'survivor-2', assignedCounsellorId: 'counsellor-old', assignedLegalCounselId: null }
+      ]);
+
+      // getLeastLoadedStaff (which calls CounsellorProfile.findAll with an `include`
+      // for the accountStatus join) must be re-queried fresh per survivor rather than
+      // reusing a single pick made before the loop — simulate that the first
+      // reassignment raised counsellor-A's workload score so the second iteration's
+      // query now returns counsellor-B as least-loaded. `applySurvivorReassignment`
+      // also calls `CounsellorProfile.findAll` itself (via refreshWorkloadScores, with
+      // no `include`) — distinguish the two call shapes via `options.include` so both
+      // are satisfied without the calls stealing each other's queued mock values.
+      let leastLoadedCallCount = 0;
+      CounsellorProfile.findAll.mockImplementation((options) => {
+        if (options?.include) {
+          leastLoadedCallCount += 1;
+          if (leastLoadedCallCount === 1) {
+            return Promise.resolve([
+              { counsellorId: 'counsellor-A', availabilityStatus: 'AVAILABLE', currentWorkloadScore: 1, userAccount: { accountStatus: 'ACTIVE' } },
+              { counsellorId: 'counsellor-B', availabilityStatus: 'AVAILABLE', currentWorkloadScore: 2, userAccount: { accountStatus: 'ACTIVE' } }
+            ]);
+          }
+          return Promise.resolve([
+            { counsellorId: 'counsellor-B', availabilityStatus: 'AVAILABLE', currentWorkloadScore: 2, userAccount: { accountStatus: 'ACTIVE' } },
+            { counsellorId: 'counsellor-A', availabilityStatus: 'AVAILABLE', currentWorkloadScore: 3, userAccount: { accountStatus: 'ACTIVE' } }
+          ]);
+        }
+        // refreshWorkloadScores' shape: attributes only, no include — harmless stub.
+        return Promise.resolve([
+          { counsellorId: 'counsellor-A', update: jest.fn().mockResolvedValue() },
+          { counsellorId: 'counsellor-B', update: jest.fn().mockResolvedValue() }
+        ]);
+      });
+
+      const survivor1Update = jest.fn().mockResolvedValue();
+      const survivor2Update = jest.fn().mockResolvedValue();
+      SurvivorProfile.findByPk
+        .mockResolvedValueOnce({
+          survivorId: 'survivor-1',
+          assignedCounsellorId: 'counsellor-old',
+          assignedLegalCounselId: null,
+          update: survivor1Update
+        })
+        .mockResolvedValueOnce({
+          survivorId: 'survivor-2',
+          assignedCounsellorId: 'counsellor-old',
+          assignedLegalCounselId: null,
+          update: survivor2Update
+        });
+
+      const app = buildAdminApp();
+      const res = await request(app)
+        .patch('/api/admin/ngo/users/counsellor-user-1/ban')
+        .set('Authorization', 'Bearer token')
+        .send({ reason: 'Safety violation' });
+
+      expect(res.status).toBe(200);
+
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // Each survivor must land on the counsellor that was least-loaded AT THE TIME
+      // of their own reassignment — not both on whichever counsellor was least-loaded
+      // once, before either reassignment happened.
+      expect(survivor1Update).toHaveBeenCalledWith({
+        assignedCounsellorId: 'counsellor-A',
+        assignedLegalCounselId: null
+      });
+      expect(survivor2Update).toHaveBeenCalledWith({
+        assignedCounsellorId: 'counsellor-B',
+        assignedLegalCounselId: null
+      });
+      // getLeastLoadedStaff's account-status-joined query ran once per survivor,
+      // not once total before the loop.
+      expect(leastLoadedCallCount).toBe(2);
+    });
   });
 
   // ── community moderation ban_user role guard parity ─────────────────────────
@@ -327,6 +518,71 @@ describe('Ban cascade and role-guard parity', () => {
       expect(CounsellorProfile.findOne).toHaveBeenCalledWith(
         expect.objectContaining({ where: { userId: 'target-uuid' } })
       );
+    });
+
+    it('200: ban_user still bans target when reported message is already deleted (snapshot fallback)', async () => {
+      const actorAccount = buildAccount({ userId: ACTOR_ID, userRole: 'NGO_ADMIN', accountStatus: 'ACTIVE' });
+      const targetAccount = buildAccount({ userId: 'target-uuid', userRole: 'SURVIVOR', accountStatus: 'ACTIVE' });
+
+      const report = {
+        contentReportId: REPORT_ID,
+        reportedCommunityMessageId: 'msg-missing',
+        reportedSenderUserId: 'target-uuid',
+        reportedRoomId: 'room-1',
+        moderationReviewStatus: 'PENDING',
+        reportReasonText: 'Offensive',
+        save: jest.fn().mockResolvedValue()
+      };
+
+      UserAccount.findByPk.mockImplementation((id) => {
+        if (id === ACTOR_ID) return Promise.resolve(actorAccount);
+        if (id === 'target-uuid') return Promise.resolve(targetAccount);
+        return Promise.resolve(null);
+      });
+      HarmfulContentReport.findByPk.mockResolvedValue(report);
+      CommunityMessage.findByPk.mockResolvedValue(null);
+
+      const app = buildCommunityApp();
+      const res = await request(app)
+        .patch(`/api/community/moderation/reports/${REPORT_ID}`)
+        .set('Authorization', 'Bearer token')
+        .send({ reviewStatus: 'APPROVED', action: 'ban_user', reason: 'Harmful content' });
+
+      expect(res.status).toBe(200);
+      expect(targetAccount.accountStatus).toBe('BANNED');
+      expect(ModerationActionLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          targetUserId: 'target-uuid',
+          moderationActionType: 'BAN'
+        }),
+        expect.any(Object)
+      );
+    });
+
+    it('409: ban_user returns explicit error when target cannot be resolved', async () => {
+      const actorAccount = buildAccount({ userId: ACTOR_ID, userRole: 'NGO_ADMIN', accountStatus: 'ACTIVE' });
+      const report = {
+        contentReportId: REPORT_ID,
+        reportedCommunityMessageId: 'msg-missing',
+        reportedSenderUserId: null,
+        reportedRoomId: null,
+        moderationReviewStatus: 'PENDING',
+        reportReasonText: 'Offensive',
+        save: jest.fn().mockResolvedValue()
+      };
+
+      UserAccount.findByPk.mockResolvedValue(actorAccount);
+      HarmfulContentReport.findByPk.mockResolvedValue(report);
+      CommunityMessage.findByPk.mockResolvedValue(null);
+
+      const app = buildCommunityApp();
+      const res = await request(app)
+        .patch(`/api/community/moderation/reports/${REPORT_ID}`)
+        .set('Authorization', 'Bearer token')
+        .send({ reviewStatus: 'APPROVED', action: 'ban_user', reason: 'Harmful content' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toMatch(/unable to resolve report target/i);
     });
   });
 

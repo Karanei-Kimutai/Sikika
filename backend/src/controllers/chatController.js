@@ -28,6 +28,13 @@ const {
 } = require('../services/chatAccessService');
 const presenceRegistry = require('../services/presenceRegistry');
 
+/**
+ * Extracts the authenticated user's UUID from authMiddleware-attached JWT claims.
+ * The payload carries both 'userId' and 'id' for backward compatibility.
+ *
+ * @param {import('express').Request} req
+ * @returns {string|null}
+ */
 function getUserIdFromRequest(req) {
   return req.user?.userId || req.user?.id || null;
 }

@@ -153,7 +153,13 @@ function NotificationBell({ isAuthenticated, onNavigate }) {
 
   // ── Unread count polling ─────────────────────────────────────────────────
   useEffect(() => {
-    if (!isAuthenticated) return;
+    // Disconnect on sign-out (isAuthenticated flips to false). When auth is
+    // present the singleton stays connected across re-renders — connecting
+    // happens in the socket-push effect below, not here.
+    if (!isAuthenticated) {
+      notificationSocket.disconnect();
+      return;
+    }
 
     /**
      * Lightweight poll — fetches only the integer count, not full payloads.
@@ -218,11 +224,6 @@ function NotificationBell({ isAuthenticated, onNavigate }) {
 
     return () => {
       notificationSocket.unsubscribe(handleSocketNotification);
-      // Disconnect on sign-out (isAuthenticated flips to false).
-      // When auth is present the singleton stays connected across re-renders.
-      if (!isAuthenticated) {
-        notificationSocket.disconnect();
-      }
     };
   }, [isAuthenticated, handleSocketNotification]);
 
@@ -350,26 +351,24 @@ function NotificationBell({ isAuthenticated, onNavigate }) {
 
   /**
    * handleMarkAllRead
-   * Bulk-marks all unread notifications as READ and zeroes the badge.
+   * Bulk-marks all unread notifications as READ, zeroes the badge, and clears
+   * the panel list — the panel shows "No new updates." after the action so the
+   * user gets clear confirmation that everything has been acknowledged.
    */
   async function handleMarkAllRead() {
-    // Optimistic update — mark all rows as READ in local state.
-    setNotifications((prev) =>
-      prev.map((n) => ({ ...n, notificationReadStatus: "READ" }))
-    );
+    // Snapshot current list so we can restore on failure.
+    const previous = notifications;
+
+    // Optimistic update — clear the panel and zero the badge immediately.
+    setNotifications([]);
     setUnreadCount(0);
 
     try {
       await markAllNotificationsRead();
     } catch {
-      // On failure, reload the true state from the server.
-      try {
-        const data = await getNotifications();
-        setNotifications(data.notifications || []);
-        setUnreadCount(data.unreadCount || 0);
-      } catch {
-        // If the reload also fails, the panel shows stale state — acceptable.
-      }
+      // On failure, restore the previous list and badge so state stays consistent.
+      setNotifications(previous);
+      setUnreadCount(previous.filter((n) => n.notificationReadStatus === "UNREAD").length);
     }
   }
 

@@ -304,3 +304,62 @@ node src/sync.js
 ```
 
 It should not be confused with the `sequelize.sync()` call inside `index.js`. The script uses `{ alter: true }` unconditionally, so treat it the same as setting `DB_SYNC_ALTER=true` on a single boot.
+
+---
+
+## Graceful Shutdown
+
+The server does not currently register `SIGTERM`/`SIGINT` handlers with custom teardown logic. In production (PM2 or a system supervisor), the process receives `SIGTERM` on restart/stop and Node.js exits:
+
+1. In-flight HTTP requests are dropped immediately — there is no drain window.
+2. Socket.io connections are terminated.
+3. Sequelize's connection pool is garbage-collected (MySQL `wait_timeout` on the server side reclaims idle connections).
+
+**To add graceful shutdown** (recommended for production):
+
+```js
+// backend/index.js — after server.listen()
+const shutdown = async (signal) => {
+  console.log(`[shutdown] Received ${signal}. Closing HTTP server…`);
+  server.close(async () => {
+    await db.sequelize.close();
+    console.log('[shutdown] Database pool closed. Exiting.');
+    process.exit(0);
+  });
+};
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
+```
+
+PM2 sends `SIGINT` by default for `pm2 stop`/`pm2 restart` (`kill_timeout` default: 1600 ms). Setting `kill_timeout: 5000` in `ecosystem.config.js` gives the shutdown handler time to drain.
+
+---
+
+## Connection Pool Tuning
+
+Sequelize uses a connection pool managed by the `sequelize-pool` package. Default limits:
+
+| Parameter | Default | Meaning |
+|-----------|---------|---------|
+| `pool.max` | `5` | Maximum simultaneous MySQL connections |
+| `pool.min` | `0` | Minimum idle connections kept open |
+| `pool.acquire` | `30000` ms | Time to wait for a connection before throwing |
+| `pool.idle` | `10000` ms | Time before an idle connection is released |
+
+The defaults are conservative and appropriate for development. Under production load (concurrent Socket.io connections + REST API traffic):
+
+- Increase `pool.max` to `10`–`20` depending on MySQL's `max_connections` setting (default 151 for MySQL 8).
+- Set `pool.min` to `2`–`5` to keep warm connections ready.
+
+Configure in `backend/src/config/database.js` via the `pool` key in the Sequelize constructor options, or pass env vars:
+
+```js
+pool: {
+  max: parseInt(process.env.DB_POOL_MAX  || '5',  10),
+  min: parseInt(process.env.DB_POOL_MIN  || '0',  10),
+  acquire: parseInt(process.env.DB_POOL_ACQUIRE || '30000', 10),
+  idle:    parseInt(process.env.DB_POOL_IDLE    || '10000', 10),
+},
+```
+
+Socket.io connections are long-lived but do not hold open MySQL connections between events — they use the pool only during event handler execution, so socket concurrency does not directly translate to pool pressure.

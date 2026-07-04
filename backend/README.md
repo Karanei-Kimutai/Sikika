@@ -3,7 +3,7 @@
 Express + Sequelize (MySQL) backend for Sikika, a GBV support platform. Handles authentication, incident reporting, direct chat, community rooms, USSD, moderation, notifications, legal case management, and websocket relay.
 
 - OTP and password authentication with lockout, ban enforcement, and forced-reset flows
-- Role-aware operations for Survivors, Counsellors, Legal Counsel, NGO Admins, and System Admins
+- Role-aware operations for Survivors, Counsellors, Legal Counsel, NGO Admins, and Moderators
 - USSD channel via Africa's Talking for low-tech access (no internet required)
 - E2EE direct chat relay, community rooms, and real-time presence via Socket.io
 - Incident reporting with Cloudinary-backed evidence uploads
@@ -154,7 +154,7 @@ Key models:
 
 Association highlights:
 
-- `UserAccount` has one role profile (survivor / counsellor / legal / NGO admin / system admin)
+- `UserAccount` has one role profile (survivor / counsellor / legal / NGO admin / moderator)
 - `SurvivorProfile` belongs to assigned counsellor and assigned legal counsel
 - `IncidentReport` belongs to a survivor and has many evidence files
 - `DirectChatChannel` belongs to a survivor and a staff counterpart
@@ -195,9 +195,11 @@ Full documentation: [`docs/authentication.md`](../docs/authentication.md)
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| POST | `/api/auth/request-otp` | None | Request signup or signin OTP |
-| POST | `/api/auth/verify-otp` | None | Verify OTP; completes signup or issues signin token |
-| POST | `/api/auth/login-password` | None | Password-based signin |
+| POST | `/api/auth/request-otp` | None | Request signup OTP |
+| POST | `/api/auth/verify-otp` | None | Verify signup OTP; returns short-lived signup ticket |
+| POST | `/api/auth/complete-signup` | None | Complete signup with ticket + password/profile details |
+| POST | `/api/auth/login-password` | None | Password step for signin; returns OTP_2FA_REQUIRED |
+| POST | `/api/auth/verify-2fa` | None | Verify signin OTP and issue JWT |
 | POST | `/api/auth/forgot-password/request` | None | Request password-reset OTP |
 | POST | `/api/auth/forgot-password/reset` | None | Submit reset OTP and new password |
 | POST | `/api/auth/set-password` | JWT | Set or change password for the authenticated user |
@@ -318,7 +320,7 @@ All admin routes require a JWT.
 | PATCH | `/api/admin/ngo/users/:id/unban` | Lift a ban |
 | GET | `/api/admin/search` | Search users/staff |
 
-#### System Admin
+#### Moderator
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|

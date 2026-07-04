@@ -8,6 +8,12 @@ Gender-Based Violence (GBV) Support Platform for Kenya. Dual-channel (Web + USSD
 
 **Stack:** React 19 (frontend) · Node.js + Express 5 + Socket.io (backend) · MySQL + Sequelize · Africa's Talking (USSD + SMS OTP) · Cloudinary (file storage)
 
+## Documentation
+
+**Inline documentation** (JSDoc) is complete across all ~90 source files (10 batches, June 2026). Every function has a JSDoc block with `@param`/`@returns`/`@throws`; every React component documents all props and state variables; every module has a module-level JSDoc header.
+
+**Module-level docs** live in `docs/`. Key files: `data-model.md`, `api-reference.md`, `rbac.md`, `sockets.md`, `direct-chat.md`, `community-moderation.md`, `reporting.md`, `legal-cases.md`, `notifications.md`, `admin-dashboard.md`, `frontend-architecture.md`, `deployment.md`, `troubleshooting.md`, `glossary.md`. See `README.md` for the full index.
+
 ## Code Style
 
 All code in this project must include thorough inline documentation:
@@ -98,8 +104,9 @@ Legal case auto-creation fires on `LEGAL_REVIEW` and `ESCALATED_TO_LEGAL_CASE` t
 
 ### Sockets (`backend/src/sockets/`)
 
-- `chatSocket.js` — JWT-authenticated; persists opaque encrypted payloads without server-side decryption. Events: `joinChannel`, `sendEncryptedMessage` (client); `receiveMessage`, `messageError` (server). **Presence integration:** on connect, joins `user:<userId>` personal room and calls `presenceRegistry.markOnline`; broadcasts `presence:update` to affected survivors; runs delivery catch-up (`deliveredAt` bulk-set for messages received offline, `message:delivered` emitted). On `sendEncryptedMessage`, sets `deliveredAt` immediately when recipient is online. On disconnect, `presenceRegistry.markOffline` then re-broadcasts OFFLINE if last socket.
-- `communitySocket.js` — room join/leave, real-time message broadcast, moderation events (`community:new-message`, `community:message-updated`, `community:message-deleted`)
+- `chatSocket.js` — JWT-authenticated; persists opaque encrypted payloads without server-side decryption. Events: `joinChannel`, `sendEncryptedMessage`, `editEncryptedMessage` (client); `receiveMessage`, `message:edited`, `messageError` (server). **Presence integration:** on connect, joins `user:<userId>` personal room and calls `presenceRegistry.markOnline`; broadcasts `presence:update` to affected survivors; runs delivery catch-up (`deliveredAt` bulk-set for messages received offline, `message:delivered` emitted). On `sendEncryptedMessage`, sets `deliveredAt` immediately when recipient is online, then re-reads presence a second time (fresh, post-DB-write) purely to decide whether to emit `message:delivered` live — closes a narrow window where the recipient disconnects between the write and the emit. On `editEncryptedMessage`, only the original sender (`senderUserId` match) may overwrite `encryptedMessageContent` and set `editedAt`; no edit history is kept, and there is no time limit on edits. On disconnect, `presenceRegistry.markOffline` then re-broadcasts OFFLINE if last socket.
+- `communitySocket.js` — room join/leave, real-time message broadcast, moderation events (`community:new-message`, `community:message-updated`, `community:message-deleted`). Re-checks account status (not just at connection) on both `joinCommunityRoom` and `joinModerationFeed`, so a mid-session ban blocks a room/feed join without waiting for a reconnect.
+- **`socketAuthService.js`** (`backend/src/services/`) — shared module exporting `getTokenFromHandshake`, `resolveUserIdFromTokenClaims`, `isUserAccountActive` (fails closed on any DB error). Both `chatSocket.js` and `communitySocket.js` `require` this instead of each defining their own copies, which is how they previously worked (byte-for-byte duplicated).
 - **`presenceRegistry.js`** (`backend/src/services/`) — shared in-memory singleton tracking live socket connections. `getEffectivePresence(userId, manualStatus)` unifies real connectivity with the manual BUSY override.
 
 ### Chat Channel Provisioning (`backend/src/services/chatAccessService.js`)
@@ -149,8 +156,7 @@ Each page owns its screen-level state (loading, errors, selected entities):
 - `admin.js` — NGO dashboard, search, maintenance mode, staff lifecycle, moderation reviews, reassignment suggestions (System Admin's infra/logs/runtime-action calls were removed along with that role)
 - `resources.js` — CRUD + access tracking for support resources
 - `reports.js` — report submission and status
-
-Note: some API calls are inline `fetch`/`axios` within page components rather than service modules.
+- **`apiClient.js`** — shared axios instance used by the service modules above plus `chatKeys.js`, `legalCases.js`, `notifications.js`, `SignInFlow.jsx`, `SignUpFlow.jsx`, `ManageProfilePage.jsx`, `SiteHeader.jsx`, and `ModerationDashboardPage.jsx`. A request interceptor attaches the Bearer token from `getToken()`; a response interceptor clears the session (`removeToken`/`removeUserId`) and hard-navigates to `/join` on any `401`, giving the app one consistent place where an expired/invalidated session is handled instead of each caller re-implementing it. `CommunityPage.jsx`, `DirectChatPage.jsx`, `NgoAdminDashboardPage.jsx`, and `App.jsx` still make their own inline `axios`/`fetch` calls (not yet migrated).
 
 ### E2EE Chat (`frontend/src/utils/cryptoUtils.js`, `keyStorage.js`, `services/chatKeys.js`)
 
@@ -187,6 +193,7 @@ Tracked in `docs/pending-roadmap-items.md`.
 | User banning workflow | Done | `BANNED` added to `accountStatus` ENUM + ban metadata columns; `PATCH /api/admin/ngo/users/:id/ban` and `.../unban`; `authMiddleware` does DB lookup on every authenticated request for immediate mid-session enforcement; `liftExpiredBan` auto-restores temporary bans at next auth check; `chatSocket.js` checks accountStatus on connect + per-send; NGO dashboard ban modal + Staff Directory status badges; Banned Users registry is now a **tab inside Moderation Desk** (`ModerationDeskSection.jsx` → `BannedUsersSection.jsx`) — no longer a standalone nav section; banning from Moderation Desk resolves the underlying report atomically; dual audit trail (ModerationActionLog + AuditLog); ban immediately evicts active sockets via `disconnectSockets(true)`; banning a COUNSELLOR/LEGAL_COUNSEL triggers `cascadeReassignOnStaffBan` (auto-reassigns their survivors) — fired from **both** the admin `PATCH /api/admin/ngo/users/:id/ban` endpoint and the community moderation `reviewReport ban_user` action (the latter exports `cascadeReassignOnStaffBan` from `adminController.js` and calls it post-commit), so a counsellor/legal counsel banned for harmful community content also has their caseload reassigned, not just one banned via the admin panel. Community `reviewReport ban_user` enforces the same `BANNABLE_ROLES` allow-list + self-ban rejection as the admin endpoint. `SUSPENDED` reframed as Active/Inactive staff toggle. Both the signup auto-assignment (`pickLeastLoadedStaff`) and the cascade/suggestion selector (`getLeastLoadedStaff`) require `UserAccount.accountStatus = 'ACTIVE'` so a suspended or banned staff member is never recommended or auto-assigned a new survivor. |
 | Legal case document drafting UI | Done | Structured authoring fields added to `legalCaseFile` model; `legalDocumentService.js` renders pdfkit PDF in memory; PDF uploaded privately to Cloudinary; `PATCH/POST/GET /api/legal-cases/:id/*` endpoints; `ReportingPage.jsx` full drafting panel (4 fields, Save Draft, Generate Document, Open Document, status advance) for LEGAL_COUNSEL role; `frontend/src/services/legalCases.js` service layer |
 | Average response-time dashboard render | Done | Computed in `adminController.js`, rendered in `NgoAdminDashboardPage.jsx` |
+| Edit sent messages in Direct Chat | Done | `DirectChatMessage.editedAt` column; `editEncryptedMessage` socket event in `chatSocket.js` re-checks account status + channel access, enforces sender-only edits, overwrites `encryptedMessageContent` in place (no edit history), emits `message:edited`; `DirectChatPage.jsx` composer supports an edit mode (pencil icon on own bubbles, "(edited)" tag, Cancel), re-encrypting under the same shared channel key — no time limit on edits |
 
 ## Demo Credentials (seeded data)
 

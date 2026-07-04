@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useRef, useReducer, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { Archive, ArchiveRestore, ArrowLeft, MoreHorizontal, Send, Lock, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, ArrowLeft, MoreHorizontal, Pencil, Send, Lock, Trash2, X } from 'lucide-react';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import { getToken } from '../utils/auth';
@@ -110,12 +110,35 @@ function persistPreferredChannel(channelId) {
 // Socket auth token is attached during connection setup so backend can enforce
 // per-channel authorization before room joins and sends.
 
+// Maps a session role string to its display label. Falls back to 'Staff'
+// for any future staff role added without an explicit entry here.
+const ROLE_LABELS = { survivor: 'Survivor', counsellor: 'Counsellor', legal_counsel: 'Legal Counsel' };
+
+/**
+ * Resolves the display label for the currently signed-in user's own role.
+ *
+ * @param {string} role - The session's role string (e.g. 'survivor', 'counsellor', 'legal_counsel').
+ * @returns {string} Display label, or 'Staff' if the role isn't in ROLE_LABELS.
+ */
 function roleLabelFromSession(role) {
-  return role === 'survivor' ? 'Survivor' : 'Counsellor';
+  return ROLE_LABELS[role] || 'Staff';
 }
 
-function peerRoleLabelFromSession(role) {
-  return role === 'survivor' ? 'Counsellor' : 'Survivor';
+/**
+ * Resolves the display label for the other party in a channel. A staff
+ * member's counterpart is always the survivor. A survivor's counterpart is
+ * a Counsellor or Legal Counsel depending on the channel's type
+ * (`channel.chatChannelType`, the same field already used for the sidebar
+ * avatar badge and header label elsewhere in this file) — the viewer's own
+ * role alone isn't enough to disambiguate that.
+ *
+ * @param {string} role - The viewer's own session role.
+ * @param {string} [channelType] - The channel's `chatChannelType` ('counsellor_channel' or 'legal_counsel_channel').
+ * @returns {string} Display label for the peer.
+ */
+function peerRoleLabelFromSession(role, channelType) {
+  if (role !== 'survivor') return ROLE_LABELS.survivor;
+  return channelType === 'legal_counsel_channel' ? ROLE_LABELS.legal_counsel : ROLE_LABELS.counsellor;
 }
 
 function buildDemoTranscript(currentRole) {
@@ -192,6 +215,7 @@ const DirectChatPage = () => {
   const [currentUserId] = useState(initialPayload?.userId || initialPayload?.id || null);
   const [currentUserRole] = useState((initialPayload?.role || '').toString().toLowerCase());
   const [errorMessage, setErrorMessage] = useState('');
+  const [sendErrorMessage, setSendErrorMessage] = useState('');
   const [noticeMessage, setNoticeMessage] = useState('');
   // Non-blocking — shown while the counterpart hasn't completed one-time E2EE
   // key setup yet. Unlike errorMessage, this never disables the composer.
@@ -206,6 +230,9 @@ const DirectChatPage = () => {
   const [showDeletedChannels, setShowDeletedChannels] = useState(false);
   const [menuChannelId, setMenuChannelId] = useState(null);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
+  // messageId currently loaded into the composer for editing, or null when
+  // composing a brand-new message. Drives handleSendMessage's edit-vs-send branch.
+  const [editingMessageId, setEditingMessageId] = useState(null);
   
   const messagesEndRef = useRef(null);
   const socketRef = useRef(null);
@@ -217,6 +244,15 @@ const DirectChatPage = () => {
   const sendBtnRef = useRef(null);
   const prevMessageCountRef = useRef(0);
   const flushInProgressRef = useRef(false);
+  // Mirrors effectiveCryptoKey for use inside socket handlers that must not
+  // themselves be re-created (and thus re-subscribed) every time the key
+  // changes — see effectiveCryptoKeyRef sync effect and the listener effect below.
+  const effectiveCryptoKeyRef = useRef(null);
+  // Raw (still-encrypted) receiveMessage/message:edited payloads that arrived
+  // while effectiveCryptoKey was momentarily null (e.g. mid channel-switch key
+  // derivation). Drained once the key becomes available again so events are
+  // never silently dropped — see the drain effect below.
+  const pendingSocketEventsRef = useRef([]);
   // Tracks the latest activeChannelId synchronously, so an in-flight
   // establishSecureChannelRef call for a channel the user has since switched
   // away from can detect that and bail out instead of overwriting the newly
@@ -270,23 +306,16 @@ const DirectChatPage = () => {
 
     socketRef.current = createSocket(token);
 
+    const channelController = new AbortController();
+
     const loadChannels = async () => {
       try {
-        // Channel list is identity-scoped by Authorization token.
-        // Survivors may request archived or deleted views via query params.
-        // Staff always receive active channels only (enforced server-side too).
-        let channelParams;
-        if (currentUserRole === 'survivor') {
-          if (showDeletedChannels) {
-            // Trash view: only deleted channels. Deliberately separate from active/archived.
-            channelParams = { includeDeleted: true };
-          } else if (showArchivedChannels) {
-            channelParams = { includeArchived: true };
-          }
-        }
+        // Survivors fetch all channel states once; archive/trash toggles are
+        // client-side filters so socket lifecycle is not tied to view toggles.
         const response = await axios.get(`${API_BASE_URL}/api/chat/channels`, {
           headers: { Authorization: `Bearer ${token}` },
-          params: channelParams
+          params: currentUserRole === 'survivor' ? { includeArchived: true, includeDeleted: true } : undefined,
+          signal: channelController.signal
         });
         const loadedChannels = Array.isArray(response.data) ? response.data : [];
         setChannels(loadedChannels);
@@ -300,6 +329,8 @@ const DirectChatPage = () => {
         const activeFallback = loadedChannels.find((channel) => channel.chatChannelStatus === 'active')?.chatId || null;
         setActiveChannelId(resolvedPreferred || activeFallback || loadedChannels[0]?.chatId || null);
       } catch (error) {
+        // Ignore cancellation — normal cleanup on unmount, not an error.
+        if (error.name === 'AbortError' || error.code === 'ERR_CANCELED') return;
         setErrorMessage(error.response?.data?.error || 'Failed to load chat channels.');
       }
     };
@@ -307,14 +338,27 @@ const DirectChatPage = () => {
     loadChannels();
 
     return () => {
+      channelController.abort();
       if (socketRef.current) {
         socketRef.current.disconnect();
       }
     };
-  }, [showArchivedChannels, showDeletedChannels, currentUserId, currentUserRole]);
+  }, [currentUserId, currentUserRole]);
 
   const activeChannel = channels.find((channel) => channel.chatId === activeChannelId) || null;
   const actionMenuChannel = channels.find((channel) => channel.chatId === menuChannelId) || null;
+  // `channels` now always holds every status (active/archived/deleted) for
+  // survivors — see the single fetch in loadChannels above — so the
+  // archive/trash toggles filter client-side here instead of triggering a
+  // re-fetch. This decouples the socket connection's effect dependencies
+  // (currentUserId/currentUserRole only) from the view toggles, so switching
+  // Archive/Trash view no longer tears down and reconnects the socket.
+  const displayedChannels = useMemo(() => {
+    if (currentUserRole !== 'survivor') return channels;
+    if (showDeletedChannels) return channels.filter((channel) => channel.chatChannelStatus === 'deleted');
+    if (showArchivedChannels) return channels.filter((channel) => channel.chatChannelStatus === 'archived');
+    return channels.filter((channel) => channel.chatChannelStatus === 'active');
+  }, [channels, currentUserRole, showArchivedChannels, showDeletedChannels]);
 
   // The pending queue's source of truth is localStorage, not React state —
   // bumpPendingVersion (on enqueue/flush) just forces this cheap re-read.
@@ -336,6 +380,15 @@ const DirectChatPage = () => {
   );
   const effectiveKeyBanner = isChannelDataCurrent ? keyBanner : '';
 
+  // Kept in sync so the live-message listener effect (below) can read the
+  // current key without needing effectiveCryptoKey in its dependency array —
+  // that dependency previously forced the whole effect (all 5 socket
+  // listeners) to tear down and re-register on every key-readiness change,
+  // dropping any event that arrived mid channel-switch key derivation.
+  useEffect(() => {
+    effectiveCryptoKeyRef.current = effectiveCryptoKey;
+  }, [effectiveCryptoKey]);
+
   const updateChannelStatus = async (chatId, status) => {
     if (!chatId) return;
 
@@ -349,18 +402,9 @@ const DirectChatPage = () => {
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      // Mirror the same param logic as loadChannels so refresh shows the same view.
-      let refreshParams;
-      if (currentUserRole === 'survivor') {
-        if (showDeletedChannels) {
-          refreshParams = { includeDeleted: true };
-        } else if (showArchivedChannels) {
-          refreshParams = { includeArchived: true };
-        }
-      }
       const refreshed = await axios.get(`${API_BASE_URL}/api/chat/channels`, {
         headers: { Authorization: `Bearer ${token}` },
-        params: refreshParams
+        params: currentUserRole === 'survivor' ? { includeArchived: true, includeDeleted: true } : undefined
       });
       const loadedChannels = Array.isArray(refreshed.data) ? refreshed.data : [];
       setChannels(loadedChannels);
@@ -369,8 +413,14 @@ const DirectChatPage = () => {
       const nextActive = loadedChannels.find((channel) => channel.chatChannelStatus === 'active')?.chatId || loadedChannels[0]?.chatId || null;
       if (status === 'deleted' && activeChannelId === chatId) {
         setActiveChannelId(nextActive);
+        // Archiving/deleting the channel currently open in the composer must not
+        // leave a stale edit draft carrying over into whatever becomes active next.
+        setEditingMessageId(null);
+        setNewMessage('');
       } else if (!loadedChannels.some((channel) => channel.chatId === activeChannelId)) {
         setActiveChannelId(nextActive);
+        setEditingMessageId(null);
+        setNewMessage('');
       }
     } catch (error) {
       setErrorMessage(error.response?.data?.error || 'Failed to update chat channel status.');
@@ -461,11 +511,12 @@ const DirectChatPage = () => {
             senderLabel:
               dbMessage.senderUserId === currentUserId
                 ? roleLabelFromSession(currentUserRole)
-                : peerRoleLabelFromSession(currentUserRole),
+                : peerRoleLabelFromSession(currentUserRole, channel?.chatChannelType),
             // Carry delivery/seen timestamps so ticks render correctly on history load.
             deliveredAt: dbMessage.deliveredAt || null,
             seenAt: dbMessage.seenAt || null,
-            sentAt: dbMessage.messageDispatchTimestamp || null
+            sentAt: dbMessage.messageDispatchTimestamp || null,
+            editedAt: dbMessage.editedAt || null
           }))
         );
         if (isStale()) return;
@@ -500,6 +551,15 @@ const DirectChatPage = () => {
   useEffect(() => {
     activeChannelIdRef.current = activeChannelId;
   }, [activeChannelId]);
+
+  // Lets the live-message listener effect read the current channel list (for
+  // chatChannelType lookups) without needing `channels` in its own dependency
+  // array — adding it there would re-subscribe all 5 socket listeners on
+  // every channel-list refresh, not just on channel switch.
+  const channelsRef = useRef([]);
+  useEffect(() => {
+    channelsRef.current = channels;
+  }, [channels]);
 
   useEffect(() => {
     if (!activeChannelId || !currentUserId) return;
@@ -583,15 +643,24 @@ const DirectChatPage = () => {
    * 3. Listen for Incoming Live Messages
    */
   useEffect(() => {
-    if (!effectiveCryptoKey || !currentUserId || !activeChannelId) return;
+    if (!currentUserId || !activeChannelId) return;
 
     // ── receiveMessage — new incoming or echoed outgoing message ──────────────
     const handleNewMessage = async (dbMessage) => {
       // Ignore events for other channels when user switches rapidly.
       if (dbMessage.chatId !== activeChannelId) return;
 
+      // Key derivation for the newly-active channel may still be in flight
+      // (network + IndexedDB + ECDH). Rather than dropping this event, queue
+      // the raw payload and replay it once the key is ready — see the drain
+      // effect below.
+      if (!effectiveCryptoKeyRef.current) {
+        pendingSocketEventsRef.current.push({ type: 'receiveMessage', payload: dbMessage });
+        return;
+      }
+
       // Decrypt the incoming ciphertext payload
-      const plaintext = await decryptMessage(dbMessage.encryptedMessageContent, effectiveCryptoKey);
+      const plaintext = await decryptMessage(dbMessage.encryptedMessageContent, effectiveCryptoKeyRef.current);
 
       const decryptedMsg = {
         messageId: dbMessage.messageId,
@@ -602,11 +671,12 @@ const DirectChatPage = () => {
         senderLabel:
           dbMessage.senderUserId === currentUserId
             ? roleLabelFromSession(currentUserRole)
-            : peerRoleLabelFromSession(currentUserRole),
+            : peerRoleLabelFromSession(currentUserRole, channelsRef.current.find((c) => c.chatId === dbMessage.chatId)?.chatChannelType),
         // Delivery/seen ticks — pre-populated if the counterpart was already online.
         deliveredAt: dbMessage.deliveredAt || null,
         seenAt: dbMessage.seenAt || null,
-        sentAt: dbMessage.messageDispatchTimestamp || null
+        sentAt: dbMessage.messageDispatchTimestamp || null,
+        editedAt: dbMessage.editedAt || null
       };
 
       setMessages((prev) => [...prev, decryptedMsg]);
@@ -652,10 +722,33 @@ const DirectChatPage = () => {
       );
     };
 
+    // ── message:edited — a message (ours or the counterpart's) was edited ─────
+    // Decrypt the replacement ciphertext with the same channel key and swap the
+    // plaintext in place so both sides see the edit live.
+    const handleMessageEdited = async ({ chatId, messageId, encryptedPayload, editedAt }) => {
+      if (chatId !== activeChannelId) return;
+
+      // Same rationale as handleNewMessage — queue instead of dropping if the
+      // key for this channel hasn't finished deriving yet.
+      if (!effectiveCryptoKeyRef.current) {
+        pendingSocketEventsRef.current.push({
+          type: 'message:edited',
+          payload: { chatId, messageId, encryptedPayload, editedAt }
+        });
+        return;
+      }
+
+      const plaintext = await decryptMessage(encryptedPayload, effectiveCryptoKeyRef.current);
+      setMessages((prev) =>
+        prev.map((m) => (m.messageId === messageId ? { ...m, plaintext, editedAt } : m))
+      );
+    };
+
     socketRef.current?.on('receiveMessage', handleNewMessage);
     socketRef.current?.on('presence:update', handlePresenceUpdate);
     socketRef.current?.on('message:delivered', handleMessageDelivered);
     socketRef.current?.on('message:seen', handleMessageSeen);
+    socketRef.current?.on('message:edited', handleMessageEdited);
 
     // Cleanup listeners to prevent duplicates on re-register
     return () => {
@@ -663,8 +756,62 @@ const DirectChatPage = () => {
       socketRef.current?.off('presence:update', handlePresenceUpdate);
       socketRef.current?.off('message:delivered', handleMessageDelivered);
       socketRef.current?.off('message:seen', handleMessageSeen);
+      socketRef.current?.off('message:edited', handleMessageEdited);
     };
-  }, [activeChannelId, effectiveCryptoKey, currentUserId, currentUserRole]);
+    // Intentionally NOT keyed on effectiveCryptoKey — see effectiveCryptoKeyRef
+    // above. Keeping listeners registered across key-readiness changes is the
+    // whole point of this effect's design; re-subscribing on every channel
+    // switch's key-derivation window is what dropped live events before.
+  }, [activeChannelId, currentUserId, currentUserRole]);
+
+  /**
+   * 3b. Drain any receiveMessage/message:edited events that arrived while
+   * effectiveCryptoKey was momentarily null (channel switch mid key
+   * derivation) — replays each buffered event through the same decrypt path
+   * used for live events, in arrival order, once the key becomes available.
+   */
+  useEffect(() => {
+    if (!effectiveCryptoKey || pendingSocketEventsRef.current.length === 0) return;
+
+    const queued = pendingSocketEventsRef.current;
+    pendingSocketEventsRef.current = [];
+
+    (async () => {
+      for (const event of queued) {
+        if (event.type === 'receiveMessage') {
+          const dbMessage = event.payload;
+          if (dbMessage.chatId !== activeChannelId) continue;
+          const plaintext = await decryptMessage(dbMessage.encryptedMessageContent, effectiveCryptoKey);
+          const decryptedMsg = {
+            messageId: dbMessage.messageId,
+            senderUserId: dbMessage.senderUserId,
+            plaintext,
+            isMine: dbMessage.senderUserId === currentUserId,
+            senderLabel:
+              dbMessage.senderUserId === currentUserId
+                ? roleLabelFromSession(currentUserRole)
+                : peerRoleLabelFromSession(currentUserRole, channels.find((c) => c.chatId === dbMessage.chatId)?.chatChannelType),
+            deliveredAt: dbMessage.deliveredAt || null,
+            seenAt: dbMessage.seenAt || null,
+            sentAt: dbMessage.messageDispatchTimestamp || null,
+            editedAt: dbMessage.editedAt || null
+          };
+          setMessages((prev) => [...prev, decryptedMsg]);
+          if (dbMessage.senderUserId !== currentUserId) {
+            setNoticeMessage('You have a new update.');
+            window.setTimeout(() => setNoticeMessage(''), 2800);
+          }
+        } else if (event.type === 'message:edited') {
+          const { chatId, messageId, encryptedPayload, editedAt } = event.payload;
+          if (chatId !== activeChannelId) continue;
+          const plaintext = await decryptMessage(encryptedPayload, effectiveCryptoKey);
+          setMessages((prev) =>
+            prev.map((m) => (m.messageId === messageId ? { ...m, plaintext, editedAt } : m))
+          );
+        }
+      }
+    })();
+  }, [effectiveCryptoKey, activeChannelId, currentUserId, currentUserRole, channels]);
 
   useEffect(() => {
     const markRead = async () => {
@@ -725,7 +872,7 @@ const DirectChatPage = () => {
     if (!items.length) return;
     const mm = staggerIn(items, { y: 8, stagger: 0.04 });
     return () => mm.revert();
-  }, [channels, showArchivedChannels, showDeletedChannels]);
+  }, [displayedChannels]);
 
   // Cross-fade the message panel when the active channel changes, so
   // switching chats reads as a deliberate transition rather than a flicker.
@@ -751,7 +898,23 @@ const DirectChatPage = () => {
   }, [effectiveMessages]);
 
   /**
-   * 4. Encrypt and Dispatch Message
+   * Loads an existing message of ours into the composer for editing.
+   * Only ever called for msg.isMine bubbles (enforced by the render below);
+   * the server independently rejects edits to another user's message.
+   */
+  const handleStartEdit = (msg) => {
+    setEditingMessageId(msg.messageId);
+    setNewMessage(msg.plaintext);
+    setSendErrorMessage('');
+  };
+
+  const handleCancelEdit = () => {
+    setEditingMessageId(null);
+    setNewMessage('');
+  };
+
+  /**
+   * 4. Encrypt and Dispatch Message (new send, or edit of an existing one)
    */
   const handleSendMessage = async (e) => {
     e.preventDefault();
@@ -759,13 +922,24 @@ const DirectChatPage = () => {
 
     // Optimistic clear keeps composer responsive while encryption/socket emits.
     const plaintext = newMessage;
+    const editTargetId = editingMessageId;
+    setSendErrorMessage('');
     setNewMessage(''); // Clear input
+    setEditingMessageId(null);
 
     if (!effectiveCryptoKey) {
       // Counterpart hasn't completed one-time key setup yet (or this
       // channel's key is still being derived after a switch) — hold the
       // message locally instead of sending under a stale/wrong key. It
       // auto-sends once a key becomes derivable (see the flush effect above).
+      // Edits are not queued this way — the shared key must already exist for
+      // an edit to even be possible, since the original message required it.
+      if (editTargetId) {
+        setSendErrorMessage('Cannot edit right now — secure channel is still being established.');
+        setNewMessage(plaintext);
+        setEditingMessageId(editTargetId);
+        return;
+      }
       enqueuePending(activeChannelId, plaintext);
       bumpPendingVersion();
       if (sendBtnRef.current) pulse(sendBtnRef.current);
@@ -776,15 +950,30 @@ const DirectChatPage = () => {
       // Encrypt the message before it ever touches the network
       const encryptedPayload = await encryptMessage(plaintext, effectiveCryptoKey);
 
-      // Emit the ciphertext payload over WebSockets
-      socketRef.current?.emit('sendEncryptedMessage', {
-        chatId: activeChannelId,
-        encryptedPayload: encryptedPayload
-      });
+      if (editTargetId) {
+        socketRef.current?.emit('editEncryptedMessage', {
+          chatId: activeChannelId,
+          messageId: editTargetId,
+          encryptedPayload
+        });
+      } else {
+        // Emit the ciphertext payload over WebSockets
+        socketRef.current?.emit('sendEncryptedMessage', {
+          chatId: activeChannelId,
+          encryptedPayload: encryptedPayload
+        });
+      }
 
       if (sendBtnRef.current) pulse(sendBtnRef.current);
     } catch (err) {
       console.error('Failed to encrypt and send message:', err);
+      setSendErrorMessage(editTargetId ? 'Message failed to save. Please retry.' : 'Message failed to send. Please retry.');
+      // Restore the failed draft into the composer only if it's still empty —
+      // the optimistic clear above happens before encryption, so if the user
+      // has already typed something new while this failed in the background,
+      // don't clobber it with the stale draft.
+      setNewMessage((prev) => (prev ? prev : plaintext));
+      if (editTargetId) setEditingMessageId(editTargetId);
     }
   };
 
@@ -804,7 +993,7 @@ const DirectChatPage = () => {
         <aside className="wa-sidebar">
           <header className="wa-sidebar-header">
             <h2>Chats</h2>
-            <span>{channels.length}</span>
+            <span>{displayedChannels.length}</span>
             {currentUserRole === 'survivor' && (
               <>
                 {/* Archive toggle — mutually exclusive with Trash view. Icon-only, label moved to title/aria-label. */}
@@ -844,13 +1033,17 @@ const DirectChatPage = () => {
           <div className="wa-chat-list" ref={chatListRef}>
             {errorMessage && <p className="wa-error">{errorMessage}</p>}
 
-            {channels.map((channel) => (
+            {displayedChannels.map((channel) => (
               <div key={channel.chatId} className={`wa-chat-item ${activeChannelId === channel.chatId ? 'active' : ''}`}>
                 <button
                   type="button"
                   onClick={() => {
                     setActiveChannelId(channel.chatId);
                     setMenuChannelId(null);
+                    // Leaving edit mode when switching channels avoids submitting an
+                    // edit against a message from a different, no-longer-visible conversation.
+                    setEditingMessageId(null);
+                    setNewMessage('');
                   }}
                   className="wa-chat-open"
                 >
@@ -902,7 +1095,7 @@ const DirectChatPage = () => {
               </div>
             ))}
 
-            {channels.length === 0 && !errorMessage && (
+            {displayedChannels.length === 0 && !errorMessage && (
               <p className="wa-empty-list">
                 {showDeletedChannels
                   ? 'No deleted chats in Trash.'
@@ -923,7 +1116,11 @@ const DirectChatPage = () => {
                   type="button"
                   className="wa-back-btn"
                   aria-label="Back to chat list"
-                  onClick={() => setActiveChannelId(null)}
+                  onClick={() => {
+                    setActiveChannelId(null);
+                    setEditingMessageId(null);
+                    setNewMessage('');
+                  }}
                 >
                   <ArrowLeft size={18} aria-hidden="true" />
                 </button>
@@ -945,8 +1142,9 @@ const DirectChatPage = () => {
 
               {activeChannel?.asyncDeliveryHint && <p role="alert" className="status-message warning">{activeChannel.asyncDeliveryHint}</p>}
               {effectiveKeyBanner && <p role="status" className="status-message warning">{effectiveKeyBanner}</p>}
+              {sendErrorMessage && <p role="alert" className="status-message warning">{sendErrorMessage}</p>}
 
-              <div className="wa-messages" ref={messagesListRef}>
+              <div className="wa-messages" ref={messagesListRef} aria-live="polite" aria-label="Chat message timeline">
                 {effectiveMessages.length === 0 && pendingMessages.length === 0 ? (
                   <p className="wa-empty-state">Messages in this channel are encrypted end-to-end.</p>
                 ) : (
@@ -957,13 +1155,33 @@ const DirectChatPage = () => {
                         <div className={`wa-bubble ${msg.isMine ? 'mine' : 'theirs'}`}>
                           <small className="wa-msg-role">{msg.senderLabel || (msg.isMine ? 'You' : 'Peer')}</small>
                           <p>{msg.plaintext}</p>
-                          {msg.sentAt && (
-                            <time className="wa-msg-time" dateTime={msg.sentAt}>
-                              {new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </time>
-                          )}
-                          {/* Delivery/seen ticks — only rendered on sender's own bubbles */}
-                          <MessageTicks msg={msg} />
+                          {/* Inline footer row — keeps the edit control inside the bubble's own
+                              box (no absolute positioning) and always visible, since hover-only
+                              affordances don't work on touch devices. */}
+                          <span className="wa-msg-footer">
+                            <span className="wa-msg-meta">
+                              {msg.sentAt && (
+                                <time className="wa-msg-time" dateTime={msg.sentAt}>
+                                  {new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </time>
+                              )}
+                              {msg.editedAt && <small className="wa-msg-edited">(edited)</small>}
+                              {/* Delivery/seen ticks — only rendered on sender's own bubbles */}
+                              <MessageTicks msg={msg} />
+                            </span>
+                            {/* Only the sender may edit their own message; server enforces this too. */}
+                            {msg.isMine && (
+                              <button
+                                type="button"
+                                className="wa-msg-edit-btn"
+                                aria-label="Edit message"
+                                title="Edit message"
+                                onClick={() => handleStartEdit(msg)}
+                              >
+                                <Pencil size={12} aria-hidden="true" />
+                              </button>
+                            )}
+                          </span>
                         </div>
                       </div>
                     ))}
@@ -982,15 +1200,29 @@ const DirectChatPage = () => {
                 <div ref={messagesEndRef} />
               </div>
 
+              {editingMessageId && (
+                <p className="status-message wa-edit-banner" role="status">
+                  Editing message
+                  <button type="button" className="link-btn" onClick={handleCancelEdit} aria-label="Cancel editing">
+                    <X size={14} aria-hidden="true" /> Cancel
+                  </button>
+                </p>
+              )}
               <form onSubmit={handleSendMessage} className="wa-composer">
                 <input
                   type="text"
-                  placeholder="Type a message"
+                  placeholder={editingMessageId ? 'Edit your message' : 'Type a message'}
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
                 />
-                <button ref={sendBtnRef} type="submit" className="wa-send-btn" aria-label="Send message" disabled={!newMessage.trim()}>
-                  <Send size={14} aria-hidden="true" />
+                <button
+                  ref={sendBtnRef}
+                  type="submit"
+                  className="wa-send-btn"
+                  aria-label={editingMessageId ? 'Save edited message' : 'Send message'}
+                  disabled={!newMessage.trim()}
+                >
+                  {editingMessageId ? <Pencil size={14} aria-hidden="true" /> : <Send size={14} aria-hidden="true" />}
                 </button>
               </form>
             </>

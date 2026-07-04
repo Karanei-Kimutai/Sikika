@@ -1,7 +1,4 @@
-import axios from "axios";
-import { getToken } from "../utils/auth";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+import apiClient from "./apiClient";
 
 /**
  * notifications.js
@@ -9,24 +6,13 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000
  * Thin API client for /api/notifications endpoints.
  *
  * All functions scope their requests to the authenticated user via the
- * Authorization header — the backend enforces per-user ownership of every
- * read and write operation.
+ * Authorization header (attached automatically by apiClient) — the backend
+ * enforces per-user ownership of every read and write operation.
  *
  * Discreet wording policy (SSD §22.2): notification message text is composed
  * and enforced by the backend. This service layer transmits the stored text
  * without modification and never exposes GBV or platform-purpose context.
  */
-
-/**
- * Returns the Authorization header object for authenticated requests.
- * Returns an empty object when no token is present (caller should redirect to /join).
- *
- * @returns {{ Authorization: string } | {}}
- */
-function getAuthHeaders() {
-  const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
 
 /**
  * getNotifications
@@ -38,8 +24,7 @@ function getAuthHeaders() {
  * @returns {Promise<{ notifications: object[], unreadCount: number, total: number }>}
  */
 export async function getNotifications(unreadOnly = false) {
-  const response = await axios.get(`${API_BASE_URL}/api/notifications`, {
-    headers: getAuthHeaders(),
+  const response = await apiClient.get("/api/notifications", {
     params: unreadOnly ? { unreadOnly: "true" } : {}
   });
   return response.data;
@@ -54,9 +39,7 @@ export async function getNotifications(unreadOnly = false) {
  * @returns {Promise<{ unreadCount: number }>}
  */
 export async function getUnreadCount() {
-  const response = await axios.get(`${API_BASE_URL}/api/notifications/unread-count`, {
-    headers: getAuthHeaders()
-  });
+  const response = await apiClient.get("/api/notifications/unread-count");
   return response.data;
 }
 
@@ -69,11 +52,7 @@ export async function getUnreadCount() {
  * @returns {Promise<{ message: string, notificationId: string }>}
  */
 export async function markNotificationRead(notificationId) {
-  const response = await axios.patch(
-    `${API_BASE_URL}/api/notifications/${notificationId}/read`,
-    {},
-    { headers: getAuthHeaders() }
-  );
+  const response = await apiClient.patch(`/api/notifications/${notificationId}/read`, {});
   return response.data;
 }
 
@@ -86,11 +65,7 @@ export async function markNotificationRead(notificationId) {
  * @returns {Promise<{ message: string, updated: number }>}
  */
 export async function markAllNotificationsRead() {
-  const response = await axios.patch(
-    `${API_BASE_URL}/api/notifications/read-all`,
-    {},
-    { headers: getAuthHeaders() }
-  );
+  const response = await apiClient.patch("/api/notifications/read-all", {});
   return response.data;
 }
 
@@ -107,10 +82,6 @@ export async function markAllNotificationsRead() {
  * @returns {Promise<{ message: string, notificationId: string }>}
  */
 export async function dismissNotification(notificationId) {
-  const response = await axios.patch(
-    `${API_BASE_URL}/api/notifications/${notificationId}/dismiss`,
-    {},
-    { headers: getAuthHeaders() }
-  );
+  const response = await apiClient.patch(`/api/notifications/${notificationId}/dismiss`, {});
   return response.data;
 }

@@ -1,8 +1,11 @@
 import { useMemo, useState } from "react";
-import axios from "axios";
+import apiClient from "../../services/apiClient";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
-
+/**
+ * Auth intent discriminator sent in OTP requests so the backend can apply the
+ * correct rate-limit bucket and OTP purpose validation.
+ * @type {{ SIGNUP_OTP: string }}
+ */
 const AUTH_INTENTS = { SIGNUP_OTP: "SIGNUP_OTP" };
 
 /**
@@ -41,6 +44,13 @@ export default function SignUpFlow({
   const canSubmitSignupOtp = useMemo(() => signupOtp.trim().length === 4, [signupOtp]);
   const canSubmitSignupPassword = useMemo(() => signupPassword.trim().length >= 8, [signupPassword]);
 
+  /**
+   * Step 1: Sends a SIGNUP_OTP to the entered phone number.
+   * On success, transitions to the "verify" step. If the backend returns
+   * `authStage=SIGNIN_REQUIRED`, the phone already has an account and the
+   * parent is asked to switch to Sign In mode.
+   * @returns {Promise<void>}
+   */
   const requestSignupOtp = async () => {
     if (!canSubmitSignupPhone) {
       setErrorMessage("Enter a valid mobile number including country code.");
@@ -49,7 +59,7 @@ export default function SignUpFlow({
     clearMessages();
     setLoading(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/auth/request-otp`, {
+      const response = await apiClient.post(`/api/auth/request-otp`, {
         phoneNumber: signupPhone.trim(),
         authIntent: AUTH_INTENTS.SIGNUP_OTP
       });
@@ -72,6 +82,12 @@ export default function SignUpFlow({
     }
   };
 
+  /**
+   * Step 2: Verifies the OTP and exchanges it for a short-lived signup ticket.
+   * The ticket is stored in component state and passed to `completeSignupDetails`
+   * in step 3. On success, transitions to the "details" step.
+   * @returns {Promise<void>}
+   */
   const verifySignupOtp = async () => {
     if (!canSubmitSignupOtp) {
       setErrorMessage("Enter the 4-digit code sent to your phone.");
@@ -80,7 +96,7 @@ export default function SignUpFlow({
     clearMessages();
     setLoading(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/auth/verify-otp`, {
+      const response = await apiClient.post(`/api/auth/verify-otp`, {
         phoneNumber: signupPhone.trim(),
         otp: signupOtp.trim()
       });
@@ -99,6 +115,12 @@ export default function SignUpFlow({
     }
   };
 
+  /**
+   * Step 3: Sends the password, profile details, and signup ticket to
+   * `complete-signup`. On success, calls `finalizeLogin` to persist the
+   * issued JWT and navigate to /home.
+   * @returns {Promise<void>}
+   */
   const completeSignupDetails = async () => {
     if (!canSubmitSignupPassword) {
       setErrorMessage("Set a password with at least 8 characters.");
@@ -107,7 +129,7 @@ export default function SignUpFlow({
     clearMessages();
     setLoading(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/auth/complete-signup`, {
+      const response = await apiClient.post(`/api/auth/complete-signup`, {
         phoneNumber: signupPhone.trim(),
         signupTicket,
         password: signupPassword.trim(),
@@ -131,11 +153,21 @@ export default function SignUpFlow({
     }
   };
 
+  /**
+   * Resends the signup OTP by re-running step 1. Clears the current OTP
+   * input so the user starts fresh.
+   * @returns {Promise<void>}
+   */
   const resendCode = async () => {
     setSignupOtp("");
     await requestSignupOtp();
   };
 
+  /**
+   * Resets the entire signup flow back to step 1 (phone entry), clearing
+   * all intermediate state. Exposed as a "Back" action in the OTP/details steps.
+   * @returns {void}
+   */
   const resetToPhoneStep = () => {
     clearMessages();
     setSignupStep("request");
@@ -147,6 +179,12 @@ export default function SignUpFlow({
     setSignupCounty("");
   };
 
+  /**
+   * Form submit dispatcher — routes to the appropriate step handler based on
+   * the current `signupStep` value.
+   * @param {React.FormEvent<HTMLFormElement>} e
+   * @returns {Promise<void>|void}
+   */
   const handleSubmit = (e) => {
     e.preventDefault();
     if (signupStep === "request") return requestSignupOtp();

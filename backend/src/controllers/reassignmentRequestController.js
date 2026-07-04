@@ -20,12 +20,26 @@ const { applySurvivorReassignment } = require('./adminController');
  * - Approval executes real staff reassignment via adminController helper.
  */
 
+/**
+ * Extracts the authenticated user's UUID from authMiddleware-attached JWT claims.
+ *
+ * @param {import('express').Request} req
+ * @returns {string|null}
+ */
 function getUserIdFromRequest(req) {
   return req.user?.userId || req.user?.id || null;
 }
 
 const { normalizeRole } = require('../utils/roles');
 
+/**
+ * Resolves an ACTIVE authenticated actor for reassignment request operations.
+ * Returns null if the token is missing, the user does not exist, or the account
+ * is not ACTIVE (suspended, banned, etc.).
+ *
+ * @param {import('express').Request} req
+ * @returns {Promise<{userId: string, role: string}|null>}
+ */
 async function getActor(req) {
   const userId = getUserIdFromRequest(req);
   if (!userId) return null;
@@ -42,6 +56,12 @@ async function getActor(req) {
   };
 }
 
+/**
+ * Looks up a survivor's profile row by their UserAccount userId.
+ *
+ * @param {string} userId - The UserAccount UUID.
+ * @returns {Promise<import('../models/survivorProfile')|null>}
+ */
 async function getSurvivorProfileByUserId(userId) {
   return SurvivorProfile.findOne({
     where: { userId },
@@ -49,16 +69,30 @@ async function getSurvivorProfileByUserId(userId) {
   });
 }
 
+/**
+ * Validates and normalizes the `requestedScope` field from the request body.
+ * Returns null when the value is not one of the three valid scope strings,
+ * which the caller should treat as a 400 validation error.
+ *
+ * @param {*} value - Raw scope from request body (COUNSELLOR | LEGAL_COUNSEL | BOTH).
+ * @returns {"COUNSELLOR"|"LEGAL_COUNSEL"|"BOTH"|null}
+ */
 function normalizeRequestedScope(value) {
   const scope = String(value || '').trim().toUpperCase();
   if (['COUNSELLOR', 'LEGAL_COUNSEL', 'BOTH'].includes(scope)) return scope;
   return null;
 }
 
+/**
+ * Selects the best available replacement counsellor, excluding the current
+ * assignment. Prefers AVAILABLE staff sorted by lowest workload score.
+ * Falls back to the current counsellor when no other AVAILABLE staff exist,
+ * ensuring the approval flow never fails due to staffing constraints.
+ *
+ * @param {string} currentCounsellorId - CounsellorProfile.counsellorId to exclude when possible.
+ * @returns {Promise<string|null>} The selected counsellorId, or null if none exist.
+ */
 async function pickReplacementCounsellor(currentCounsellorId) {
-  // Replacement policy: prefer AVAILABLE staff, sorted by lowest workload.
-  // If only current counsellor is available, fallback allows same assignment
-  // rather than failing, which keeps approval logic deterministic.
   const candidates = await CounsellorProfile.findAll({
     attributes: ['counsellorId', 'currentWorkloadScore', 'availabilityStatus'],
     order: [
@@ -74,6 +108,13 @@ async function pickReplacementCounsellor(currentCounsellorId) {
   return null;
 }
 
+/**
+ * Mirrors `pickReplacementCounsellor` for the legal counsel assignment.
+ * Selects the least-loaded AVAILABLE legal counsel, excluding the current one.
+ *
+ * @param {string} currentLegalCounselId - LegalCounselProfile.legalCounselId to exclude when possible.
+ * @returns {Promise<string|null>} The selected legalCounselId, or null if none exist.
+ */
 async function pickReplacementLegalCounsel(currentLegalCounselId) {
   // Mirrors counsellor replacement policy for legal counsel assignment.
   const candidates = await LegalCounselProfile.findAll({

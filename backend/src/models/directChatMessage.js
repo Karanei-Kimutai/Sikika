@@ -80,6 +80,19 @@ const DirectChatMessage = sequelize.define('directChatMessage', {
   seenAt: {
     type:    DataTypes.DATE,
     comment: 'UTC timestamp when the message was seen (read) by the recipient (null = not yet seen)'
+  },
+
+  /**
+   * UTC timestamp of the most recent edit made by the sender to this message.
+   * NULL means the message has never been edited. Only the original sender
+   * may edit (enforced in chatSocket.js's editEncryptedMessage handler);
+   * editing overwrites encryptedMessageContent in place rather than keeping
+   * an edit history, matching the E2EE model where the server never has
+   * plaintext to diff against.
+   */
+  editedAt: {
+    type:    DataTypes.DATE,
+    comment: 'UTC timestamp of the most recent edit by the sender (null = never edited)'
   }
 
 }, {

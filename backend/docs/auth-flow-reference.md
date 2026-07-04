@@ -12,13 +12,13 @@ This document explains the current backend authentication design in practical te
 ## Auth Intents
 
 - SIGNUP_OTP: onboarding a first-time account.
-- SIGNIN_OTP: OTP-based login for an existing account.
 - PASSWORD_RESET: forgot-password reset flow.
 
 ## Auth Stages
 
 - OTP_VERIFICATION_REQUIRED: OTP issued, client must verify.
-- PASSWORD_SETUP_REQUIRED: OTP is valid but first password missing.
+- DETAILS_REQUIRED: signup OTP verified; complete-signup details required.
+- OTP_2FA_REQUIRED: password verified; signin OTP required.
 - SIGNUP_REQUIRED: signin requested on an account that is not completed.
 - SIGNIN_REQUIRED: signup requested for an already completed account.
 - PASSWORD_RESET_OTP_REQUIRED: reset OTP has been requested.
@@ -33,7 +33,7 @@ This document explains the current backend authentication design in practical te
 
 ## Survivor Auto-Assignment at Signup Completion
 
-When a first-time signup verifies OTP with a valid new password:
+When a first-time signup completes successfully:
 
 1. The account is finalized as a survivor account.
 2. A survivor profile is created if none exists.
@@ -50,9 +50,10 @@ Important assumptions:
 
 ## Manual Verification Checklist
 
-- Request signup OTP, verify with password, confirm AUTHENTICATED.
+- Request signup OTP, verify OTP, confirm signup ticket returned.
+- Complete signup with ticket + password, confirm AUTHENTICATED.
 - Confirm survivor profile was created for the new user.
 - Confirm assigned counsellor and legal counsel IDs are set.
 - Confirm a staff assignment history row was created.
-- Confirm login-password and signin-OTP still work after signup.
+- Confirm login-password returns OTP_2FA_REQUIRED and verify-2fa completes signin.
 - Confirm forgot-password request and reset still work.

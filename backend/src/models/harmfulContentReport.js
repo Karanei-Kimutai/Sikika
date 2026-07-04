@@ -31,6 +31,18 @@ const HarmfulContentReport = sequelize.define('harmfulContentReport', {
     allowNull: false,
     comment:   'FK to userAccount — the user who flagged the message'
   },
+
+  reportedSenderUserId: {
+    type:      DataTypes.STRING(36),
+    allowNull: true,
+    comment:   'Snapshot of the reported message sender userId for moderation fallback when message is deleted'
+  },
+
+  reportedRoomId: {
+    type:      DataTypes.STRING(36),
+    allowNull: true,
+    comment:   'Snapshot of roomId for moderation/event context fallback when message is deleted'
+  },
  
   reportReasonText: {
     type:      DataTypes.TEXT,
@@ -54,8 +66,20 @@ const HarmfulContentReport = sequelize.define('harmfulContentReport', {
     type:         DataTypes.ENUM('PENDING', 'APPROVED', 'REJECTED'),
     defaultValue: 'PENDING',
     comment:      'Review status — PENDING until a moderator acts on the flag'
+  },
+
+  /**
+   * The specific action applied when the report was reviewed.
+   * Mirrors the `action` field sent to reviewReport:
+   *   remove_message | ban_user | issue_warning | none
+   * Null on PENDING reports (not yet reviewed).
+   */
+  reviewedAction: {
+    type:      DataTypes.STRING(30),
+    allowNull: true,
+    comment:   'Action taken on review: remove_message | ban_user | issue_warning | none'
   }
- 
+
 }, {
   tableName: 'harmfulContentReport',
   comment:   'Content flag submitted by a user — triggers moderation review'

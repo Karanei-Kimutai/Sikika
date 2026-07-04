@@ -28,12 +28,22 @@ const { createNotification, createNotificationsBulk } = require("../services/not
  * - Evidence files are stored in Cloudinary; clients receive short-lived signed URLs.
  */
 
+/**
+ * Emergency contact numbers displayed on the unauthenticated report intercept
+ * screen so visitors can get immediate help without creating an account.
+ * @type {string[]}
+ */
 const EMERGENCY_CONTACTS = [
   "Police emergency: 999 / 112",
   "Childline Kenya: 116",
   "National GBV Hotline: 1195"
 ];
 
+/**
+ * All valid values for IncidentReport.currentReportStatus.
+ * Used as a lookup object to avoid raw strings scattered through the controller.
+ * @type {Record<string, string>}
+ */
 const REPORT_STATUS = {
   SUBMITTED: "SUBMITTED",
   UNDER_REVIEW: "UNDER_REVIEW",
@@ -45,6 +55,14 @@ const REPORT_STATUS = {
   WITHDRAWN: "WITHDRAWN"
 };
 
+/**
+ * Defines which target statuses are reachable from each current status.
+ * Transitions are intentionally explicit so invalid workflow jumps are
+ * rejected at the API layer regardless of client behavior.
+ * See docs/reporting.md for the full state machine diagram.
+ *
+ * @type {Record<string, string[]>}
+ */
 const STATUS_TRANSITIONS = {
   [REPORT_STATUS.SUBMITTED]: [REPORT_STATUS.UNDER_REVIEW, REPORT_STATUS.WITHDRAWN],
   [REPORT_STATUS.UNDER_REVIEW]: [REPORT_STATUS.ACTIVE_SUPPORT, REPORT_STATUS.UNDER_INVESTIGATION, REPORT_STATUS.WITHDRAWN],
@@ -52,15 +70,21 @@ const STATUS_TRANSITIONS = {
   [REPORT_STATUS.UNDER_INVESTIGATION]: [REPORT_STATUS.LEGAL_REVIEW, REPORT_STATUS.RESOLVED, REPORT_STATUS.WITHDRAWN],
   [REPORT_STATUS.LEGAL_REVIEW]: [REPORT_STATUS.ESCALATED_TO_LEGAL_CASE, REPORT_STATUS.ACTIVE_SUPPORT, REPORT_STATUS.RESOLVED, REPORT_STATUS.WITHDRAWN],
   [REPORT_STATUS.ESCALATED_TO_LEGAL_CASE]: [REPORT_STATUS.RESOLVED],
+  // Legacy status values from older seeds — included for backward compatibility.
   IN_PROGRESS: [REPORT_STATUS.UNDER_INVESTIGATION, REPORT_STATUS.LEGAL_REVIEW, REPORT_STATUS.RESOLVED, REPORT_STATUS.WITHDRAWN],
   ESCALATED: [REPORT_STATUS.RESOLVED],
   [REPORT_STATUS.RESOLVED]: [],
   [REPORT_STATUS.WITHDRAWN]: []
 };
 
-// Allowed transitions are intentionally explicit so invalid workflow jumps are
-// blocked at API level regardless of client behavior.
-
+/**
+ * Maps each role to the status values that role is allowed to set as the
+ * target of a status transition. A role can only advance a report to statuses
+ * listed here, even if STATUS_TRANSITIONS would otherwise permit it.
+ * SURVIVOR is empty — survivors can only WITHDRAW (handled separately).
+ *
+ * @type {Record<string, string[]>}
+ */
 const STATUS_UPDATE_PERMISSIONS = {
   SURVIVOR: [],
   COUNSELLOR: [REPORT_STATUS.ACTIVE_SUPPORT, REPORT_STATUS.UNDER_INVESTIGATION, REPORT_STATUS.RESOLVED],
@@ -68,15 +92,22 @@ const STATUS_UPDATE_PERMISSIONS = {
   NGO_ADMIN: [REPORT_STATUS.UNDER_REVIEW, REPORT_STATUS.ACTIVE_SUPPORT, REPORT_STATUS.UNDER_INVESTIGATION, REPORT_STATUS.LEGAL_REVIEW, REPORT_STATUS.RESOLVED]
 };
 
-// Roles are allowed to set only specific next states, even when a transition
-// itself is valid in STATUS_TRANSITIONS.
-
 const { normalizeRole } = require("../utils/roles");
 
+/**
+ * Normalizes a severity string to uppercase trimmed form for DB storage.
+ * @param {*} value - Raw severity from request body.
+ * @returns {string} Uppercase severity string (e.g. "HIGH").
+ */
 function normalizeSeverity(value) {
   return String(value || "").trim().toUpperCase();
 }
 
+/**
+ * Normalizes a status string to uppercase trimmed form for comparison.
+ * @param {*} value - Raw status from request body.
+ * @returns {string} Uppercase status string (e.g. "UNDER_REVIEW").
+ */
 function normalizeStatus(value) {
   const normalized = String(value || "").trim().toUpperCase().replace(/\s+/g, "_");
 
@@ -545,6 +576,24 @@ async function updateOwnReport(req, res) {
   return res.json({ report: toApiReport(report) });
 }
 
+/**
+ * POST /api/reports/:reportId/withdraw
+ * -------------------------------------
+ * Lets a survivor withdraw their own report, subject to explicit confirmation
+ * and the same status-transition rules staff-facing updates go through.
+ *
+ * - Requires the caller to be the survivor who owns the report.
+ * - Requires `confirmWithdraw: true` in the body (a one-way action, so the
+ *   frontend must show a confirmation step before calling this).
+ * - Rejects (409) if WITHDRAWN is not a valid transition from the report's
+ *   current status per STATUS_TRANSITIONS — e.g. a report already RESOLVED,
+ *   WITHDRAWN, or ESCALATED_TO_LEGAL_CASE cannot be withdrawn, since that
+ *   would leave a dangling legal case or contradict a terminal state.
+ *
+ * @param {import('express').Request}  req - Params: { reportId }. Body: { confirmWithdraw }.
+ * @param {import('express').Response} res
+ * @returns {Promise<void>}
+ */
 async function withdrawReport(req, res) {
   const actor = await getActorContext(req);
 
@@ -566,6 +615,16 @@ async function withdrawReport(req, res) {
 
   if (report.survivorId !== actor.survivorId) {
     return res.status(403).json({ error: "You can only withdraw your own reports." });
+  }
+
+  // Enforce the same transition guard as updateReportStatus — a report already
+  // escalated to a legal case or resolved/withdrawn cannot be withdrawn, since
+  // doing so would leave a dangling legal case or contradict a terminal state.
+  const allowedTransitions = STATUS_TRANSITIONS[report.currentReportStatus] || [];
+  if (!allowedTransitions.includes(REPORT_STATUS.WITHDRAWN)) {
+    return res.status(409).json({
+      error: `Invalid status transition from ${report.currentReportStatus} to ${REPORT_STATUS.WITHDRAWN}.`
+    });
   }
 
   report.currentReportStatus = REPORT_STATUS.WITHDRAWN;

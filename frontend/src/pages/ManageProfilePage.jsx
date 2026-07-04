@@ -1,25 +1,36 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import axios from "axios";
+import apiClient from "../services/apiClient";
 import { User, Phone, ShieldCheck } from "lucide-react";
-import { getToken } from "../utils/auth";
 import { fadeInUp } from "../utils/motion";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
-
-function getAuthHeaders() {
-  const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
+/**
+ * ManageProfilePage
+ * -----------------
+ * Authenticated profile view and edit form. The set of editable fields depends
+ * on the user's role (SURVIVOR, COUNSELLOR/LEGAL_COUNSEL, or NGO_ADMIN), and
+ * the form's payload is scoped accordingly before submission.
+ *
+ * The page also displays read-only account fields (userId, phone, role, status)
+ * and, for SURVIVOR sessions, shows the phone numbers of their assigned staff.
+ *
+ * @returns {React.ReactElement}
+ */
 function ManageProfilePage() {
+  /** Whether the profile data is being fetched on mount. */
   const [loading, setLoading] = useState(true);
+  /** Whether a save request is in-flight. */
   const [saving, setSaving] = useState(false);
+  /** Error message to display when fetch or save fails. */
   const [errorMessage, setErrorMessage] = useState("");
+  /** Success message displayed after a successful profile update. */
   const [successMessage, setSuccessMessage] = useState("");
+  /** Full API response from GET /api/profile/me (user + profile + assignedStaff). */
   const [profileData, setProfileData] = useState(null);
+  /** Controlled form values for the editable fields for the current role. */
   const [formValues, setFormValues] = useState({});
   const shellRef = useRef(null);
 
+  /** Uppercase role string memoized from the loaded profile data. */
   const role = useMemo(() => String(profileData?.user?.role || "").toUpperCase(), [profileData]);
 
   // Subtle entrance once the profile shell mounts.
@@ -35,9 +46,7 @@ function ManageProfilePage() {
       setErrorMessage("");
 
       try {
-        const response = await axios.get(`${API_BASE_URL}/api/profile/me`, {
-          headers: getAuthHeaders()
-        });
+        const response = await apiClient.get(`/api/profile/me`);
 
         const data = response.data;
         setProfileData(data);
@@ -62,6 +71,14 @@ function ManageProfilePage() {
     loadProfile();
   }, []);
 
+  /**
+   * Handles the profile form submission. Builds a role-scoped payload and
+   * sends it to PATCH /api/profile/me. Fields outside the current role's
+   * allowed set are intentionally omitted from the payload.
+   *
+   * @param {React.FormEvent<HTMLFormElement>} event
+   * @returns {Promise<void>}
+   */
   async function handleSaveProfile(event) {
     event.preventDefault();
     setSaving(true);
@@ -93,9 +110,7 @@ function ManageProfilePage() {
         };
       }
 
-      await axios.patch(`${API_BASE_URL}/api/profile/me`, payload, {
-        headers: getAuthHeaders()
-      });
+      await apiClient.patch(`/api/profile/me`, payload);
 
       setSuccessMessage("Profile updated successfully.");
     } catch (error) {

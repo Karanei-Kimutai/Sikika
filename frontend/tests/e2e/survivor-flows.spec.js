@@ -129,6 +129,66 @@ test.describe('Survivor Flows', () => {
     await expect(page.getByText('Content reported successfully.')).toBeVisible();
   });
 
+  test('community composer blocks a duplicate post on a rapid double-click', async ({ page }) => {
+    await installBaseApiMocks(page);
+    await seedSession(page, { role: 'SURVIVOR', userId: 'survivor-4' });
+
+    await page.route('**/api/community/rooms', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          rooms: [
+            {
+              roomId: 'room-2',
+              roomName: 'General Support',
+              roomCreationTimestamp: '2026-06-10T10:00:00.000Z',
+              latestMessageDispatchTimestamp: '2026-06-10T12:00:00.000Z',
+              joined: true,
+              membersCount: 3
+            }
+          ]
+        })
+      });
+    });
+
+    let postCount = 0;
+    await page.route('**/api/community/rooms/room-2/messages', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ messages: [] })
+        });
+        return;
+      }
+
+      postCount += 1;
+      // Delay the response so the in-flight window is long enough to assert
+      // the Send button stays disabled and a same-window second click is a no-op.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      await route.fulfill({ status: 201, contentType: 'application/json', body: '{}' });
+    });
+
+    await page.goto('/community');
+    await page.locator('.community-room-item').first().click();
+
+    const messageInput = page.getByPlaceholder('Share support, advice, or encouragement');
+    const sendButton = page.getByRole('button', { name: 'Post message' });
+
+    await messageInput.fill('Sending support your way.');
+    await sendButton.click();
+    await expect(sendButton).toBeDisabled();
+
+    // A second, rapid click while the first request is still in flight should
+    // be a no-op — the browser won't deliver a click to a disabled control.
+    await sendButton.click({ force: true, timeout: 1000 }).catch(() => {});
+
+    await expect(sendButton).toBeDisabled();
+    await expect(page.getByText('Message posted.')).toBeVisible({ timeout: 2000 });
+    expect(postCount).toBe(1);
+  });
+
   test('survivor direct chat loads channel list', async ({ page }) => {
     await installBaseApiMocks(page);
     await seedSession(page, { role: 'SURVIVOR', userId: 'survivor-3' });

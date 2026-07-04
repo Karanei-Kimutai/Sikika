@@ -1,7 +1,5 @@
 import { useMemo, useState } from "react";
-import axios from "axios";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+import apiClient from "../../services/apiClient";
 
 /**
  * SignInFlow
@@ -55,7 +53,15 @@ export default function SignInFlow({
     () => firstLoginResetPassword.trim().length >= 8, [firstLoginResetPassword]
   );
 
-  /** Detects backend first-login signal and opens the forced-reset sub-flow. */
+  /**
+   * Activates the first-login forced-reset sub-flow when the backend returns
+   * `authStage=PASSWORD_RESET_REQUIRED`. Stores the temporary token and userId
+   * returned by the login endpoint so they can be used to call set-password.
+   *
+   * @param {{ token: string, userId: string }} responseData - Partial auth response from the backend.
+   * @param {string} phoneValue - Phone number to pre-fill in the reset form.
+   * @returns {void}
+   */
   const beginFirstLoginResetFlow = (responseData, phoneValue) => {
     setShowFirstLoginResetFlow(true);
     setFirstLoginAuthToken(responseData.token || "");
@@ -65,6 +71,11 @@ export default function SignInFlow({
     setSuccessMessage("First-time staff login detected. Set a new password to continue.");
   };
 
+  /**
+   * Opens the forgot-password sub-flow and pre-fills the phone number field
+   * with whatever the user already typed in the main sign-in form.
+   * @returns {void}
+   */
   const openResetFlow = () => {
     clearMessages();
     setShowResetFlow(true);
@@ -74,6 +85,13 @@ export default function SignInFlow({
     setResetNewPassword("");
   };
 
+  /**
+   * Step 1 of sign-in: validates the password against the backend.
+   * On success, the backend sends a 2FA OTP and returns `authStage=OTP_2FA_REQUIRED`;
+   * the component transitions to the twoFactor step. Staff with `authStage=PASSWORD_RESET_REQUIRED`
+   * are routed to the first-login forced-reset sub-flow instead.
+   * @returns {Promise<void>}
+   */
   const loginWithPassword = async () => {
     if (!canSubmitSigninPhone || !canSubmitSigninPassword) {
       setErrorMessage("Enter your mobile number and password (minimum 8 characters).");
@@ -82,7 +100,7 @@ export default function SignInFlow({
     clearMessages();
     setLoading(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/auth/login-password`, {
+      const response = await apiClient.post(`/api/auth/login-password`, {
         phoneNumber: signinPhone.trim(),
         password: signinPassword.trim()
       });
@@ -108,6 +126,11 @@ export default function SignInFlow({
     }
   };
 
+  /**
+   * Step 2 of sign-in: verifies the 2FA OTP sent by `loginWithPassword` and
+   * issues the session JWT on success by calling `finalizeLogin`.
+   * @returns {Promise<void>}
+   */
   const verifyTwoFactorOtp = async () => {
     if (!canSubmitTwoFactorOtp || !canSubmitSigninPhone) {
       setErrorMessage("Enter the 4-digit OTP sent to your phone.");
@@ -116,7 +139,7 @@ export default function SignInFlow({
     clearMessages();
     setLoading(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/auth/verify-2fa`, {
+      const response = await apiClient.post(`/api/auth/verify-2fa`, {
         phoneNumber: signinPhone.trim(),
         otp: signinTwoFactorOtp.trim()
       });
@@ -128,11 +151,21 @@ export default function SignInFlow({
     }
   };
 
+  /**
+   * Resends the 2FA OTP by re-running the password step.
+   * Clears the current OTP input first so the user sees a clean state.
+   * @returns {Promise<void>}
+   */
   const resendTwoFactorOtp = async () => {
     setSigninTwoFactorOtp("");
     await loginWithPassword();
   };
 
+  /**
+   * Requests a password-reset OTP for the entered phone number.
+   * On success, transitions the reset sub-flow to the "verify" step.
+   * @returns {Promise<void>}
+   */
   const requestResetOtp = async () => {
     if (!canSubmitResetPhone) {
       setErrorMessage("Enter a valid mobile number including country code.");
@@ -141,7 +174,7 @@ export default function SignInFlow({
     clearMessages();
     setLoading(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/auth/forgot-password/request`, {
+      const response = await apiClient.post(`/api/auth/forgot-password/request`, {
         phoneNumber: resetPhone.trim()
       });
       if (response.data.developmentOtp) setResetOtp(response.data.developmentOtp);
@@ -158,6 +191,11 @@ export default function SignInFlow({
     }
   };
 
+  /**
+   * Submits the reset OTP + new password to the forgot-password/reset endpoint.
+   * On success, closes the reset sub-flow and shows a prompt to sign in again.
+   * @returns {Promise<void>}
+   */
   const completePasswordReset = async () => {
     if (!canSubmitResetOtp || !canSubmitResetPassword || !canSubmitResetPhone) {
       setErrorMessage("Enter your number, OTP, and a new password (minimum 8 characters).");
@@ -166,7 +204,7 @@ export default function SignInFlow({
     clearMessages();
     setLoading(true);
     try {
-      await axios.post(`${API_BASE_URL}/api/auth/forgot-password/reset`, {
+      await apiClient.post(`/api/auth/forgot-password/reset`, {
         phoneNumber: resetPhone.trim(),
         otp: resetOtp.trim(),
         newPassword: resetNewPassword.trim()
@@ -191,8 +229,8 @@ export default function SignInFlow({
     clearMessages();
     setLoading(true);
     try {
-      await axios.post(
-        `${API_BASE_URL}/api/auth/set-password`,
+      await apiClient.post(
+        `/api/auth/set-password`,
         { password: firstLoginResetPassword.trim() },
         { headers: { Authorization: `Bearer ${firstLoginAuthToken}` } }
       );

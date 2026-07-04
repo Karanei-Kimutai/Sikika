@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { buildToken, installBaseApiMocks, expectSignedInShell } from './helpers/mocks';
+import { buildToken, installBaseApiMocks, expectSignedInShell, seedSession } from './helpers/mocks';
 
 test.describe('Auth Flows', () => {
   test('signup flow (OTP verification then password/profile details) creates account and signs in', async ({ page }) => {
@@ -131,5 +131,23 @@ test.describe('Auth Flows', () => {
     await page.getByRole('button', { name: 'Verify OTP & Reset Password' }).click();
 
     await expect(page.getByText('Password reset successful. You can now sign in with your new password.')).toBeVisible();
+  });
+
+  test('global 401 handling clears session and redirects to join', async ({ page }) => {
+    await installBaseApiMocks(page);
+    await seedSession(page, { role: 'SURVIVOR', userId: 'survivor-401' });
+
+    // ManageProfilePage now uses apiClient; a 401 here should trigger the
+    // shared response interceptor redirect instead of just showing a local error.
+    await page.route('**/api/profile/me', async (route) => {
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Unauthorized' })
+      });
+    });
+
+    await page.goto('/profile');
+    await expect(page).toHaveURL(/\/join$/);
   });
 });

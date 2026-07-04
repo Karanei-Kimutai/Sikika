@@ -1,3 +1,19 @@
+/**
+ * reports.test.js
+ * ---------------
+ * Tests for the incident report submission endpoint (POST /api/reports).
+ *
+ * Covered:
+ * - Unauthenticated callers are rejected with a survivor-specific 401 payload that
+ *   includes emergency contact numbers (the /reports route is accessible without login
+ *   so the error message must guide a caller in crisis, not just say "Unauthorized").
+ * - An authenticated SURVIVOR can submit a report; the controller links it to the
+ *   survivor's profile (survivorId, not userId) and returns the created report.
+ *
+ * All DB models and Cloudinary are mocked. Real JWT signing is used so the
+ * authMiddleware can verify the token without mocking the auth layer itself.
+ */
+
 const request = require("supertest");
 const express = require("express");
 const jwt = require("jsonwebtoken");
@@ -10,7 +26,8 @@ jest.mock("../src/config/cloudinary", () => ({
 
 jest.mock("../src/models", () => ({
   IncidentReport: {
-    create: jest.fn()
+    create: jest.fn(),
+    findByPk: jest.fn()
   },
   EvidenceFile: {},
   LegalCaseFile: {
@@ -106,7 +123,7 @@ describe("Report submission routes", () => {
     });
   });
 
-  test("rejects unauthenticated report creation", async () => {
+  test("returns 401 with emergency contact numbers when the caller has no auth token", async () => {
     const response = await request(app)
       .post("/api/reports")
       .send({
@@ -119,7 +136,7 @@ describe("Report submission routes", () => {
     expect(response.body.error).toContain("registered and authenticated survivors");
   });
 
-  test("allows authenticated survivor to create report and link to survivor profile", async () => {
+  test("creates an incident report linked to the survivor's profile and returns 201 with the new report", async () => {
     const token = makeToken({
       id: "user-survivor-1",
       userId: "user-survivor-1",
@@ -148,5 +165,94 @@ describe("Report submission routes", () => {
         severityLevel: "HIGH"
       })
     );
+  });
+});
+
+describe("PATCH /:reportId/withdraw — status transition guard", () => {
+  let app;
+
+  /** Builds a mock IncidentReport instance with a mutable status and a spy-able save(). */
+  function makeMockReport(currentReportStatus) {
+    return {
+      reportId: "report-1",
+      survivorId: "survivor-1",
+      currentReportStatus,
+      incidentCategory: "domestic_violence",
+      severityLevel: "HIGH",
+      incidentDescriptionText: "A report body",
+      incidentLocation: "Nairobi",
+      incidentDate: "2026-06-10",
+      reportCreationTimestamp: "2026-06-11T09:00:00.000Z",
+      evidenceFiles: [],
+      save: jest.fn().mockResolvedValue(undefined)
+    };
+  }
+
+  function survivorToken() {
+    return makeToken({ id: "user-survivor-1", userId: "user-survivor-1", role: "SURVIVOR" });
+  }
+
+  beforeAll(() => {
+    process.env.JWT_SECRET = process.env.JWT_SECRET || "test-secret";
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    app = buildApp();
+
+    UserAccount.findByPk.mockResolvedValue({
+      userId: "user-survivor-1",
+      userRole: "SURVIVOR",
+      accountStatus: "ACTIVE"
+    });
+
+    SurvivorProfile.findOne.mockResolvedValue({
+      survivorId: "survivor-1",
+      userId: "user-survivor-1"
+    });
+
+    SurvivorProfile.findByPk.mockResolvedValue({
+      survivorId: "survivor-1",
+      userId: "user-survivor-1",
+      assignedCounsellorId: null,
+      assignedLegalCounselId: null
+    });
+
+    NgoAdministratorProfile.findAll.mockResolvedValue([]);
+    InAppNotification.create.mockResolvedValue({});
+  });
+
+  test.each([
+    ["SUBMITTED"],
+    ["UNDER_REVIEW"]
+  ])("allows withdrawal from %s (200, status becomes WITHDRAWN)", async (fromStatus) => {
+    const report = makeMockReport(fromStatus);
+    IncidentReport.findByPk.mockResolvedValue(report);
+
+    const response = await request(app)
+      .patch("/api/reports/report-1/withdraw")
+      .set("Authorization", `Bearer ${survivorToken()}`)
+      .send({ confirmWithdraw: true });
+
+    expect(response.status).toBe(200);
+    expect(report.currentReportStatus).toBe("WITHDRAWN");
+    expect(report.save).toHaveBeenCalled();
+  });
+
+  test.each([
+    ["RESOLVED"],
+    ["ESCALATED_TO_LEGAL_CASE"]
+  ])("rejects withdrawal from %s with 409 and does not mutate the report", async (fromStatus) => {
+    const report = makeMockReport(fromStatus);
+    IncidentReport.findByPk.mockResolvedValue(report);
+
+    const response = await request(app)
+      .patch("/api/reports/report-1/withdraw")
+      .set("Authorization", `Bearer ${survivorToken()}`)
+      .send({ confirmWithdraw: true });
+
+    expect(response.status).toBe(409);
+    expect(report.currentReportStatus).toBe(fromStatus);
+    expect(report.save).not.toHaveBeenCalled();
   });
 });

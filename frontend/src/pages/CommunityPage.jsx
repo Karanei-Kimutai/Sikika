@@ -22,13 +22,21 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000
 
 const socket = io(API_BASE_URL, { autoConnect: false });
 
+/**
+ * @returns {{ Authorization: string } | {}}
+ */
 function getAuthHeaders() {
   const token = getToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-// Role claim is read client-side only for UI toggles (e.g., create-room button).
-// Actual authorization remains enforced by backend endpoints.
+/**
+ * Reads the role claim from the JWT for UI-only visibility decisions
+ * (e.g., whether to show the "Create Room" button). Actual authorization
+ * remains enforced by backend endpoints on every mutating request.
+ *
+ * @returns {string} Uppercase role string (e.g. "NGO_ADMIN"), or "" if absent/invalid.
+ */
 function readRoleFromToken() {
   try {
     const token = getToken() || "";
@@ -43,8 +51,12 @@ function readRoleFromToken() {
   }
 }
 
-// Reads /community?room=<roomId> deep-link parameter when a preferred room is provided
-// (e.g. arriving here via a clicked moderation-alert notification).
+/**
+ * Reads the `room` query parameter from the URL, supporting deep-links from
+ * moderation-alert notifications (e.g. /community?room=<roomId>).
+ *
+ * @returns {string} The roomId string, or "" when the parameter is absent.
+ */
 function readPreferredRoomFromUrl() {
   try {
     const params = new URLSearchParams(window.location.search);
@@ -54,13 +66,25 @@ function readPreferredRoomFromUrl() {
   }
 }
 
-// Converts potentially invalid timestamps into sortable epoch values.
+/**
+ * Converts a potentially invalid timestamp value into a sortable epoch integer.
+ * Returns 0 for null, undefined, or unparseable strings so those items sort last.
+ *
+ * @param {string|null|undefined} value - Raw timestamp from the API (ISO 8601 or similar).
+ * @returns {number} Millisecond epoch integer, or 0 on parse failure.
+ */
 function toEpoch(value) {
   const parsed = Date.parse(String(value || ""));
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-// Keeps most recently active rooms at the top of the room list.
+/**
+ * Sorts rooms by their most recent activity (latest message timestamp, falling
+ * back to room creation time) so the most active rooms appear at the top.
+ *
+ * @param {object[]} roomList - Array of CommunityRoom API response objects.
+ * @returns {object[]} New array sorted descending by activity time.
+ */
 function sortRoomsByActivity(roomList) {
   return [...roomList].sort((a, b) => {
     const aTime = toEpoch(a.latestMessageDispatchTimestamp) || toEpoch(a.roomCreationTimestamp);
@@ -95,6 +119,9 @@ function CommunityPage() {
   const [submittingReport, setSubmittingReport] = useState(false);
   const [submittingRoom, setSubmittingRoom] = useState(false);
   const [joiningRoom, setJoiningRoom] = useState(false);
+  // Guards handleSendMessage against a double-click/double-submit firing two
+  // concurrent identical POSTs before the first request's newMessage clear lands.
+  const [isSending, setIsSending] = useState(false);
   const [roomQuery, setRoomQuery] = useState("");
   const activeRoomIdRef = useRef("");
   // Read once on mount — a deep-linked room should only win the very first
@@ -128,11 +155,13 @@ function CommunityPage() {
   });
 
   // Pulls rooms and preserves selection when possible.
-  async function loadRooms({ silent = false } = {}) {
+  // `signal` is an optional AbortSignal to cancel the request on unmount.
+  async function loadRooms({ silent = false, signal } = {}) {
     if (!silent) setErrorMessage("");
     try {
       const response = await axios.get(`${API_BASE_URL}/api/community/rooms`, {
-        headers: getAuthHeaders()
+        headers: getAuthHeaders(),
+        signal
       });
       const nextRooms = sortRoomsByActivity(response.data.rooms || []);
       setRooms(nextRooms);
@@ -151,6 +180,8 @@ function CommunityPage() {
         return nextRooms[0]?.roomId || "";
       });
     } catch (error) {
+      // Ignore cancellation — normal cleanup on unmount, not an error.
+      if (error.name === "AbortError" || error.code === "ERR_CANCELED") return;
       if (!silent) {
         setErrorMessage(error.response?.data?.error || "Failed to load community rooms.");
       }
@@ -186,10 +217,16 @@ function CommunityPage() {
   }
 
   useEffect(() => {
+    const controller = new AbortController();
+    // Deferred one tick to satisfy the react-hooks/set-state-in-effect rule;
+    // loadRooms calls setState and must not run synchronously inside the effect body.
     const timerId = window.setTimeout(() => {
-      void loadRooms();
+      void loadRooms({ signal: controller.signal });
     }, 0);
-    return () => window.clearTimeout(timerId);
+    return () => {
+      window.clearTimeout(timerId);
+      controller.abort();
+    };
   }, []);
 
   // Light polling keeps room ordering fresh if other users are active.
@@ -403,12 +440,24 @@ function CommunityPage() {
     }
   }
 
+  /**
+   * Posts the composer's current message to the active room.
+   *
+   * Guarded by `isSending` so a fast double-click/double-submit can't fire
+   * two concurrent identical POSTs — the guard short-circuits any call that
+   * arrives while a prior submit is still in flight, and the Send button is
+   * also disabled for the same window.
+   *
+   * @param {React.FormEvent} event - The form submit event.
+   * @returns {Promise<void>}
+   */
   async function handleSendMessage(event) {
     event.preventDefault();
-    if (!activeRoomId || !newMessage.trim()) return;
+    if (!activeRoomId || !newMessage.trim() || isSending) return;
 
     setErrorMessage("");
     setSuccessMessage("");
+    setIsSending(true);
 
     try {
       await axios.post(
@@ -421,6 +470,8 @@ function CommunityPage() {
       setSuccessMessage("Message posted.");
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Failed to post message.");
+    } finally {
+      setIsSending(false);
     }
   }
 
@@ -569,7 +620,7 @@ function CommunityPage() {
           {errorMessage && <p role="alert" className="status-message warning">{errorMessage}</p>}
           {successMessage && <p className="status-message">{successMessage}</p>}
 
-          <div className="community-messages" ref={messagesViewportRef}>
+          <div className="community-messages" ref={messagesViewportRef} aria-live="polite" aria-label="Community message timeline">
             {canAccessActiveRoom && messages.map((message) => (
               <article
                 key={message.communityMessageId}
@@ -583,6 +634,8 @@ function CommunityPage() {
                     <button
                       type="button"
                       className="message-menu-trigger"
+                      aria-label="Message actions"
+                      aria-expanded={activeMessageMenuId === message.communityMessageId}
                       onClick={() =>
                         setActiveMessageMenuId((current) =>
                           current === message.communityMessageId ? "" : message.communityMessageId
@@ -603,7 +656,7 @@ function CommunityPage() {
 
                   {activeMessageMenuId === message.communityMessageId && (
                     <div className="message-actions-menu">
-                      {message.senderUserId !== currentUserId && (
+                      {message.senderUserId !== currentUserId && !canModerate && (
                         <button type="button" onClick={() => openReportModal(message.communityMessageId)}>
                           Report Message
                         </button>
@@ -651,7 +704,7 @@ function CommunityPage() {
                 value={newMessage}
                 onChange={(event) => setNewMessage(event.target.value)}
               />
-              <button type="submit" className="wa-send-btn" aria-label="Post message" disabled={!newMessage.trim()}>
+              <button type="submit" className="wa-send-btn" aria-label="Post message" disabled={!newMessage.trim() || isSending}>
                 <Send size={14} aria-hidden="true" />
               </button>
             </form>

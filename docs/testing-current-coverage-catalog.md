@@ -10,40 +10,44 @@ This document mirrors your proposal style (Input/Action + Expected Output) and m
 - Input: `POST /api/auth/request-otp` with phone number and signup intent.
 - Expected Output: `200 OK`, `authStage=OTP_VERIFICATION_REQUIRED`, development OTP returned in test mode, user creation path called.
 
-2. Block OTP sign-in for incomplete/non-existing account
-- Input: `POST /api/auth/request-otp` with sign-in intent for account that does not exist.
-- Expected Output: `409`, `authStage=SIGNUP_REQUIRED`.
+2. Block signup OTP request when account already has a password
+- Input: `POST /api/auth/request-otp` for an account that is already complete.
+- Expected Output: `409`, `authStage=SIGNIN_REQUIRED`.
 
-3. Verify OTP with missing password on signup
-- Input: `POST /api/auth/verify-otp` with valid signup OTP but no password.
-- Expected Output: `400`, `authStage=PASSWORD_SETUP_REQUIRED`.
+3. Verify signup OTP and issue signup ticket
+- Input: `POST /api/auth/verify-otp` with valid signup OTP.
+- Expected Output: `200`, `authStage=DETAILS_REQUIRED`, `signupTicket` returned.
 
-4. Complete OTP signup with password
-- Input: `POST /api/auth/verify-otp` with valid signup OTP + strong password.
-- Expected Output: `200 OK`, JWT token returned, password hash called, survivor profile + assignment history creation called.
+4. Complete signup with ticket + password
+- Input: `POST /api/auth/complete-signup` with valid signup ticket and strong password.
+- Expected Output: `200`, JWT token returned, password hash called, survivor profile + assignment history creation called.
 
 5. Reject invalid OTP during sign-in
 - Input: `POST /api/auth/verify-otp` with wrong OTP.
 - Expected Output: `401 Unauthorized`, failure state persisted.
 
-6. Password login success
+6. Password login success transitions to OTP 2FA
 - Input: `POST /api/auth/login-password` with valid password.
-- Expected Output: `200 OK`, `authStage=AUTHENTICATED`, JWT returned.
+- Expected Output: `200`, `authStage=OTP_2FA_REQUIRED`, no JWT yet.
 
-7. Password login failure
+7. Verify 2FA OTP and issue JWT
+- Input: `POST /api/auth/verify-2fa` with valid OTP.
+- Expected Output: `200`, `authStage=AUTHENTICATED`, JWT returned.
+
+8. Password login failure
 - Input: `POST /api/auth/login-password` with wrong password.
 - Expected Output: `401 Unauthorized`, failure state persisted.
 
-8. Forgot password request for unknown account
+9. Forgot password request for unknown account
 - Input: `POST /api/auth/forgot-password/request` for unknown number.
 - Expected Output: `200 OK` with generic reset stage (prevents account enumeration leaks).
 
-9. Reset password with valid OTP
+10. Reset password with valid OTP
 - Input: `POST /api/auth/forgot-password/reset` with valid OTP and new password.
 - Expected Output: `200 OK`, password updated and persisted.
 
 
-### B. Role-Based Access Control / Security — PARTIALLY COVERED
+### B. Role-Based Access Control / Security — COVERED
 
 Current coverage (`backend/tests/systemRoutes.test.js`):
 
@@ -55,20 +59,23 @@ Current coverage (`backend/tests/systemRoutes.test.js`):
 - Input: protected endpoint with invalid JWT.
 - Expected Output: `401 Unauthorized`.
 
-What is NOT yet covered from your proposal example:
-- Survivor token hitting NGO admin analytics endpoint and asserting `403`.
-- Survivor trying to read another survivor's report and asserting `403` or `404`.
+Current coverage (`backend/tests/rbac.test.js` and `backend/tests/systemRoutes.test.js`):
+
+1. Survivor denied NGO admin dashboard access
+- Input: `GET /api/admin/ngo/dashboard` with survivor token.
+- Expected Output: `403`.
+
+2. Survivor denied access to another survivor report
+- Input: `GET /api/reports/:id` for a report not owned by caller.
+- Expected Output: `403`.
 
 
-### C. Incident Reporting API — PARTIALLY COVERED
+### C. Incident Reporting API — COVERED
 
-Current coverage:
-- Unauthorized access checks in system route smoke tests.
-
-What is NOT yet covered from your proposal example:
-1. `POST /api/reports` without token => assert `401`.
-2. `POST /api/reports` with valid survivor token + valid payload => assert `201`.
-3. Verify report persisted in DB and linked to survivor ID.
+Current coverage (`backend/tests/reports.test.js` + route guards):
+1. Unauthenticated report creation path behavior and emergency response envelope checks.
+2. Authenticated report creation/update/status flows.
+3. Ownership and survivor linkage validation paths.
 
 
 ### D. USSD Webhook (`ussd.test.js`) — COVERED
@@ -101,13 +108,17 @@ What is NOT yet covered from your proposal example:
 - Action: open join page, switch to Sign Up, request OTP, verify OTP, set password/profile fields.
 - Assertion: user lands on `/home`, authenticated shell visible.
 
-2. OTP sign-in
-- Action: request sign-in OTP and verify.
+2. Mandatory password + OTP 2FA signin
+- Action: login-password then verify-2fa.
 - Assertion: user lands on `/home`, authenticated shell visible.
 
 3. Forgot-password reset
 - Action: request reset OTP, submit OTP + new password.
 - Assertion: success message shown.
+
+4. Global 401 handling
+- Action: an authenticated API call (via the shared `apiClient.js`) returns 401.
+- Assertion: session is cleared and the app redirects to `/join`.
 
 
 ### B. Survivor Flows (`frontend/tests/e2e/survivor-flows.spec.js`) — CURRENTLY COVERED
@@ -120,7 +131,11 @@ What is NOT yet covered from your proposal example:
 - Action: join room, open message menu, report message.
 - Assertion: join success and report success messages.
 
-3. Direct chat list load
+3. Community composer double-submit guard
+- Action: fill the composer, click Send, then attempt a rapid second click while the (delayed) request is still in flight.
+- Assertion: Send button stays disabled for the whole in-flight window and exactly one message is posted.
+
+4. Direct chat list load
 - Action: open chat page.
 - Assertion: chats render with expected survivor labels and archived toggle.
 
@@ -131,9 +146,13 @@ What is NOT yet covered from your proposal example:
 - Action: open moderation details then issue warning.
 - Assertion: moderation completion message shown.
 
-2. System admin maintenance controls
-- Action: enable maintenance mode and clear cache.
-- Assertion: success messages shown for both actions.
+2. NGO admin maintenance controls
+- Action: enable/disable maintenance mode.
+- Assertion: success message shown and dashboard state refreshes.
+
+3. Lift Ban double-submit guard
+- Action: click "Lift Ban" from the Moderation Desk queue.
+- Assertion: the button shows a "Lifting…" loading state and all visible Lift Ban buttons disable for the duration of the request.
 
 
 ### D. Profile & Library Flows (`frontend/tests/e2e/profile-library-flows.spec.js`) — CURRENTLY COVERED
@@ -166,7 +185,8 @@ What is NOT yet covered from your proposal example:
 
 `frontend/tests/e2e/safety.spec.js` exists on disk and covers Quick Exit behavior.
 1. Click Quick Exit → assert redirect to safe URL.
-2. Assert session keys are cleared after exit.
+2. Assert session keys are cleared after exit, including the local `pendingMessages:<chatId>` queue and the IndexedDB E2EE keypair.
+3. Sign out (not just Quick Exit) also purges any queued `pendingMessages:<chatId>` entries from `localStorage`.
 
 
 ## 3. Summary for Proposal (Simple)
@@ -187,6 +207,7 @@ Additional suites also present (not listed in the original proposal but fully im
 - `backend/tests/banCascade.test.js` — cascadeReassignOnStaffBan auto-reassignment
 - `backend/tests/banEnforcement.test.js` — ban metadata guards, liftExpiredBan, authMiddleware enforcement
 - `backend/tests/chatPresence.test.js` — presence registry and delivery catch-up
+- `backend/tests/socketAuthService.test.js` — unit tests for the shared `socketAuthService.js` helpers (JWT extraction from handshake, userId claim resolution, `isUserAccountActive` across ACTIVE/BANNED/SUSPENDED/missing-account/DB-error cases)
 - `backend/tests/legalCaseController.test.js` — legal case workflow transitions
 - `backend/tests/notificationController.test.js` — notification read/dismiss endpoints
 - `backend/tests/notificationService.test.js` — notification write-path (notificationService)

@@ -12,20 +12,7 @@
  *   GET    /api/legal-cases/:legalCaseId/document      — getLegalCaseDocumentUrl (blob stream)
  */
 
-import axios from 'axios';
-import { getToken } from '../utils/auth';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
-
-/**
- * Returns headers with the Bearer token from sessionStorage.
- *
- * @returns {{ Authorization: string }}
- */
-function authHeaders() {
-  const token = getToken();
-  return { Authorization: `Bearer ${token}` };
-}
+import apiClient from './apiClient';
 
 /**
  * saveLegalCaseDraft
@@ -38,11 +25,7 @@ function authHeaders() {
  * @returns {Promise<object>} Updated draft fields and draftLastUpdatedAt.
  */
 export async function saveLegalCaseDraft(legalCaseId, fields) {
-  const response = await axios.patch(
-    `${API_BASE_URL}/api/legal-cases/${legalCaseId}`,
-    fields,
-    { headers: authHeaders() }
-  );
+  const response = await apiClient.patch(`/api/legal-cases/${legalCaseId}`, fields);
   return response.data;
 }
 
@@ -59,11 +42,7 @@ export async function saveLegalCaseDraft(legalCaseId, fields) {
  * @returns {Promise<object>} Updated case with new currentCaseStatus.
  */
 export async function updateLegalCaseStatus(legalCaseId, status) {
-  const response = await axios.patch(
-    `${API_BASE_URL}/api/legal-cases/${legalCaseId}/status`,
-    { status },
-    { headers: authHeaders() }
-  );
+  const response = await apiClient.patch(`/api/legal-cases/${legalCaseId}/status`, { status });
   return response.data;
 }
 
@@ -79,11 +58,7 @@ export async function updateLegalCaseStatus(legalCaseId, status) {
  * @returns {Promise<{ message: string, documentGeneratedAt: string, legalCaseId: string }>}
  */
 export async function generateLegalCaseDocument(legalCaseId) {
-  const response = await axios.post(
-    `${API_BASE_URL}/api/legal-cases/${legalCaseId}/document`,
-    {},
-    { headers: authHeaders() }
-  );
+  const response = await apiClient.post(`/api/legal-cases/${legalCaseId}/document`, {});
   return response.data;
 }
 
@@ -105,10 +80,9 @@ export async function generateLegalCaseDocument(legalCaseId) {
  * @returns {Promise<{ signedUrl: string }>}
  */
 export async function getLegalCaseDocumentUrl(legalCaseId) {
-  const response = await axios.get(
-    `${API_BASE_URL}/api/legal-cases/${legalCaseId}/document`,
-    { headers: authHeaders(), responseType: "blob" }
-  );
+  const response = await apiClient.get(`/api/legal-cases/${legalCaseId}/document`, {
+    responseType: "blob"
+  });
 
   const objectUrl = URL.createObjectURL(response.data);
 

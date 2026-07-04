@@ -1,13 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import axios from "axios";
+import apiClient from "../services/apiClient";
 import { LogOut, Menu, User, X } from "lucide-react";
 import NotificationBell from "./NotificationBell";
 import SikikaLogo from "./SikikaLogo";
-import { getToken } from "../utils/auth";
 import { prettifyLabel } from "../pages/ngo-admin/helpers";
 import { fadeInUp } from "../utils/motion";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
 /**
  * SiteHeader
@@ -15,16 +12,24 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000
  * Shared top navigation for public, survivor/staff, and admin sessions.
  *
  * Important behavior:
- * - primary nav tabs are role-aware
- * - admins do not use quick action buttons; they navigate via section tabs/routes
- * - the Profile nav tab and standalone Sign Out button have been folded into
- *   a single circular avatar dropdown (see "Profile dropdown" below) to keep
- *   the nav and header-actions row uncluttered
- * - notification bell is shown for all authenticated users; polling and
- *   panel state are encapsulated inside NotificationBell
- * - hamburger drawer activates on narrow viewports (≤ 680px)
- * - nav pill is horizontally scrollable; hovering near the left/right edges
- *   auto-scrolls so all items are reachable without a scrollbar being visible
+ * - Primary nav tabs are role-aware (NGO_ADMIN, MODERATOR, and authenticated
+ *   general users each receive a different nav set).
+ * - Admins do not use quick action buttons; they navigate via section tabs/routes.
+ * - The Profile nav tab and standalone Sign Out button have been folded into
+ *   a single circular avatar dropdown to keep the header uncluttered.
+ * - Notification bell is shown for all authenticated users; polling and
+ *   panel state are fully encapsulated inside `NotificationBell`.
+ * - Hamburger drawer activates on narrow viewports (≤ 680px).
+ * - Nav pill is horizontally scrollable; hovering near the left/right edges
+ *   auto-scrolls (via rAF) so all items are reachable without a visible scrollbar.
+ *
+ * @param {object} props
+ * @param {string} props.currentPath - Current resolved pathname from App.jsx (e.g. "/chat").
+ * @param {Function} props.onNavigate - App.jsx's pushState navigator; used for link clicks and sign-out redirect.
+ * @param {boolean} props.isAuthenticated - Controls visibility of auth-gated nav items.
+ * @param {string} props.role - Uppercase role string decoded from the JWT (e.g. "SURVIVOR", "NGO_ADMIN").
+ * @param {Function} props.onSignOut - Clears the session and navigates to /join; called from the profile dropdown.
+ * @returns {React.ReactElement}
  */
 function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut }) {
   const [navOpen, setNavOpen] = useState(false);
@@ -162,10 +167,7 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
     if (profileSummary || profileLoading) return;
     setProfileLoading(true);
     try {
-      const token = getToken();
-      const response = await axios.get(`${API_BASE_URL}/api/profile/me`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
-      });
+      const response = await apiClient.get(`/api/profile/me`);
       // Keep the full payload (user + assignedStaff), not just `user` — survivors
       // need assignedStaff (their counsellor/legal counsel contact numbers) below.
       setProfileSummary(response.data || null);
@@ -177,6 +179,11 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
     }
   }, [profileSummary, profileLoading]);
 
+  /**
+   * Toggles the profile popover open/closed. Triggers a lazy profile fetch
+   * the first time the popover opens so the identity card has real data.
+   * @returns {void}
+   */
   const handleAvatarClick = () => {
     setMenuOpen((open) => {
       const next = !open;
@@ -185,11 +192,20 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
     });
   };
 
+  /**
+   * Navigates to the Manage Profile page and closes the popover.
+   * @returns {void}
+   */
   const handleManageProfile = () => {
     setMenuOpen(false);
     onNavigate("/profile");
   };
 
+  /**
+   * Signs the user out from within the avatar popover menu.
+   * Closes the menu first so the state is clean before the session is cleared.
+   * @returns {void}
+   */
   const handleMenuSignOut = () => {
     setMenuOpen(false);
     onSignOut();
@@ -245,6 +261,11 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
   // Clean up any running animation on unmount.
   useEffect(() => () => stopScroll(), [stopScroll]);
 
+  /**
+   * Handles a nav link click: closes the mobile drawer and navigates to the target path.
+   * @param {string} path - Destination pathname.
+   * @returns {void}
+   */
   const handleNavClick = (path) => {
     setNavOpen(false);
     onNavigate(path);

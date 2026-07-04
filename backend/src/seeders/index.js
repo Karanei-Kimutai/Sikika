@@ -39,8 +39,15 @@ if (process.env.NODE_ENV === 'production') {
   process.exit(1);
 }
 
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID } = require('crypto');
 const bcrypt = require('bcrypt');
+const PDFDocument = require('pdfkit');
+const {
+  uploadSupportResourceBuffer,
+  uploadEvidenceBuffer,
+  uploadLegalDocumentBuffer
+} = require('../config/cloudinary');
+const { buildLegalCasePdfBuffer } = require('../services/legalDocumentService');
 const {
   sequelize,
   UserAccount,
@@ -78,7 +85,7 @@ async function hash(plaintext) {
 }
 
 // ── Helper: generate a UUID ────────────────────────────────────────────────
-const id = () => uuidv4();
+const id = () => randomUUID();
 
 /**
  * Returns a Date set to 10:00 AM on `days` days ago.
@@ -91,6 +98,38 @@ function daysAgo(days) {
   date.setDate(date.getDate() - days);
   return date;
 }
+
+// ── Helper: render a simple one-page PDF into a Buffer ─────────────────────
+/**
+ * Renders a short PDF (title + body paragraph) into a Buffer using pdfkit —
+ * the same library the real legal-document generation path uses. Seeded
+ * resources/evidence upload this buffer to Cloudinary via the same helpers
+ * (`uploadSupportResourceBuffer`, `uploadEvidenceBuffer`) the live app uses,
+ * so seeded files are real, downloadable Cloudinary assets rather than
+ * placeholder URLs.
+ * @param {{ title: string, body: string }} options
+ * @returns {Promise<Buffer>}
+ */
+function buildSimplePdfBuffer({ title, body }) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 60, size: 'A4' });
+    const chunks = [];
+
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    doc.fillColor('#6c3483').fontSize(16).font('Helvetica-Bold').text(title);
+    doc.moveDown(1);
+    doc.fillColor('#2c2c2c').fontSize(11).font('Helvetica').text(body, { lineGap: 4 });
+
+    doc.end();
+  });
+}
+
+// ── A minimal valid 1x1 PNG, used as seeded evidence "photo" bytes ─────────
+const PLACEHOLDER_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -314,6 +353,16 @@ async function seed() {
         legalCounselId:      assignedLegalCounsel.legalCounselId,
         assignmentReason:    'Initial auto-assignment at registration'
       });
+
+      // Mirror ensureSurvivorStaffAutoAssignment's workload increment
+      // (authController.js) so seeded staff show a currentWorkloadScore that
+      // matches their actual assigned-survivor count instead of staying at 0.
+      await CounsellorProfile.increment('currentWorkloadScore', {
+        where: { counsellorId: assignedCounsellor.counsellorId }
+      });
+      await LegalCounselProfile.increment('currentWorkloadScore', {
+        where: { legalCounselId: assignedLegalCounsel.legalCounselId }
+      });
     }
 
 
@@ -337,15 +386,23 @@ async function seed() {
       reportCreationTimestamp: daysAgo(29)
     });
 
+    // Real Cloudinary upload — makes GET /api/reports/:id/evidence/:id/file
+    // actually streamable instead of pointing at a fake public_id.
+    const evidencePhotoBuffer = Buffer.from(PLACEHOLDER_PNG_BASE64, 'base64');
+    const evidencePhotoUpload = await uploadEvidenceBuffer({
+      buffer:   evidencePhotoBuffer,
+      reportId: reportId1,
+      mimeType: 'image/png'
+    });
     await EvidenceFile.create({
       evidenceFileId:             id(),
       reportId:                   reportId1,
       evidenceFileType:           'image',
-      originalFileName:           'evidence_photo.jpg',
-      fileSize:                   204800,
-      mimeType:                   'image/jpeg',
-      cloudinaryPublicIdentifier: `gbv_evidence_${id()}`,
-      dynamicallySignedUrl:       'https://res.cloudinary.com/demo/image/upload/sample_signed.jpg'
+      originalFileName:           'evidence_photo.png',
+      fileSize:                   evidencePhotoBuffer.length,
+      mimeType:                   'image/png',
+      cloudinaryPublicIdentifier: evidencePhotoUpload.public_id,
+      dynamicallySignedUrl:       evidencePhotoUpload.secure_url
     });
 
     await IncidentReport.create({
@@ -360,11 +417,68 @@ async function seed() {
       reportCreationTimestamp: daysAgo(25)
     });
 
+    // Second evidence type (PDF) on the escalated report for coverage variety.
+    const evidenceDocBuffer = await buildSimplePdfBuffer({
+      title: 'Incident Documentation — Medical Note Summary',
+      body:  'Summary note prepared following the incident described in this report. ' +
+             'Attached for reference by the assigned counsellor and legal counsel during case review.'
+    });
+    const evidenceDocUpload = await uploadEvidenceBuffer({
+      buffer:   evidenceDocBuffer,
+      reportId: reportId2,
+      mimeType: 'application/pdf'
+    });
+    await EvidenceFile.create({
+      evidenceFileId:             id(),
+      reportId:                   reportId2,
+      evidenceFileType:           'pdf',
+      originalFileName:           'incident_documentation.pdf',
+      fileSize:                   evidenceDocBuffer.length,
+      mimeType:                   'application/pdf',
+      cloudinaryPublicIdentifier: evidenceDocUpload.public_id,
+      dynamicallySignedUrl:       evidenceDocUpload.secure_url
+    });
+
+    // ── Legal case A — fully drafted + document already generated ─────────
+    // Lets the assigned legal counsel (+254700000030) click "Open Document"
+    // and download a real PDF immediately, without generating one first.
+    const legalCaseId2 = id();
+    const legalCaseDraftA = {
+      legalCaseId:         legalCaseId2,
+      reportId:            reportId2,
+      // The companion report is seeded at ESCALATED_TO_LEGAL_CASE; the real
+      // ensureLegalCaseForWorkflow() (reportController.js) unconditionally
+      // forces the case to READY_FOR_SUBMISSION on that transition, so
+      // UNDER_INVESTIGATION here would be a status pairing the app can't produce.
+      currentCaseStatus:   'READY_FOR_SUBMISSION',
+      escalationTimestamp: daysAgo(25),
+      caseSummary:
+        'Survivor reported a sexual violence incident in Nairobi CBD on 2026-05-01. ' +
+        'Medical attention was sought the same day. Survivor has been referred for ' +
+        'ongoing counselling support and has consented to legal escalation.',
+      legalGroundsText:
+        'Sexual Offences Act (2006), Section 3 — defilement/sexual assault provisions. ' +
+        'Penal Code Cap. 63 also considered for concurrent charges.',
+      requestedReliefText:
+        'Criminal prosecution referral to the Office of the Director of Public Prosecutions. ' +
+        'Interim protection order requested pending investigation outcome.',
+      recommendedActionsText:
+        'Refer case file to DPP liaison desk. Coordinate forensic medical examination follow-up. ' +
+        'Schedule survivor statement recording with assigned investigating officer.',
+      draftLastUpdatedAt: daysAgo(20)
+    };
+    const legalDocBuffer = await buildLegalCasePdfBuffer(legalCaseDraftA, {
+      reportId:      reportId2,
+      category:      'sexual_violence',
+      severityLevel: 'CRITICAL',
+      date:          '2026-05-01',
+      location:      'Nairobi, CBD'
+    });
+    const legalDocUpload = await uploadLegalDocumentBuffer({ buffer: legalDocBuffer, legalCaseId: legalCaseId2 });
     await LegalCaseFile.create({
-      legalCaseId:           id(),
-      reportId:              reportId2,
-      currentCaseStatus:     'UNDER_INVESTIGATION',
-      generatedDocumentPath: 'https://res.cloudinary.com/demo/raw/upload/legal_case_doc.pdf'
+      ...legalCaseDraftA,
+      generatedDocumentPath: legalDocUpload.public_id,
+      documentGeneratedAt:   daysAgo(19)
     });
 
     await IncidentReport.create({
@@ -419,22 +533,41 @@ async function seed() {
         incidentDate: '2026-04-03',
         currentReportStatus: 'UNDER_INVESTIGATION',
         reportCreationTimestamp: daysAgo(6)
-      },
-      {
-        survivorId: survivorIds[2],
-        incidentCategory: 'child_protection',
-        severityLevel: 'CRITICAL',
-        incidentDescriptionText: 'Urgent child safety risk reported in household.',
-        incidentLocation: 'Mombasa, Nyali',
-        incidentDate: '2026-05-21',
-        currentReportStatus: 'LEGAL_REVIEW',
-        reportCreationTimestamp: daysAgo(2)
       }
     ];
 
     for (const report of extraReports) {
       await IncidentReport.create({ reportId: id(), ...report });
     }
+
+    // Kept separate (rather than inside extraReports) so its reportId can be
+    // captured for a companion LegalCaseFile — this is Case B: an empty legal
+    // case (no draft, no generated document) for testing the full manual
+    // Save Draft → Generate Document → Open Document flow as legal counsel
+    // +254700000031 (assigned to this Mombasa survivor).
+    const legalReviewReportId = id();
+    await IncidentReport.create({
+      reportId:                legalReviewReportId,
+      survivorId:              survivorIds[2],
+      incidentCategory:        'child_protection',
+      severityLevel:           'CRITICAL',
+      incidentDescriptionText: 'Urgent child safety risk reported in household.',
+      incidentLocation:        'Mombasa, Nyali',
+      incidentDate:            '2026-05-21',
+      currentReportStatus:     'LEGAL_REVIEW',
+      reportCreationTimestamp: daysAgo(2)
+    });
+
+    await LegalCaseFile.create({
+      legalCaseId:         id(),
+      reportId:            legalReviewReportId,
+      // The companion report is seeded at LEGAL_REVIEW; the real
+      // ensureLegalCaseForWorkflow() (reportController.js) always corrects
+      // OPEN -> UNDER_INVESTIGATION the moment a report enters LEGAL_REVIEW,
+      // so a case left at OPEN here is a state the app can't produce.
+      currentCaseStatus:   'UNDER_INVESTIGATION',
+      escalationTimestamp: daysAgo(2)
+    });
 
     const bulkReportTemplates = [
       { category: 'physical_violence',  severity: 'HIGH',     status: 'UNDER_REVIEW',         location: 'Nairobi, Embakasi' },
@@ -451,9 +584,11 @@ async function seed() {
     for (let i = 0; i < additionalReportDays.length; i += 1) {
       const template   = bulkReportTemplates[i % bulkReportTemplates.length];
       const survivorId = survivorIds[i % survivorIds.length];
+      const bulkReportId = id();
+      const bulkReportCreatedAt = daysAgo(additionalReportDays[i]);
 
       await IncidentReport.create({
-        reportId: id(),
+        reportId: bulkReportId,
         survivorId,
         incidentCategory:        template.category,
         severityLevel:           template.severity,
@@ -461,8 +596,22 @@ async function seed() {
         incidentLocation:        template.location,
         incidentDate:            new Date(Date.now() - (additionalReportDays[i] + 2) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
         currentReportStatus:     template.status,
-        reportCreationTimestamp: daysAgo(additionalReportDays[i])
+        reportCreationTimestamp: bulkReportCreatedAt
       });
+
+      // Reports seeded directly into LEGAL_REVIEW bypass the
+      // ensureLegalCaseForWorkflow() findOrCreate that the real status-update
+      // endpoint runs on every transition into LEGAL_REVIEW — without this,
+      // the report shows "Legal Review" with no LegalCaseFile behind it, so
+      // legal counsel can never see the drafting panel for it.
+      if (template.status === 'LEGAL_REVIEW') {
+        await LegalCaseFile.create({
+          legalCaseId:         id(),
+          reportId:            bulkReportId,
+          currentCaseStatus:   'UNDER_INVESTIGATION',
+          escalationTimestamp: bulkReportCreatedAt
+        });
+      }
     }
 
 
@@ -494,6 +643,10 @@ async function seed() {
     await RoomMembership.create({ membershipId: id(), roomId: roomId2, userId: survivorUserIds[0] });
     await RoomMembership.create({ membershipId: id(), roomId: roomId2, userId: survivorUserIds[3] });
     await RoomMembership.create({ membershipId: id(), roomId: roomId2, userId: survivorUserIds[4] });
+    // counsellorUserIds[1] posts into roomId1 below (additionalCommunityMessages);
+    // real postMessage() (communityController.js) always findOrCreates a
+    // RoomMembership before creating a message, so seed one here too.
+    await RoomMembership.create({ membershipId: id(), roomId: roomId1, userId: counsellorUserIds[1] });
 
     // Community messages
     await CommunityMessage.create({
@@ -611,7 +764,10 @@ async function seed() {
           chatId:                  counsellorChatId,
           senderUserId:            survivorUserIds[i],
           encryptedMessageContent: '[ENCRYPTED: Hello, I would like to talk about what happened.]',
-          messageReadStatus:       'READ'
+          messageReadStatus:       'READ',
+          // markChannelRead (chatController.js) always sets seenAt atomically
+          // with READ — the tick display relies on seenAt being present.
+          seenAt:                  new Date()
         });
         await DirectChatMessage.create({
           messageId:               id(),
@@ -655,7 +811,10 @@ async function seed() {
           chatId:                  legalChatId,
           senderUserId:            survivorUserIds[i],
           encryptedMessageContent: '[ENCRYPTED: I would like legal advice on the next steps I can take.]',
-          messageReadStatus:       'READ'
+          messageReadStatus:       'READ',
+          // markChannelRead (chatController.js) always sets seenAt atomically
+          // with READ — the tick display relies on seenAt being present.
+          seenAt:                  new Date()
         });
         await DirectChatMessage.create({
           messageId:               id(),
@@ -765,24 +924,64 @@ async function seed() {
     console.log('🌱 Seeding support resources...');
 
     const resources = [
-      { title: 'GBV Emergency Hotlines — Kenya',      category: 'emergency_hotlines', desc: 'A compiled list of 24/7 emergency hotlines for GBV survivors in Kenya.',                  url: 'https://example.com/resources/emergency-hotlines.pdf'      },
-      { title: 'Know Your Legal Rights',              category: 'legal_guidance',     desc: 'A plain-language guide to legal rights for GBV survivors under Kenyan law.',              url: 'https://example.com/resources/legal-rights-guide.pdf'      },
-      { title: 'Safe Houses in Nairobi',              category: 'shelters',           desc: 'Directory of verified safe houses and shelters in the Nairobi region.',                   url: 'https://example.com/resources/nairobi-shelters.pdf'        },
-      { title: 'Healing After Trauma — Self-Help',    category: 'self_help',          desc: 'Evidence-based self-help strategies for trauma recovery.',                               url: 'https://example.com/resources/trauma-recovery.pdf'         },
-      { title: 'Safety Planning Template',            category: 'safety_planning',    desc: 'A step-by-step personal safety plan template for survivors in active risk.',              url: 'https://example.com/resources/safety-plan-template.pdf'    },
-      { title: 'County Referral Directory',           category: 'service_directory',  desc: 'County-by-county contacts for shelters, counselling, and legal support desks.',          url: 'https://example.com/resources/county-referrals.pdf'        },
-      { title: 'Court Process Checklist',             category: 'legal_guidance',     desc: 'Step list of documents and milestones for GBV-related legal follow-up.',                 url: 'https://example.com/resources/court-process-checklist.pdf' },
-      { title: 'Trauma-Informed Grounding Exercises', category: 'self_help',          desc: 'Quick grounding and regulation practices for high-stress moments.',                      url: 'https://example.com/resources/grounding-exercises.pdf'     }
+      { title: 'GBV Emergency Hotlines — Kenya',      category: 'emergency_hotlines', desc: 'A compiled list of 24/7 emergency hotlines for GBV survivors in Kenya.',
+        body: 'National GBV Helpline: 1195 (toll-free, 24/7). Childline Kenya: 116 (toll-free, 24/7). ' +
+              'Kenya Police Emergency: 999 / 112. FIDA Kenya Legal Aid: +254 20 3874927. ' +
+              'Nairobi Women\'s Hospital Gender Violence Recovery Centre: +254 719 638 006. ' +
+              'These lines are staffed around the clock and can connect you to counselling, medical, and legal referrals.' },
+      { title: 'Know Your Legal Rights',              category: 'legal_guidance',     desc: 'A plain-language guide to legal rights for GBV survivors under Kenyan law.',
+        body: 'Under the Protection Against Domestic Violence Act (2015) and the Sexual Offences Act (2006), survivors ' +
+              'have the right to seek protection orders, report incidents without discrimination, access free legal aid ' +
+              'through the National Legal Aid Service, and request confidentiality throughout investigation and trial.' },
+      { title: 'Safe Houses in Nairobi',              category: 'shelters',           desc: 'Directory of verified safe houses and shelters in the Nairobi region.',
+        body: 'Verified shelters accept referrals through this platform\'s assigned counsellors. Intake typically requires ' +
+              'a brief safety assessment. Most facilities provide short-term accommodation, meals, and access to ' +
+              'counselling while a longer-term safety plan is arranged.' },
+      { title: 'Healing After Trauma — Self-Help',    category: 'self_help',          desc: 'Evidence-based self-help strategies for trauma recovery.',
+        body: 'Grounding techniques, journaling prompts, and breathing exercises drawn from trauma-informed care practice. ' +
+              'These are not a substitute for professional counselling but can help manage acute distress between sessions.' },
+      { title: 'Safety Planning Template',            category: 'safety_planning',    desc: 'A step-by-step personal safety plan template for survivors in active risk.',
+        body: 'Identify a trusted contact and a code word, pack an emergency bag with ID and essential documents, ' +
+              'memorise at least one emergency number, and plan a safe exit route from home and workplace in advance.' },
+      { title: 'County Referral Directory',           category: 'service_directory',  desc: 'County-by-county contacts for shelters, counselling, and legal support desks.',
+        body: 'Nairobi, Mombasa, and Kisumu county desks are listed with office hours and walk-in policy. Contact your ' +
+              'assigned counsellor for a warm handover to the nearest listed service point.' },
+      { title: 'Court Process Checklist',             category: 'legal_guidance',     desc: 'Step list of documents and milestones for GBV-related legal follow-up.',
+        body: 'Police abstract obtained, medical report (P3 form) completed, statement recorded, protection order filed ' +
+              'if needed, and court mention date confirmed. Your assigned legal counsel tracks each milestone with you.' },
+      { title: 'Trauma-Informed Grounding Exercises', category: 'self_help',          desc: 'Quick grounding and regulation practices for high-stress moments.',
+        body: 'The 5-4-3-2-1 technique: name 5 things you see, 4 you can touch, 3 you hear, 2 you smell, 1 you taste. ' +
+              'Paired with slow diaphragmatic breathing, this can help interrupt an acute stress response within minutes.' }
     ];
 
     for (const r of resources) {
+      const resourceId = id();
+      const slug = r.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      const originalFileName = `${slug}.pdf`;
+
+      // Real one-page PDF uploaded to Cloudinary — makes
+      // GET /api/resources/:id/file actually streamable.
+      const resourcePdfBuffer = await buildSimplePdfBuffer({ title: r.title, body: r.body });
+      const uploaded = await uploadSupportResourceBuffer({
+        buffer: resourcePdfBuffer,
+        resourceId,
+        category: r.category,
+        originalFileName,
+        mimeType: 'application/pdf'
+      });
+
       await SupportResource.create({
-        resourceId:          id(),
-        resourceTitle:       r.title,
-        resourceDescription: r.desc,
-        resourceCategory:    r.category,
-        resourceFileUrl:     r.url,
-        uploadedByStaffId:   ngoAdminUserId1
+        resourceId,
+        resourceTitle:          r.title,
+        resourceDescription:    r.desc,
+        resourceCategory:       r.category,
+        resourceFileUrl:        uploaded.secure_url,
+        cloudinaryPublicId:     uploaded.public_id,
+        cloudinaryResourceType: uploaded.resource_type,
+        originalFileName,
+        mimeType:               'application/pdf',
+        fileSizeBytes:          resourcePdfBuffer.length,
+        uploadedByStaffId:      ngoAdminUserId1
       });
     }
 

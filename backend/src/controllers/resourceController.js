@@ -21,12 +21,24 @@ const ALLOWED_MANAGEMENT_ROLES = new Set(["COUNSELLOR", "LEGAL_COUNSEL", "NGO_AD
 
 const { normalizeRole } = require("../utils/roles");
 
-// Keep category values normalized for consistent search/filter matching.
+/**
+ * Normalises a category string to lowercase trimmed form for consistent
+ * DB storage and filter comparisons.
+ *
+ * @param {*} value - Raw category value from request body or query string.
+ * @returns {string} Lowercase trimmed category string.
+ */
 function normalizeCategory(value) {
   return String(value || "").trim().toLowerCase();
 }
 
-// Convert snake_case category keys into user-facing labels.
+/**
+ * Converts a snake_case category key into a Title Case label for display.
+ * Example: "legal_guidance" → "Legal Guidance"
+ *
+ * @param {string} category - snake_case category string from the database.
+ * @returns {string} Human-readable Title Case label.
+ */
 function formatCategoryLabel(category) {
   return String(category || "")
     .split("_")
@@ -129,6 +141,13 @@ function toApiResource(resource) {
 }
 
 /**
+ * Escapes SQL LIKE wildcard chars so user-entered text is matched literally.
+ */
+function escapeLikePattern(term) {
+  return String(term).replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
+/**
  * Public list endpoint used by guests and authenticated users.
  */
 async function listResources(req, res) {
@@ -144,10 +163,11 @@ async function listResources(req, res) {
 
   // Optional search filter over title, description, and category text.
   if (search) {
+    const pattern = `%${escapeLikePattern(search)}%`;
     where[Op.or] = [
-      { resourceTitle: { [Op.like]: `%${search}%` } },
-      { resourceDescription: { [Op.like]: `%${search}%` } },
-      { resourceCategory: { [Op.like]: `%${search}%` } }
+      { resourceTitle: { [Op.like]: pattern } },
+      { resourceDescription: { [Op.like]: pattern } },
+      { resourceCategory: { [Op.like]: pattern } }
     ];
   }
 
