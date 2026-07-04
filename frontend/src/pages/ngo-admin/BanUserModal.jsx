@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+
 /**
  * BanUserModal
  * ------------
@@ -10,8 +12,8 @@
  * - Without a reportId (from Staff Directory or Banned Users registry):
  *   the ban is submitted directly via banUser.
  *
- * State for banModal / banForm / banLoading lives in the parent; this
- * component is purely presentational.
+ * Focus management: focuses the reason textarea on open, traps Tab inside
+ * the modal, and restores focus to the trigger element on close.
  *
  * @param {object}   props
  * @param {object|null} props.banModal    - null when closed; { userId, label, reportId? } when open.
@@ -29,7 +31,67 @@ export default function BanUserModal({
   banLoading,
   onSubmit
 }) {
+  const articleRef = useRef(null);
+  const previousFocusRef = useRef(null);
+
+  useEffect(() => {
+    if (!banModal) return;
+
+    // Save the element that had focus before the modal opened so we can
+    // return focus to it when the modal closes.
+    previousFocusRef.current = document.activeElement;
+
+    // Move focus into the modal on the next tick (after the element mounts).
+    const timerId = window.setTimeout(() => {
+      const firstFocusable = articleRef.current?.querySelector(
+        'textarea, input, button:not([disabled])'
+      );
+      firstFocusable?.focus();
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timerId);
+      // Restore focus to the trigger element when the modal closes.
+      previousFocusRef.current?.focus();
+    };
+  }, [banModal]);
+
   if (!banModal) return null;
+
+  /**
+   * Focus trap: keep Tab and Shift+Tab cycling inside the modal so keyboard
+   * users can't escape into background content.
+   */
+  function handleArticleKeyDown(e) {
+    if (e.key === "Escape") {
+      setBanModal(null);
+      return;
+    }
+
+    if (e.key !== "Tab") return;
+
+    const focusable = Array.from(
+      articleRef.current?.querySelectorAll(
+        'textarea, input, button:not([disabled])'
+      ) || []
+    );
+    if (focusable.length === 0) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    if (e.shiftKey) {
+      if (document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else {
+      if (document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }
 
   return (
     <div
@@ -38,9 +100,13 @@ export default function BanUserModal({
       aria-modal="true"
       aria-labelledby="ban-modal-title"
       onClick={() => setBanModal(null)}
-      onKeyDown={(e) => e.key === "Escape" && setBanModal(null)}
     >
-      <article className="admin-confirm-modal" onClick={(e) => e.stopPropagation()}>
+      <article
+        ref={articleRef}
+        className="admin-confirm-modal"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={handleArticleKeyDown}
+      >
         <h3 id="ban-modal-title">Ban Account</h3>
         <p className="admin-empty" style={{ marginBottom: "1rem" }}>
           Banning <strong>{banModal.label}</strong> will immediately block all platform access,

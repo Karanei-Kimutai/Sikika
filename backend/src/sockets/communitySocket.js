@@ -26,37 +26,11 @@
 const jwt = require("jsonwebtoken");
 const { RoomMembership, UserAccount } = require("../models");
 const { normalizeRole } = require("../utils/roles");
-
-/**
- * Extracts the JWT string from the socket handshake.
- * Checks `socket.handshake.auth.token` first (preferred), then falls back to
- * the `Authorization: Bearer` HTTP upgrade header.
- *
- * @param {import('socket.io').Socket} socket
- * @returns {string|null} The raw JWT string, or null if none was provided.
- */
-function getTokenFromHandshake(socket) {
-  const authToken = socket.handshake?.auth?.token;
-  if (authToken) return authToken;
-
-  const header = socket.handshake?.headers?.authorization;
-  if (header && header.startsWith("Bearer ")) {
-    return header.slice("Bearer ".length).trim();
-  }
-
-  return null;
-}
-
-/**
- * Resolves the user's UUID from decoded JWT claims.
- * Handles both 'userId' and 'id' claim names for backward compatibility.
- *
- * @param {object|null} claims - Decoded JWT payload from jwt.verify().
- * @returns {string|null} The UserAccount.userId string, or null.
- */
-function resolveUserIdFromTokenClaims(claims) {
-  return claims?.userId || claims?.id || null;
-}
+const {
+  getTokenFromHandshake,
+  resolveUserIdFromTokenClaims,
+  isUserAccountActive
+} = require("../services/socketAuthService");
 
 /**
  * Registers community socket event handlers on the Socket.io server.
@@ -103,6 +77,18 @@ module.exports = (io) => {
     socket.on("joinCommunityRoom", async (roomId) => {
       if (!roomId) return;
 
+      // Re-check account status on every join, not just at connection time — the
+      // ban-eviction call (adminController.js/communityController.js) only reaches
+      // this socket as a side effect of chatSocket.js having joined it into
+      // `user:<userId>`; this recheck is an independent safety net in case that
+      // coupling doesn't apply (see docs/sockets.md for the shared helper's rationale).
+      const stillActive = await isUserAccountActive(socket.data.userId);
+      if (!stillActive) {
+        socket.emit("community:error", { error: "Account access restricted. Please contact support." });
+        socket.disconnect(true);
+        return;
+      }
+
       const isMember = await RoomMembership.findOne({
         where: {
           roomId,
@@ -124,7 +110,17 @@ module.exports = (io) => {
      * Allows NGO_ADMIN users to receive real-time moderation events without
      * polling. Rejected for all other roles.
      */
-    socket.on("joinModerationFeed", () => {
+    socket.on("joinModerationFeed", async () => {
+      // Re-check account status the same way joinCommunityRoom does, so a
+      // mid-session ban on an NGO_ADMIN also blocks the moderation feed, not
+      // just cases caught by the (indirect) chatSocket.js eviction coupling.
+      const stillActive = await isUserAccountActive(socket.data.userId);
+      if (!stillActive) {
+        socket.emit("community:error", { error: "Account access restricted. Please contact support." });
+        socket.disconnect(true);
+        return;
+      }
+
       if (socket.data.role !== "NGO_ADMIN") {
         socket.emit("community:error", { error: "Only NGO admins can access moderation feed." });
         return;

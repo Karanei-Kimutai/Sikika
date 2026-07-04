@@ -136,6 +136,16 @@ When a user is banned, `disconnectSockets(true)` is called immediately, closing 
 
 ---
 
+### Known limitation: no Socket.io adapter (single-process only)
+
+The real-time layer (`chatSocket.js`, `communitySocket.js`) runs on Socket.io's default in-memory adapter — there is no `@socket.io/redis-adapter` (or equivalent) configured. Room membership and connected-socket state live only in the memory of the one Node process handling that connection.
+
+This is fine today since the backend runs as a single process. It becomes a problem the moment the backend is scaled horizontally (multiple Node instances behind a load balancer): a socket connected to instance A is invisible to instance B, so anything that depends on reaching "all of a user's sockets" or "everyone in a room" stops working reliably across instances — notably `disconnectSockets(true)` ban-eviction (targets room `user:<userId>`, only visible on the instance that socket connected to), live message delivery/presence broadcasts, and community-room fanout.
+
+If/when multi-instance deployment is needed, add `@socket.io/redis-adapter` (backed by the same Redis instance across all processes) so room and socket state is shared — this is the standard fix for this class of limitation and requires no changes to the event-handling logic itself, only the adapter wiring in `backend/index.js`.
+
+---
+
 ## Schema / Boot Failures
 
 ### `SequelizeDatabaseError: Data truncated for column` at boot

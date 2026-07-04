@@ -41,6 +41,7 @@ Every auth response includes an `authStage` field. The frontend branches on this
 | authIntent | Flow |
 |------------|------|
 | `SIGNUP_OTP` | New-account creation — OTP purpose set to `SIGNUP_OTP`. |
+| `PASSWORD_RESET` | Forgot-password OTP flow. |
 
 ---
 
@@ -66,16 +67,24 @@ Sign-up is a **3-step OTP-first** process: verify phone via OTP, receive a signu
 ### Step 2 — Verify OTP → Receive Signup Ticket
 
 **Endpoint:** `POST /api/auth/verify-otp`  
-**Body:** `{ phoneNumber, otp }` — no password yet
+**Body:** `{ phoneNumber, otp, authIntent: "SIGNUP_OTP" }` — no password yet
 
-1. Account status and lockout are checked as above.
-2. The OTP is validated (purpose, expiry, bcrypt.compare). Wrong guesses increment `otpAttemptCount`; at 5 failures the account locks for 15 minutes.
-3. On success: the server issues a **signup ticket** — a short-lived token stored the same way as an OTP (bcrypt-hashed, 10-minute expiry, purpose `SIGNUP_TICKET`). The plaintext ticket is returned to the client.
-4. Response: `{ authStage: "DETAILS_REQUIRED", signupTicket: "<plaintext>" }`.
+1. The account is fetched. If any unexpired temporary ban has now passed its expiry, it is auto-lifted before anything else.
+2. Account status is checked — `BANNED`, `SUSPENDED`, and `DEACTIVATED` accounts are rejected with `403`. Banned accounts include the `banReason` and `banExpiresAt` in the response.
+3. Lockout is re-checked.
+4. The submitted OTP is validated:
+   - `otpHash` must exist.
+   - `otpPurpose` must match `SIGNUP_OTP` (prevents using a signin OTP to complete a signup).
+   - The OTP must not be past its 10-minute expiry.
+   - `bcrypt.compare` is run against the stored hash.
+   - Each wrong guess increments `otpAttemptCount`. At 5 failures, the account is locked for 15 minutes and the OTP is voided — the user must request a new one.
+5. OTP state is cleared, `isOtpVerified` is set to `true`, and failure counters are reset.
+6. On success: the server issues a **signup ticket** — a short-lived token stored the same way as an OTP (bcrypt-hashed, 10-minute expiry, purpose `SIGNUP_TICKET`). The plaintext ticket is returned to the client.
+7. Response: `{ authStage: "DETAILS_REQUIRED", signupTicket: "<plaintext>" }`.
 
 The signup ticket proves that the client completed OTP verification. It is consumed exactly once in step 3.
 
-### Step 3 — Complete Signup
+### Step 3 — Complete Signup (Password + Profile Details)
 
 **Endpoint:** `POST /api/auth/complete-signup`  
 **Body:** `{ phoneNumber, signupTicket, password, profileDetails? }`
@@ -83,12 +92,12 @@ The signup ticket proves that the client completed OTP verification. It is consu
 1. The server validates the signup ticket (`bcrypt.compare` against stored hash, purpose check, expiry check). An expired or wrong ticket is rejected — the user must restart from step 1.
 2. `password` is required (minimum 8 characters). It is bcrypt-hashed and saved.
 3. The following side effects fire in a single Sequelize transaction (`ensureSurvivorStaffAutoAssignment`):
-   - **SurvivorProfile is created** with sanitized `profileDetails` (nickname, gender, county). Safe defaults are used if missing (`Survivor-<shortId>`, `UNSPECIFIED`, `''`).
-   - **Staff auto-assignment**: among counsellors/legal counsel whose `UserAccount.accountStatus` is `ACTIVE`, the one with the lowest `currentWorkloadScore` is assigned as counsellor and legal counsel respectively. Both scores are incremented. Preference given to `AVAILABLE` or `BUSY` staff; if all active staff are `OFFLINE`, the lowest-scored is assigned anyway.
-   - **`StaffAssignmentHistory` record** is written for audit.
-4. `ensureAutoChannelsForSurvivor` creates direct-chat channels to both assigned staff so they appear immediately.
-5. A 2-hour JWT is issued: `{ id, userId, role }`.
-6. Response: `{ authStage: "AUTHENTICATED", token, userId, role }`.
+   - **SurvivorProfile is created** with sanitized `profileDetails` (nickname, gender, county). If `profileDetails` is missing, safe defaults are used (`Survivor-<shortId>`, `UNSPECIFIED` for gender and county).
+   - **Staff auto-assignment**: among counsellors/legal counsel whose `UserAccount.accountStatus` is `ACTIVE` (suspended/banned staff are excluded via an inner join — their profile's `availabilityStatus` alone doesn't reflect that), the one with the lowest `currentWorkloadScore` is assigned as counsellor and legal counsel respectively. Both scores are incremented. Preference is given to staff who are `AVAILABLE` or `BUSY`; if all active staff are `OFFLINE`, the lowest-scored active staff member is assigned anyway.
+   - **`StaffAssignmentHistory` record** is written for audit purposes.
+4. `ensureAutoChannelsForSurvivor` eagerly creates direct-chat channels to both assigned staff so they appear immediately on the survivor's chat page.
+5. A 2-hour JWT is issued containing `{ id, userId, role }`.
+6. Response: `{ authStage: "AUTHENTICATED", token, userId, role, authMethod: "SIGNUP" }`.
 
 ---
 
@@ -109,7 +118,7 @@ Sign-in is a **2-step** process. OTP is not a standalone login method — it is 
 6. `bcrypt.compare` against `hashedPassword`.
    - **Failure**: `registerPasswordFailure` increments `authFailedAttempts`. At 5 failures, the account is locked for 15 minutes (counter resets to 0 so the next lockout period starts fresh). Returns `401`.
    - **Success**: `clearPasswordFailureState` resets counters.
-7. **If `status === 'password_reset_required'`** (staff provisioned by NGO Admin): a temporary JWT is issued immediately and `authStage: PASSWORD_RESET_REQUIRED` is returned. 2FA is deferred until their next login after they set a real password.
+7. **If `status === 'password_reset_required'`** (staff provisioned by NGO Admin): a temporary JWT is issued immediately and `authStage: PASSWORD_RESET_REQUIRED` is returned. Frontend must gate navigation until `POST /api/auth/set-password` is called. 2FA is deferred until their next login after they set a real password.
 8. **Normal path**: a `SIGNIN_2FA` OTP is generated and sent via SMS. **No JWT is issued yet.**  
    Response: `{ authStage: "OTP_2FA_REQUIRED" }` (plus `developmentOtp` in dev mode).
 
@@ -120,7 +129,7 @@ Sign-in is a **2-step** process. OTP is not a standalone login method — it is 
 
 1. OTP is validated (purpose must be `SIGNIN_2FA`, expiry, bcrypt.compare).
 2. On success: a 2-hour JWT is issued.
-3. Response: `{ authStage: "AUTHENTICATED", token, userId, role }`.
+3. Response: `{ authStage: "AUTHENTICATED", token, userId, role, authMethod: "PASSWORD_2FA" }`.
 
 ---
 
@@ -153,7 +162,7 @@ Used when a user cannot remember their password and needs to reset it via SMS OT
 
 ## Forced Password Reset (Staff Accounts)
 
-Staff accounts (Counsellor, Legal Counsel, NGO Admin, System Admin) are provisioned by an NGO or System Admin — they do not self-sign-up. When a staff account is created, it is given a temporary password and `status: 'password_reset_required'` is set on the `UserAccount`.
+Staff accounts (Counsellor, Legal Counsel, NGO Admin, Moderator) are provisioned by NGO admins — they do not self-sign-up. When a staff account is created, it is given a temporary password and `status: 'password_reset_required'` is set on the `UserAccount`.
 
 On first login (either password or OTP path):
 - The server detects `status === 'password_reset_required'` and returns the JWT **plus** `authStage: PASSWORD_RESET_REQUIRED`.
@@ -162,10 +171,10 @@ On first login (either password or OTP path):
 - On success, `status` is updated to `'active'` and normal navigation is permitted.
 
 **Endpoint:** `POST /api/auth/set-password`  
-**Body:** `{ password }`  
+**Body:** `{ password, currentPassword? }`  
 **Auth:** JWT required (via `Authorization: Bearer <token>` header).
 
-This endpoint is also available to any authenticated user who wants to change their password mid-session, not just staff on first login.
+This endpoint is also available to any authenticated user who wants to change their password mid-session, not just staff on first login. For that in-session path, `currentPassword` must be supplied and verified (`bcrypt.compare`) before the new password is accepted — `401` otherwise. Accounts still in the forced-reset state (`status === 'password_reset_required'`) skip this check, since they were just issued a temporary password they never chose themselves.
 
 ---
 
@@ -173,7 +182,7 @@ This endpoint is also available to any authenticated user who wants to change th
 
 ### OTP Security
 
-- OTPs are **4 digits** (1000–9999), generated with `Math.random`.
+- OTPs are **4 digits** (1000–9999), generated with `crypto.randomInt`.
 - They are **bcrypt-hashed (10 rounds)** before storage. The plaintext is never written to the database.
 - Each OTP carries a **purpose** (`otpPurpose`). A signup OTP cannot be used to reset a password, and vice versa — the server checks the purpose on every verify attempt.
 - OTPs expire after **10 minutes** (`AUTH_OTP_TTL_MS`, default 600,000 ms). Expired codes are cleared on attempted use.

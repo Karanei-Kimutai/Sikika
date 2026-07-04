@@ -1,13 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import axios from "axios";
+import apiClient from "../services/apiClient";
 import { LogOut, Menu, User, X } from "lucide-react";
 import NotificationBell from "./NotificationBell";
 import SikikaLogo from "./SikikaLogo";
-import { getToken } from "../utils/auth";
 import { prettifyLabel } from "../pages/ngo-admin/helpers";
 import { fadeInUp } from "../utils/motion";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
 /**
  * SiteHeader
@@ -170,10 +167,7 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
     if (profileSummary || profileLoading) return;
     setProfileLoading(true);
     try {
-      const token = getToken();
-      const response = await axios.get(`${API_BASE_URL}/api/profile/me`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
-      });
+      const response = await apiClient.get(`/api/profile/me`);
       // Keep the full payload (user + assignedStaff), not just `user` — survivors
       // need assignedStaff (their counsellor/legal counsel contact numbers) below.
       setProfileSummary(response.data || null);

@@ -2421,9 +2421,60 @@ input:focus {
 .wa-msg-time {
   font-size: 0.68rem;
   opacity: 0.65;
-  display: block;
-  text-align: right;
+}
+
+.wa-msg-edited {
+  font-size: 0.68rem;
+  opacity: 0.6;
+  font-style: italic;
+}
+
+/* Footer row inside the bubble — meta (time/edited/ticks) on the left,
+   edit control on the right. Kept in normal flow (no absolute positioning)
+   so nothing can be clipped by .wa-messages' scroll container, and the edit
+   control stays always-visible rather than hover-gated (hover doesn't work
+   on touch devices). */
+.wa-msg-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
   margin-top: 2px;
+}
+
+.wa-msg-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.wa-msg-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  background: transparent;
+  color: var(--brown-dark);
+  opacity: 0.55;
+  cursor: pointer;
+  padding: 2px;
+  flex-shrink: 0;
+}
+
+.wa-msg-edit-btn:hover {
+  opacity: 1;
+}
+
+.wa-edit-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.wa-edit-banner .link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
 }
 
 .wa-bubble.mine {

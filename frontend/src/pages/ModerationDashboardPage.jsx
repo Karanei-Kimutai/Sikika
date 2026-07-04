@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import axios from "axios";
+import apiClient from "../services/apiClient";
 import { io } from "socket.io-client";
 import { getToken } from "../utils/auth";
 import { staggerIn } from "../utils/motion";
@@ -21,14 +21,6 @@ import { staggerIn } from "../utils/motion";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 const moderationSocket = io(API_BASE_URL, { autoConnect: false });
-
-/**
- * @returns {{ Authorization: string } | {}}
- */
-function getAuthHeaders() {
-  const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
 
 /**
  * Maps the stored reviewedAction value to a display label.
@@ -70,6 +62,7 @@ function ModerationDashboardPage() {
   const [activeTab, setActiveTab] = useState("pending");
   /** The reviewed report whose detail modal is currently open (null = closed). */
   const [selectedHistoryReport, setSelectedHistoryReport] = useState(null);
+  const [reviewingReportId, setReviewingReportId] = useState("");
   const gridRef = useRef(null);
   const historyBodyRef = useRef(null);
 
@@ -97,8 +90,14 @@ function ModerationDashboardPage() {
   }, [reports, activeTab]);
 
   // Close the detail modal whenever the user leaves the history tab.
+  // Deferred one tick to satisfy the react-hooks/set-state-in-effect rule;
+  // the setState below must not run synchronously inside the effect body.
   useEffect(() => {
-    if (activeTab !== "history") setSelectedHistoryReport(null);
+    if (activeTab === "history") return;
+    const timerId = window.setTimeout(() => {
+      setSelectedHistoryReport(null);
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, [activeTab]);
 
   /**
@@ -111,9 +110,7 @@ function ModerationDashboardPage() {
     setErrorMessage("");
 
     try {
-      const response = await axios.get(`${API_BASE_URL}/api/community/moderation/reports`, {
-        headers: getAuthHeaders()
-      });
+      const response = await apiClient.get(`/api/community/moderation/reports`);
       setReports(response.data.reports || []);
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Failed to load moderation reports.");
@@ -161,19 +158,21 @@ function ModerationDashboardPage() {
    * @returns {Promise<void>}
    */
   async function review(reportId, reviewStatus, action = "none") {
+    // Double-submit guard: while a review is in flight for any report, ignore
+    // further review calls (buttons are also disabled via reviewingReportId).
+    if (reviewingReportId) return;
     setErrorMessage("");
     setSuccessMessage("");
+    setReviewingReportId(reportId);
 
     try {
-      await axios.patch(
-        `${API_BASE_URL}/api/community/moderation/reports/${reportId}`,
-        { reviewStatus, action },
-        { headers: getAuthHeaders() }
-      );
+      await apiClient.patch(`/api/community/moderation/reports/${reportId}`, { reviewStatus, action });
       setSuccessMessage("Moderation action saved.");
       await loadReports();
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Failed to review report.");
+    } finally {
+      setReviewingReportId("");
     }
   }
 
@@ -189,6 +188,9 @@ function ModerationDashboardPage() {
           <button
             type="button"
             className={`moderation-tab-btn${activeTab === "pending" ? " active" : ""}`}
+            role="tab"
+            aria-selected={activeTab === "pending"}
+            aria-controls="moderation-pending-panel"
             onClick={() => setActiveTab("pending")}
           >
             Pending Queue
@@ -196,6 +198,9 @@ function ModerationDashboardPage() {
           <button
             type="button"
             className={`moderation-tab-btn${activeTab === "history" ? " active" : ""}`}
+            role="tab"
+            aria-selected={activeTab === "history"}
+            aria-controls="moderation-history-panel"
             onClick={() => setActiveTab("history")}
           >
             Review History
@@ -207,7 +212,7 @@ function ModerationDashboardPage() {
 
         {/* ── Pending Queue tab ── */}
         {activeTab === "pending" && (
-          <>
+          <section id="moderation-pending-panel" role="tabpanel" aria-label="Pending moderation queue">
             {loading ? (
               <p className="wa-empty-state">Loading reports...</p>
             ) : pendingReports.length === 0 ? (
@@ -244,6 +249,7 @@ function ModerationDashboardPage() {
                       <button
                         type="button"
                         className="secondary-btn"
+                        disabled={Boolean(reviewingReportId)}
                         onClick={() => review(report.contentReportId, "REJECTED", "none")}
                       >
                         Reject Report
@@ -251,6 +257,7 @@ function ModerationDashboardPage() {
                       <button
                         type="button"
                         className="secondary-btn"
+                        disabled={Boolean(reviewingReportId)}
                         onClick={() => review(report.contentReportId, "APPROVED", "remove_message")}
                       >
                         Approve + Remove Message
@@ -258,6 +265,7 @@ function ModerationDashboardPage() {
                       <button
                         type="button"
                         className="secondary-btn"
+                        disabled={Boolean(reviewingReportId)}
                         onClick={() => review(report.contentReportId, "APPROVED", "ban_user")}
                       >
                         Approve + Ban User
@@ -267,12 +275,12 @@ function ModerationDashboardPage() {
                 ))}
               </section>
             )}
-          </>
+          </section>
         )}
 
         {/* ── Review History tab ── */}
         {activeTab === "history" && (
-          <>
+          <section id="moderation-history-panel" role="tabpanel" aria-label="Moderation review history">
             {loading ? (
               <p className="wa-empty-state">Loading history...</p>
             ) : reviewedReports.length === 0 ? (
@@ -323,7 +331,7 @@ function ModerationDashboardPage() {
                 </table>
               </div>
             )}
-          </>
+          </section>
         )}
       </section>
 

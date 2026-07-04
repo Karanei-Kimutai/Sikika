@@ -153,7 +153,13 @@ function NotificationBell({ isAuthenticated, onNavigate }) {
 
   // ── Unread count polling ─────────────────────────────────────────────────
   useEffect(() => {
-    if (!isAuthenticated) return;
+    // Disconnect on sign-out (isAuthenticated flips to false). When auth is
+    // present the singleton stays connected across re-renders — connecting
+    // happens in the socket-push effect below, not here.
+    if (!isAuthenticated) {
+      notificationSocket.disconnect();
+      return;
+    }
 
     /**
      * Lightweight poll — fetches only the integer count, not full payloads.
@@ -218,11 +224,6 @@ function NotificationBell({ isAuthenticated, onNavigate }) {
 
     return () => {
       notificationSocket.unsubscribe(handleSocketNotification);
-      // Disconnect on sign-out (isAuthenticated flips to false).
-      // When auth is present the singleton stays connected across re-renders.
-      if (!isAuthenticated) {
-        notificationSocket.disconnect();
-      }
     };
   }, [isAuthenticated, handleSocketNotification]);
 

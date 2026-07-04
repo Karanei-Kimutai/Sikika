@@ -60,6 +60,19 @@ async function writeKeyPair(userId, privateKey, publicKey) {
   });
 }
 
+/** Deletes a stored keypair record for a userId, if present. */
+export async function deleteKeyPair(userId) {
+  if (!userId) return;
+
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).delete(userId);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 /**
  * Returns this browser's ECDH keypair for the given userId, generating and
  * persisting one on first call. Safe to call repeatedly (idempotent).

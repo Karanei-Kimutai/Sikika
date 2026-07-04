@@ -1,7 +1,5 @@
 import { useMemo, useState } from "react";
-import axios from "axios";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+import apiClient from "../../services/apiClient";
 
 /**
  * SignInFlow
@@ -102,7 +100,7 @@ export default function SignInFlow({
     clearMessages();
     setLoading(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/auth/login-password`, {
+      const response = await apiClient.post(`/api/auth/login-password`, {
         phoneNumber: signinPhone.trim(),
         password: signinPassword.trim()
       });
@@ -141,7 +139,7 @@ export default function SignInFlow({
     clearMessages();
     setLoading(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/auth/verify-2fa`, {
+      const response = await apiClient.post(`/api/auth/verify-2fa`, {
         phoneNumber: signinPhone.trim(),
         otp: signinTwoFactorOtp.trim()
       });
@@ -176,7 +174,7 @@ export default function SignInFlow({
     clearMessages();
     setLoading(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/auth/forgot-password/request`, {
+      const response = await apiClient.post(`/api/auth/forgot-password/request`, {
         phoneNumber: resetPhone.trim()
       });
       if (response.data.developmentOtp) setResetOtp(response.data.developmentOtp);
@@ -206,7 +204,7 @@ export default function SignInFlow({
     clearMessages();
     setLoading(true);
     try {
-      await axios.post(`${API_BASE_URL}/api/auth/forgot-password/reset`, {
+      await apiClient.post(`/api/auth/forgot-password/reset`, {
         phoneNumber: resetPhone.trim(),
         otp: resetOtp.trim(),
         newPassword: resetNewPassword.trim()
@@ -231,8 +229,8 @@ export default function SignInFlow({
     clearMessages();
     setLoading(true);
     try {
-      await axios.post(
-        `${API_BASE_URL}/api/auth/set-password`,
+      await apiClient.post(
+        `/api/auth/set-password`,
         { password: firstLoginResetPassword.trim() },
         { headers: { Authorization: `Bearer ${firstLoginAuthToken}` } }
       );

@@ -120,8 +120,10 @@ When a moderator (not the owner) deletes a message:
 Rules:
 - Users cannot report their own messages (returns 400).
 - The `reason` field is required.
-- Creates a `HarmfulContentReport` row with `moderationReviewStatus = "PENDING"`.
+- Creates a `HarmfulContentReport` row with `moderationReviewStatus = "PENDING"`, snapshotting `reportedSenderUserId` and `reportedRoomId` from the message **at the moment it's reported**.
 - Emits `community:report-created` to the `community-moderation` Socket.io room so online moderators are notified immediately.
+
+**Why the snapshot columns exist:** a moderator may not review a report until after the reported message has been deleted (by the author, or by an earlier moderation action). Without a snapshot, `reviewReport`'s `ban_user` action would have no way to know who to ban or which room the incident happened in, since the join back to `CommunityMessage` would return nothing. `reviewReport` falls back to `reportedSenderUserId`/`reportedRoomId` whenever the underlying message no longer exists, so a moderator can still act on an already-deleted message's report.
 
 ---
 
@@ -161,6 +163,7 @@ The entire review — report status update, message edit, ban application, and a
 
 #### Action: `ban_user`
 
+- Resolves the target user/room via the reported message when it still exists, or via the report's `reportedSenderUserId`/`reportedRoomId` snapshot when it's been deleted — see "Harmful-Content Reporting" above. Attempting to delete a message that's already gone (`remove_message` action) returns a clear error instead of silently no-op'ing.
 - Validates target user's role against `BANNABLE_ROLES` (`["SURVIVOR", "COUNSELLOR", "LEGAL_COUNSEL"]`). NGO Admin and Moderator accounts cannot be banned through this path.
 - Blocks self-ban (actor cannot ban themselves).
 - Sets `UserAccount.accountStatus = "BANNED"` with full ban metadata:
@@ -286,6 +289,8 @@ Joined by clients that emit `joinModerationFeed`. Events emitted:
 | `moderationReviewStatus` | `ENUM` | `PENDING`, `APPROVED`, `REJECTED` |
 | `reviewedAction` | `STRING` | The action applied (remove_message, ban_user, issue_warning, none) |
 | `reportSubmissionTimestamp` | `DATE` | Auto-set |
+| `reportedSenderUserId` | `VARCHAR(36)` | Snapshot of the reported message's sender, taken at report time — used as a fallback so moderation (notably `ban_user`) still works after the message itself is deleted. May be `null` on reports predating this column. |
+| `reportedRoomId` | `VARCHAR(36)` | Snapshot of the reported message's `roomId`, taken at report time — same fallback purpose as above. |
 
 ### `ModerationActionLog`
 

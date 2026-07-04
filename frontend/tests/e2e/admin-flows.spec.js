@@ -111,4 +111,74 @@ test.describe('Admin Flows', () => {
     await page.getByTestId('ngo-maintenance-toggle').click();
     await expect(page.getByText('Maintenance mode enabled.')).toBeVisible();
   });
+
+  test('lift ban from moderation queue shows loading state and disables concurrent clicks', async ({ page }) => {
+    await installBaseApiMocks(page);
+    await seedSession(page, { role: 'NGO_ADMIN', userId: 'ngo-admin-1' });
+
+    const dashboardPayload = {
+      ...ngoDashboardFixture(),
+      moderationQueue: [
+        {
+          reportId: 'mod-ban-1',
+          submittedAt: '2026-06-11T09:00:00.000Z',
+          roomName: 'General',
+          snippet: 'Potentially harmful statement',
+          reportReasonText: 'Threatening wording',
+          status: 'PENDING',
+          reporterLabel: 'Reporter U123',
+          senderUserId: 'sender-1',
+          senderAccountStatus: 'BANNED'
+        },
+        {
+          reportId: 'mod-ban-2',
+          submittedAt: '2026-06-11T09:05:00.000Z',
+          roomName: 'General',
+          snippet: 'Follow-up harmful statement',
+          reportReasonText: 'Harassment',
+          status: 'PENDING',
+          reporterLabel: 'Reporter U124',
+          senderUserId: 'sender-2',
+          senderAccountStatus: 'BANNED'
+        }
+      ]
+    };
+
+    await page.route('**/api/admin/ngo/dashboard', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(dashboardPayload)
+      });
+    });
+
+    let releaseUnbanResponse;
+    const unbanGate = new Promise((resolve) => {
+      releaseUnbanResponse = resolve;
+    });
+
+    await page.route('**/api/admin/ngo/users/*/unban', async (route) => {
+      await unbanGate;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ message: 'Ban lifted.' })
+      });
+    });
+
+    await page.goto('/moderation');
+
+    const liftButtons = page.getByRole('button', { name: 'Lift Ban' });
+    await expect(liftButtons.first()).toBeVisible();
+
+    await liftButtons.first().click();
+
+    await expect(page.getByRole('button', { name: 'Lifting…' }).first()).toBeDisabled();
+    const visibleLiftButtons = await liftButtons.count();
+    for (let i = 0; i < visibleLiftButtons; i += 1) {
+      await expect(liftButtons.nth(i)).toBeDisabled();
+    }
+
+    releaseUnbanResponse();
+  });
 });

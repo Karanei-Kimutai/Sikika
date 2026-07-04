@@ -1,7 +1,8 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { getToken, getUserId, removeToken, removeUserId } from "./utils/auth";
-import { getOrCreateKeyPair } from "./utils/keyStorage";
+import { deleteKeyPair, getOrCreateKeyPair } from "./utils/keyStorage";
+import { purgeAllPending } from "./utils/pendingMessageQueue";
 import { exportPublicKeyJwk } from "./utils/cryptoUtils";
 import { registerPublicKey } from "./services/chatKeys";
 import { fadeInUp } from "./utils/motion";
@@ -86,6 +87,30 @@ const moderatorRoutes = {
   "/join": AuthPage
 };
 
+/**
+ * Rendered for any pathname not present in `knownPaths` (i.e. no route map
+ * has an entry for it), instead of the previous behavior of silently
+ * redirecting unrecognized paths to "/". Offers a single way back in
+ * (`onNavigate("/home")`) rather than leaving the user on a blank/broken page.
+ *
+ * @param {object}   props
+ * @param {Function} props.onNavigate - SPA navigation helper (see `navigate` in `App()`).
+ */
+function NotFoundPage({ onNavigate }) {
+  return (
+    <main className="maintenance-page" role="main" aria-label="Page not found">
+      <section className="maintenance-card">
+        <p className="maintenance-pill">Not Found</p>
+        <h1>Page Not Found</h1>
+        <p className="maintenance-lead">The page you requested does not exist or has moved.</p>
+        <div className="maintenance-actions">
+          <button type="button" className="maintenance-btn maintenance-btn-secondary" onClick={() => onNavigate("/home")}>Go Home</button>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 // Includes role-specific paths so getCurrentPath() doesn't fall back to "/"
 // when an authenticated user lands on a route not present in publicRoutes.
 const knownPaths = new Set([
@@ -133,13 +158,16 @@ function decodeRoleFromToken() {
 }
 
 /**
- * Reads the current browser pathname and returns it if it's a known route,
- * otherwise falls back to "/" to avoid rendering a blank page for unknown paths.
+ * Reads the current browser pathname and returns it unfiltered. Unlike the
+ * old behavior of falling back to "/" for anything outside `knownPaths`,
+ * callers now decide what to render for an unrecognized path (see the
+ * `hasKnownPath`/`NotFoundPage` branch in `App()`), so a mistyped or stale
+ * URL surfaces a 404 instead of silently bouncing to the landing/home page.
  *
- * @returns {string} A pathname key present in at least one of the route maps.
+ * @returns {string} The raw `window.location.pathname`.
  */
 function getCurrentPath() {
-  return knownPaths.has(window.location.pathname) ? window.location.pathname : "/";
+  return window.location.pathname;
 }
 
 /**
@@ -302,9 +330,12 @@ function App() {
   /**
    * Clears the session and redirects to the sign-in page.
    * Used by the sign-out button in `SiteHeader` and the maintenance screen.
+   * Purges any queued (unsent, plaintext) E2EE messages first so they don't
+   * outlive the session that typed them in localStorage.
    * @returns {void}
    */
   const handleSignOut = () => {
+    purgeAllPending();
     removeToken();
     removeUserId();
     navigate("/join");
@@ -314,9 +345,11 @@ function App() {
    * Quick Exit button handler — clears session and navigates away from the
    * platform entirely to Google. When the button is in the collapsed state,
    * the first interaction expands it to reduce accidental exits from incidental taps.
-   * @returns {void}
+   * Also best-effort deletes this browser's local E2EE keypair for the
+   * signed-in user before clearing session state (forensic minimization).
+   * @returns {Promise<void>}
    */
-  const handleQuickExit = () => {
+  const handleQuickExit = async () => {
     // If collapsed, first interaction expands the control instead of navigating.
     // This reduces accidental exits from incidental taps.
     if (isQuickExitCollapsed) {
@@ -324,6 +357,17 @@ function App() {
       return;
     }
 
+    const activeUserId = getUserId();
+    if (activeUserId) {
+      try {
+        // Best-effort forensic minimization: remove this user's local E2EE keypair.
+        await deleteKeyPair(activeUserId);
+      } catch {
+        // Continue quick-exit regardless of local storage cleanup outcome.
+      }
+    }
+
+    purgeAllPending();
     removeToken();
     removeUserId();
     window.location.replace(QUICK_EXIT_URL);
@@ -374,9 +418,13 @@ function App() {
     return resolvedPath;
   })();
   const activeRoutes = getRoutesForRole(role, isAuthenticated);
+  const hasKnownPath = knownPaths.has(currentPath);
   const fallbackPath = isAuthenticated ? "/home" : "/";
-  const finalPath = activeRoutes[roleResolvedPath] ? roleResolvedPath : fallbackPath;
-  const Page = activeRoutes[finalPath] || LandingPage;
+  // Route resolution only kicks in for recognized paths; an unknown path
+  // (hasKnownPath === false) skips straight to NotFoundPage rather than being
+  // coerced into fallbackPath/LandingPage.
+  const finalPath = hasKnownPath ? (activeRoutes[roleResolvedPath] ? roleResolvedPath : fallbackPath) : currentPath;
+  const Page = hasKnownPath ? (activeRoutes[finalPath] || LandingPage) : NotFoundPage;
 
   // During active maintenance, non-admin sessions are redirected to a
   // read-only status card instead of normal app pages.

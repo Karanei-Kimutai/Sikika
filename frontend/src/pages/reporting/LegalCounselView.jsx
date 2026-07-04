@@ -10,11 +10,7 @@ import {
   getLegalCaseDocumentUrl
 } from "../../services/legalCases";
 import useReportHighlight from "./useReportHighlight";
-
-const STATUS_OPTIONS = [
-  "SUBMITTED", "UNDER_REVIEW", "ACTIVE_SUPPORT", "UNDER_INVESTIGATION",
-  "LEGAL_REVIEW", "ESCALATED_TO_LEGAL_CASE", "RESOLVED", "WITHDRAWN"
-];
+import { getAllowedNextStatuses } from "../../utils/reportStatusRules";
 
 const CASE_NEXT_STATUSES = {
   OPEN: ["UNDER_INVESTIGATION"],
@@ -29,15 +25,18 @@ const CASE_NEXT_STATUSES = {
  * ----------------
  * Report list for LEGAL_COUNSEL role. Includes the full structured
  * legal-case drafting panel (4 authoring fields, Save Draft, Generate Document,
- * Open Document, case status advance) plus report-level status update.
+ * Open Document, case status advance) plus report-level status update. The
+ * status select is gated to only offer statuses LEGAL_COUNSEL can actually
+ * set from the report's current status (see reportStatusRules.js) — an
+ * option that would be rejected by the backend is never shown.
  *
  * @param {{ reports: object[], loading: boolean,
  *   loadReports: Function,
  *   setErrorMessage: Function, setSuccessMessage: Function,
- *   highlightReportId: string }} props
+ *   highlightReportId: string, role: string }} props
  */
 export default function LegalCounselView({
-  reports, loading, loadReports, setErrorMessage, setSuccessMessage, highlightReportId
+  reports, loading, loadReports, setErrorMessage, setSuccessMessage, highlightReportId, role
 }) {
   const highlightedId = useReportHighlight(reports, highlightReportId);
   const [reportStatusMap, setReportStatusMap] = useState({});
@@ -53,7 +52,15 @@ export default function LegalCounselView({
   const formatStatus = (s) =>
     String(s || "").toLowerCase().split("_").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
 
-  const handleStatusUpdate = async (reportId, reportStatus) => {
+  const handleStatusUpdate = async (reportId, reportStatus, currentStatus) => {
+    // Extra confirmation gate for terminal, hard-to-reverse transitions —
+    // guards against accidentally closing out an active support workflow
+    // with a single misclick.
+    if (reportStatus === "RESOLVED" || reportStatus === "WITHDRAWN") {
+      const confirmed = window.confirm(`Set this report to ${reportStatus.replace(/_/g, " ")}? This action can affect active support workflows.`);
+      if (!confirmed) return;
+    }
+
     setErrorMessage(""); setSuccessMessage("");
     try {
       await updateReportStatus(reportId, reportStatus, true);
@@ -61,6 +68,9 @@ export default function LegalCounselView({
       await loadReports();
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Could not update report status.");
+      // Revert the optimistic selection — the transition was rejected, so the
+      // dropdown must not keep showing a status that was never applied.
+      setReportStatusMap((m) => ({ ...m, [reportId]: currentStatus }));
     }
   };
 
@@ -119,6 +129,13 @@ export default function LegalCounselView({
   };
 
   const handleUpdateCaseStatus = async (legalCaseId, nextStatus) => {
+    // Same rationale as handleStatusUpdate above: CLOSED is a terminal state
+    // for the case, so require an explicit confirmation before committing to it.
+    if (nextStatus === "CLOSED") {
+      const confirmed = window.confirm("Close this legal case now? This should only be done when the case is fully complete.");
+      if (!confirmed) return;
+    }
+
     setUpdatingCaseStatusId(legalCaseId);
     setErrorMessage(""); setSuccessMessage("");
     try {
@@ -312,21 +329,35 @@ export default function LegalCounselView({
               </div>
             )}
 
-            <label className="status-select-label" htmlFor={`status-${report.reportId}`}>
-              Update status
-              <select
-                id={`status-${report.reportId}`}
-                value={reportStatusMap[report.reportId] ?? report.reportStatus}
-                onChange={(e) => {
-                  setReportStatusMap((m) => ({ ...m, [report.reportId]: e.target.value }));
-                  handleStatusUpdate(report.reportId, e.target.value);
-                }}
-              >
-                {STATUS_OPTIONS.map((s) => (
-                  <option key={s} value={s}>{formatStatus(s)}</option>
-                ))}
-              </select>
-            </label>
+            {(() => {
+              const allowedNext = getAllowedNextStatuses(report.reportStatus, role);
+              if (allowedNext.length === 0) {
+                return (
+                  <p className="status-select-label">
+                    Status
+                    <span className="resource-category">{formatStatus(report.reportStatus)}</span>
+                  </p>
+                );
+              }
+              const options = [report.reportStatus, ...allowedNext.filter((s) => s !== report.reportStatus)];
+              return (
+                <label className="status-select-label" htmlFor={`status-${report.reportId}`}>
+                  Update status
+                  <select
+                    id={`status-${report.reportId}`}
+                    value={reportStatusMap[report.reportId] ?? report.reportStatus}
+                    onChange={(e) => {
+                      setReportStatusMap((m) => ({ ...m, [report.reportId]: e.target.value }));
+                      handleStatusUpdate(report.reportId, e.target.value, report.reportStatus);
+                    }}
+                  >
+                    {options.map((s) => (
+                      <option key={s} value={s}>{formatStatus(s)}</option>
+                    ))}
+                  </select>
+                </label>
+              );
+            })()}
           </div>
         </article>
       ))}

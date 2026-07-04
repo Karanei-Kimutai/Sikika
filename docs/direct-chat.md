@@ -138,6 +138,7 @@ The `counterpartUserId` field is how `DirectChatPage.jsx` knows whose public key
 | `messageReadStatus` | ENUM | `'UNREAD'` on creation; `'READ'` after the recipient opens the channel. |
 | `deliveredAt` | `DATETIME\|NULL` | Set when the recipient's socket is online at send time, or in bulk on reconnect. |
 | `seenAt` | `DATETIME\|NULL` | Set when `GET /api/chat/:chatId/messages` is called by the non-sender. |
+| `editedAt` | `DATETIME\|NULL` | Set when the sender edits this message via `editEncryptedMessage`. `NULL` means never edited. No edit history is kept — `encryptedMessageContent` is overwritten in place. |
 
 ### Delivery states (shown as ticks in the UI)
 
@@ -178,9 +179,20 @@ chatSocket.js
   → createDiscreetNotifications()
   → io.to(chatId).emit('receiveMessage', savedMessage)
   → if recipient online: io.to('user:<senderId>').emit('message:delivered', ...)
+        │
+        │  emit('editEncryptedMessage', { chatId, messageId, encryptedPayload })
+        ▼
+  → isUserAccountActive() check
+  → canUserAccessChannel() check
+  → DirectChatMessage.findOne({ messageId, chatId }) — must exist
+  → reject unless message.senderUserId === socket.data.userId
+  → message.encryptedMessageContent = encryptedPayload; message.editedAt = now
+  → io.to(chatId).emit('message:edited', { chatId, messageId, encryptedPayload, editedAt })
 ```
 
-**Security note:** Account status is checked on **every** `sendEncryptedMessage` event, not just at connection time. A ban applied mid-session takes effect on the next message attempt.
+**Security note:** Account status is checked on **every** `sendEncryptedMessage` and `editEncryptedMessage` event, not just at connection time. A ban applied mid-session takes effect on the next message/edit attempt.
+
+**Editing:** Only the original sender may edit a message — enforced server-side by comparing `senderUserId` to the authenticated socket's `userId`, independent of any client-side UI restriction. The client re-encrypts the edited plaintext under the same shared channel key it already holds and sends the new ciphertext; the server has no way to verify the edit is meaningful since it never sees plaintext. There is no time limit on edits and no edit history — `message:edited` recipients decrypt the new ciphertext and replace the displayed text, tagging it "(edited)" using `editedAt`.
 
 ---
 
@@ -262,6 +274,17 @@ See [`docs/e2ee.md`](./e2ee.md) — "Pending-message queue" section — for the 
 | Socket | Connects on mount, joins the channel room on selection, listens for `receiveMessage`, `message:delivered`, `presence:update`. |
 
 The component derives the counterpart's public key from `counterpartUserId` returned by the channel list, then performs ECDH client-side to get the shared AES-GCM key stored in memory for the session. Private keys are stored in IndexedDB and are non-extractable.
+
+### Channel-switch event queue
+
+Deriving the shared AES-GCM key for a newly-selected channel is asynchronous (network + IndexedDB + ECDH + a one-time history fetch). Socket listener registration is intentionally **decoupled** from that derivation so live events arriving mid-switch are never silently dropped:
+
+- The listener-registration effect keys only on `activeChannelId`/`currentUserId` (not on the derived crypto key), so `receiveMessage`, `presence:update`, `message:delivered`, `message:seen`, and `message:edited` listeners stay attached across a channel switch instead of being torn down and re-attached once the key is ready.
+- The two handlers that need to decrypt (`handleNewMessage`, `handleMessageEdited`) check a ref-mirrored copy of the crypto key (`effectiveCryptoKeyRef`); if it isn't ready yet they push the raw event onto `pendingSocketEventsRef` instead of decrypting immediately.
+- A separate effect, keyed on the crypto key becoming available, drains `pendingSocketEventsRef` in arrival order and replays each event through its handler now that decryption is possible, then clears the queue.
+- `presence:update`/`message:delivered`/`message:seen` don't decrypt anything, so they're applied immediately regardless of key readiness — only the two decrypting handlers use the queue.
+
+Net effect: switching channels while the counterpart is actively sending a message no longer loses that message — it's buffered and replayed once the new channel's key is derived, instead of arriving while the listener is unregistered.
 
 ---
 

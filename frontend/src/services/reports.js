@@ -1,7 +1,4 @@
-import axios from "axios";
-import { getToken } from "../utils/auth";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+import apiClient from "./apiClient";
 
 /**
  * reports.js
@@ -13,17 +10,6 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000
  */
 
 /**
- * Returns the Authorization header for authenticated requests, or an empty
- * object when the session has no token (caller is responsible for redirecting).
- *
- * @returns {{ Authorization: string } | {}}
- */
-function getAuthHeaders() {
-  const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-/**
  * Fetches all incident reports visible to the authenticated user.
  * Survivors see only their own reports; counsellors, legal counsel, and
  * NGO admins see reports assigned or relevant to their role.
@@ -31,9 +17,7 @@ function getAuthHeaders() {
  * @returns {Promise<{ reports: object[] }>}
  */
 export async function getReports() {
-  const response = await axios.get(`${API_BASE_URL}/api/reports`, {
-    headers: getAuthHeaders()
-  });
+  const response = await apiClient.get("/api/reports");
 
   return response.data;
 }
@@ -45,9 +29,7 @@ export async function getReports() {
  * @returns {Promise<{ report: object }>}
  */
 export async function getReportById(reportId) {
-  const response = await axios.get(`${API_BASE_URL}/api/reports/${reportId}`, {
-    headers: getAuthHeaders()
-  });
+  const response = await apiClient.get(`/api/reports/${reportId}`);
 
   return response.data;
 }
@@ -60,9 +42,7 @@ export async function getReportById(reportId) {
  * @returns {Promise<{ message: string, report: object }>}
  */
 export async function createReport(payload) {
-  const response = await axios.post(`${API_BASE_URL}/api/reports`, payload, {
-    headers: getAuthHeaders()
-  });
+  const response = await apiClient.post("/api/reports", payload);
 
   return response.data;
 }
@@ -76,9 +56,7 @@ export async function createReport(payload) {
  * @returns {Promise<{ message: string, report: object }>}
  */
 export async function updateOwnReport(reportId, payload) {
-  const response = await axios.patch(`${API_BASE_URL}/api/reports/${reportId}`, payload, {
-    headers: getAuthHeaders()
-  });
+  const response = await apiClient.patch(`/api/reports/${reportId}`, payload);
 
   return response.data;
 }
@@ -96,11 +74,7 @@ export async function updateOwnReport(reportId, payload) {
  */
 export async function updateReportStatus(reportId, reportStatus, survivorConsent = false) {
   // survivorConsent is required by backend when escalating to legal case.
-  const response = await axios.patch(
-    `${API_BASE_URL}/api/reports/${reportId}/status`,
-    { reportStatus, survivorConsent },
-    { headers: getAuthHeaders() }
-  );
+  const response = await apiClient.patch(`/api/reports/${reportId}/status`, { reportStatus, survivorConsent });
 
   return response.data;
 }
@@ -113,11 +87,7 @@ export async function updateReportStatus(reportId, reportStatus, survivorConsent
  * @returns {Promise<{ message: string, report: object }>}
  */
 export async function withdrawReport(reportId) {
-  const response = await axios.patch(
-    `${API_BASE_URL}/api/reports/${reportId}/withdraw`,
-    { confirmWithdraw: true },
-    { headers: getAuthHeaders() }
-  );
+  const response = await apiClient.patch(`/api/reports/${reportId}/withdraw`, { confirmWithdraw: true });
 
   return response.data;
 }
@@ -137,16 +107,11 @@ export async function uploadEvidence(reportId, file) {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await axios.post(
-    `${API_BASE_URL}/api/reports/${reportId}/evidence`,
-    formData,
-    {
-      headers: {
-        ...getAuthHeaders(),
-        "Content-Type": "multipart/form-data"
-      }
+  const response = await apiClient.post(`/api/reports/${reportId}/evidence`, formData, {
+    headers: {
+      "Content-Type": "multipart/form-data"
     }
-  );
+  });
 
   return response.data;
 }
@@ -159,8 +124,7 @@ export async function uploadEvidence(reportId, file) {
  * @returns {Promise<{ message: string }>}
  */
 export async function deleteOwnReport(reportId) {
-  const response = await axios.delete(`${API_BASE_URL}/api/reports/${reportId}`, {
-    headers: getAuthHeaders(),
+  const response = await apiClient.delete(`/api/reports/${reportId}`, {
     data: { confirmWithdraw: true }
   });
 
@@ -186,13 +150,9 @@ export async function deleteOwnReport(reportId) {
  * @returns {Promise<{ signedUrl: string }>}
  */
 export async function getEvidenceAccessUrl(reportId, evidenceId) {
-  const response = await axios.get(
-    `${API_BASE_URL}/api/reports/${reportId}/evidence/${evidenceId}/file`,
-    {
-      headers: getAuthHeaders(),
-      responseType: "blob"
-    }
-  );
+  const response = await apiClient.get(`/api/reports/${reportId}/evidence/${evidenceId}/file`, {
+    responseType: "blob"
+  });
 
   const objectUrl = URL.createObjectURL(response.data);
 

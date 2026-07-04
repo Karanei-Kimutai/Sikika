@@ -265,6 +265,12 @@ Role-branched view:
 | `LEGAL_COUNSEL` | `LegalCounselView` — legal review + case authoring panel |
 | `NGO_ADMIN` | `StaffReportView` — full report list and all transitions |
 
+### `StaffReportView` status dropdown (`frontend/src/utils/reportStatusRules.js`)
+
+The status-update dropdown shown to `COUNSELLOR`, `LEGAL_COUNSEL`, and `NGO_ADMIN` no longer lists all 8 statuses unconditionally — `getAllowedNextStatuses(currentStatus, role)` in `reportStatusRules.js` mirrors the backend's `STATUS_TRANSITIONS` + `STATUS_UPDATE_PERMISSIONS` (see "Status State Machine" and "Role-Scoped Transition Permissions" above) to compute, client-side, exactly which target statuses are both **reachable** from the report's current status and **permitted** for the signed-in role. States with no further options render as plain text instead of a dead dropdown.
+
+This is a UX mirror only — the backend remains the sole source of truth and re-validates every transition server-side regardless of what the dropdown offers. Keep `reportStatusRules.js`'s two maps in sync with `reportController.js`'s `STATUS_TRANSITIONS`/`STATUS_UPDATE_PERMISSIONS` if the workflow changes. Before this existed, a rejected transition (the backend correctly returning 409) still left the dropdown showing the picked-but-rejected status, which could look like the update had gone through; a rejected update now reverts the displayed status instead.
+
 ### `LegalCounselView.jsx`
 
 Extends `StaffReportView` with the legal case authoring panel visible when a report is in `LEGAL_REVIEW` or `ESCALATED_TO_LEGAL_CASE`:

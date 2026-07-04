@@ -27,73 +27,27 @@ const { Op } = require('sequelize');
 const {
   DirectChatMessage,
   DirectChatChannel,
-  UserAccount,
   SurvivorProfile
 } = require('../models');
 const { canUserAccessChannel, getChannelParticipantUserIds } = require('../services/chatAccessService');
 const presenceRegistry = require('../services/presenceRegistry');
 const { createNotificationsBulk } = require('../services/notificationService');
+const {
+  getTokenFromHandshake,
+  resolveUserIdFromTokenClaims,
+  isUserAccountActive
+} = require('../services/socketAuthService');
 
 /**
  * Trust boundary notes:
  * - Token signature verification is required before socket joins are accepted.
  * - Channel membership is checked on both join and send events.
  * - Server persists opaque encrypted payloads without decrypting message content.
- */
-
-/**
- * Extracts the JWT from either the socket.io auth object or the Authorization header.
  *
- * @param {import('socket.io').Socket} socket
- * @returns {string|null}
+ * getTokenFromHandshake/resolveUserIdFromTokenClaims/isUserAccountActive live in
+ * socketAuthService.js so communitySocket.js can share the same mid-session
+ * accountStatus recheck instead of duplicating it.
  */
-function getTokenFromHandshake(socket) {
-  const authToken = socket.handshake?.auth?.token;
-  if (authToken) return authToken;
-
-  const header = socket.handshake?.headers?.authorization;
-  if (header && header.startsWith('Bearer ')) {
-    return header.slice('Bearer '.length).trim();
-  }
-
-  return null;
-}
-
-/**
- * Resolves the canonical userId from either JWT claim shape (legacy `id` or current `userId`).
- *
- * @param {object} claims - Decoded JWT payload.
- * @returns {string|null}
- */
-function resolveUserIdFromTokenClaims(claims) {
-  return claims?.userId || claims?.id || null;
-}
-
-/**
- * isUserAccountActive
- * -------------------
- * Looks up the user's current accountStatus in the database.
- * Used to enforce bans and suspensions mid-session for sockets,
- * where JWT-based auth alone cannot reflect post-issue status changes.
- *
- * Returns true only for ACTIVE accounts. Returns false (and should
- * disconnect/reject the socket) for any other status.
- *
- * @param {string} userId - The user's UUID from the verified JWT.
- * @returns {Promise<boolean>}
- */
-async function isUserAccountActive(userId) {
-  try {
-    const user = await UserAccount.findByPk(userId, {
-      attributes: ['accountStatus']
-    });
-    // Only ACTIVE accounts may send messages. BANNED/SUSPENDED/DEACTIVATED are all rejected.
-    return user && String(user.accountStatus || '').toUpperCase() === 'ACTIVE';
-  } catch {
-    // Fail closed: if we can't check, deny access.
-    return false;
-  }
-}
 
 /**
  * createDiscreetNotifications
@@ -383,9 +337,15 @@ module.exports = (io) => {
         // Broadcast to all clients in the channel room.
         io.to(chatId).emit('receiveMessage', savedMessage);
 
-        // If immediately delivered, push a delivery event to the sender's personal
-        // room so all their open tabs show the delivered tick straight away.
-        if (recipientOnline) {
+        // Re-check presence immediately before emitting the delivery tick — the
+        // recipient may have disconnected during the DirectChatMessage.create()
+        // round-trip above, so the `recipientOnline` snapshot taken before that
+        // write can be stale by now. The deliveredAt DB write above intentionally
+        // keeps using the original snapshot (this is a display-only tick; the
+        // recipient still gets the message via the delivery catch-up on reconnect
+        // either way), but the live emit should reflect current state.
+        const recipientStillOnline = recipientUserId ? presenceRegistry.isOnline(recipientUserId) : false;
+        if (recipientStillOnline) {
           io.to(`user:${socket.data.userId}`).emit('message:delivered', {
             chatId,
             messageIds: [savedMessage.messageId],
@@ -395,6 +355,71 @@ module.exports = (io) => {
       } catch (error) {
         console.error('Failed to save and relay message:', error);
         socket.emit('messageError', { error: 'Failed to send message securely.' });
+      }
+    });
+
+    // ── Handle message edits ────────────────────────────────────────────────────
+    // Client re-encrypts the edited plaintext under the same shared channel key
+    // and sends the new ciphertext here. The server never sees plaintext, so it
+    // cannot verify the edit is meaningfully different — it only enforces that
+    // the editor is the original sender and the channel is still active.
+    socket.on('editEncryptedMessage', async (data) => {
+      const { chatId, messageId, encryptedPayload } = data || {};
+
+      try {
+        if (!chatId || !messageId || !encryptedPayload) {
+          socket.emit('messageError', { error: 'chatId, messageId, and encryptedPayload are required.' });
+          return;
+        }
+
+        // Re-check account status the same way sendEncryptedMessage does, so a
+        // ban applied mid-session also blocks edits, not just new sends.
+        const stillActive = await isUserAccountActive(socket.data.userId);
+        if (!stillActive) {
+          socket.emit('messageError', { error: 'Account access restricted. Please contact support.' });
+          socket.disconnect(true);
+          return;
+        }
+
+        const allowed = await canUserAccessChannel(socket.data.userId, chatId);
+        if (!allowed) {
+          socket.emit('messageError', { error: 'Not authorized to edit messages in this chat channel.' });
+          return;
+        }
+
+        const channel = await DirectChatChannel.findByPk(chatId);
+        if (!channel || channel.chatChannelStatus !== 'active') {
+          socket.emit('messageError', { error: 'Chat channel is unavailable.' });
+          return;
+        }
+
+        const message = await DirectChatMessage.findOne({ where: { messageId, chatId } });
+        if (!message) {
+          socket.emit('messageError', { error: 'Message not found.' });
+          return;
+        }
+
+        // Only the original sender may edit their own message.
+        if (message.senderUserId !== socket.data.userId) {
+          socket.emit('messageError', { error: 'You can only edit your own messages.' });
+          return;
+        }
+
+        const editedAt = new Date();
+        message.encryptedMessageContent = encryptedPayload;
+        message.editedAt = editedAt;
+        await message.save();
+
+        // Broadcast to everyone in the channel room (both parties may have it open).
+        io.to(chatId).emit('message:edited', {
+          chatId,
+          messageId,
+          encryptedPayload,
+          editedAt
+        });
+      } catch (error) {
+        console.error('Failed to edit and relay message:', error);
+        socket.emit('messageError', { error: 'Failed to edit message securely.' });
       }
     });
 

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 /**
  * ConfirmDialog
@@ -9,7 +9,7 @@ import { useEffect } from 'react';
  * - `role="dialog"` + `aria-modal="true"` for screen readers
  * - Escape key handler for dismissal
  * - Backdrop click to cancel
- * - Focus management (focus on mount, return on close)
+ * - Focus management: initial focus, focus trap, focus restore on close
  * - WCAG-compliant button styling
  *
  * @param {object} props
@@ -25,12 +25,53 @@ import { useEffect } from 'react';
  * @returns {React.ReactElement|null}
  */
 function ConfirmDialog({ isOpen, title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', onConfirm, onCancel, variant = 'default' }) {
+  const overlayRef = useRef(null);
+  const confirmButtonRef = useRef(null);
+  const previouslyFocusedRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    previouslyFocusedRef.current = document.activeElement;
+    window.setTimeout(() => {
+      confirmButtonRef.current?.focus();
+    }, 0);
+
+    return () => {
+      if (previouslyFocusedRef.current && typeof previouslyFocusedRef.current.focus === 'function') {
+        previouslyFocusedRef.current.focus();
+      }
+    };
+  }, [isOpen]);
+
   useEffect(() => {
     if (!isOpen) return;
 
     function handleEscape(e) {
       if (e.key === 'Escape') {
         onCancel();
+        return;
+      }
+
+      // Focus trap: keep Tab/Shift+Tab cycling inside the modal so keyboard
+      // users can't tab into background content while it's open.
+      if (e.key === 'Tab' && overlayRef.current) {
+        const focusable = overlayRef.current.querySelectorAll(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        );
+        if (!focusable.length) return;
+
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+
+        if (e.shiftKey && active === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && active === last) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     }
 
@@ -42,6 +83,7 @@ function ConfirmDialog({ isOpen, title, message, confirmLabel = 'Confirm', cance
 
   return (
     <div
+      ref={overlayRef}
       className="admin-confirm-overlay"
       role="dialog"
       aria-modal="true"
@@ -57,6 +99,7 @@ function ConfirmDialog({ isOpen, title, message, confirmLabel = 'Confirm', cance
 
         <div className="admin-confirm-actions">
           <button
+            ref={confirmButtonRef}
             type="button"
             className={`admin-action-btn ${variant === 'danger' ? 'danger' : ''}`}
             onClick={onConfirm}

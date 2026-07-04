@@ -68,7 +68,7 @@ jest.mock("../src/models", () => ({
   ResourceAccessEvent: {}
 }));
 
-const { UserAccount, IncidentReport, SurvivorProfile } = require("../src/models");
+const { UserAccount, IncidentReport, SurvivorProfile, CounsellorProfile, LegalCounselProfile } = require("../src/models");
 const reportRoutes = require("../src/routes/reportRoutes");
 const adminRoutes = require("../src/routes/adminRoutes");
 
@@ -133,5 +133,114 @@ describe("RBAC API protections", () => {
 
     expect(response.status).toBe(403);
     expect(response.body.error).toContain("do not have access");
+  });
+
+  test("denies moderator access to NGO admin dashboard", async () => {
+    UserAccount.findByPk.mockImplementation(async (userId) => ({
+      userId,
+      userRole: "MODERATOR",
+      accountStatus: "ACTIVE"
+    }));
+
+    const token = makeToken({ id: "moderator-user", userId: "moderator-user", role: "MODERATOR" });
+
+    const response = await request(app)
+      .get("/api/admin/ngo/dashboard")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(response.status).toBe(403);
+  });
+
+  test("denies counsellor access to NGO admin dashboard", async () => {
+    UserAccount.findByPk.mockImplementation(async (userId) => ({
+      userId,
+      userRole: "COUNSELLOR",
+      accountStatus: "ACTIVE"
+    }));
+
+    const token = makeToken({ id: "counsellor-user", userId: "counsellor-user", role: "COUNSELLOR" });
+
+    const response = await request(app)
+      .get("/api/admin/ngo/dashboard")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(response.status).toBe(403);
+  });
+
+  test("denies counsellor access to a report for a survivor not assigned to them", async () => {
+    UserAccount.findByPk.mockImplementation(async (userId) => ({
+      userId,
+      userRole: "COUNSELLOR",
+      accountStatus: "ACTIVE"
+    }));
+
+    // getActorContext calls CounsellorProfile.findOne to resolve counsellorId
+    CounsellorProfile.findOne.mockResolvedValueOnce({
+      counsellorId: "counsellor-x",
+      userId: "counsellor-user"
+    });
+
+    // The report belongs to a survivor not assigned to counsellor-x
+    IncidentReport.findByPk.mockResolvedValueOnce({
+      reportId: "report-2",
+      survivorId: "survivor-b",
+      evidenceFiles: []
+    });
+
+    // canActorAccessReport checks survivor assignment — null means not assigned
+    SurvivorProfile.findOne.mockResolvedValueOnce(null);
+
+    const token = makeToken({ id: "counsellor-user", userId: "counsellor-user", role: "COUNSELLOR" });
+
+    const response = await request(app)
+      .get("/api/reports/report-2")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toContain("do not have access");
+  });
+
+  test("denies legal counsel access to a report for a survivor not assigned to them", async () => {
+    UserAccount.findByPk.mockImplementation(async (userId) => ({
+      userId,
+      userRole: "LEGAL_COUNSEL",
+      accountStatus: "ACTIVE"
+    }));
+
+    // getActorContext calls LegalCounselProfile.findOne to resolve legalCounselId
+    LegalCounselProfile.findOne.mockResolvedValueOnce({
+      legalCounselId: "legal-x",
+      userId: "legal-user"
+    });
+
+    IncidentReport.findByPk.mockResolvedValueOnce({
+      reportId: "report-3",
+      survivorId: "survivor-c",
+      evidenceFiles: []
+    });
+
+    // canActorAccessReport checks survivor assignment — null means not assigned
+    SurvivorProfile.findOne.mockResolvedValueOnce(null);
+
+    const token = makeToken({ id: "legal-user", userId: "legal-user", role: "LEGAL_COUNSEL" });
+
+    const response = await request(app)
+      .get("/api/reports/report-3")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toContain("do not have access");
+  });
+
+  test("denies survivor access to the admin global search endpoint", async () => {
+    // Default beforeEach mock returns SURVIVOR — no override needed
+    const token = makeToken({ id: "survivor-user", userId: "survivor-user", role: "SURVIVOR" });
+
+    const response = await request(app)
+      .get("/api/admin/search")
+      .query({ q: "test" })
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(response.status).toBe(403);
   });
 });

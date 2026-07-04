@@ -51,8 +51,20 @@ jest.mock('../src/middleware/authMiddleware', () => (req, res, next) => {
     next();
 });
 
+// A single shared fake transaction so tests can assert on commit/rollback calls.
+// Supports both the managed style (sequelize.transaction(callback)), used by
+// ensureSurvivorStaffAutoAssignment when called standalone, and the unmanaged
+// style (await sequelize.transaction() then commit()/rollback() explicitly),
+// used by completeSignup to wrap password + profile + channel provisioning.
+const mockSignupTransaction = {
+    commit: jest.fn().mockResolvedValue(),
+    rollback: jest.fn().mockResolvedValue()
+};
+
 jest.mock('../src/config/database', () => ({
-    transaction: jest.fn(async (callback) => callback({}))
+    transaction: jest.fn((callback) => (
+        callback ? callback(mockSignupTransaction) : Promise.resolve(mockSignupTransaction)
+    ))
 }));
 
 jest.mock('../src/models', () => ({
@@ -350,5 +362,147 @@ describe('Auth Controller', () => {
         expect(response.body.message).toBe('Password reset successful.');
         expect(bcrypt.hash).toHaveBeenCalledWith('NewStrongPass!123', 10);
         expect(user.save).toHaveBeenCalled();
+    });
+
+    // Bug fix: resetPasswordWithOtp previously skipped the lockout check every
+    // other OTP-verification entry point enforces, letting a locked-out account
+    // still have reset OTPs brute-forced against it.
+    test('returns 423 and skips OTP comparison when the account is locked out', async () => {
+        const user = buildUser({
+            hashedPassword: 'old-hash',
+            otpHash: '5555',
+            otpPurpose: 'PASSWORD_RESET',
+            otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
+            authLockUntil: new Date(Date.now() + 60 * 1000)
+        });
+
+        UserAccount.findOne.mockResolvedValue(user);
+
+        const response = await request(app)
+            .post('/api/auth/forgot-password/reset')
+            .send({
+                phoneNumber: '+254711000001',
+                otp: '5555',
+                newPassword: 'NewStrongPass!123'
+            });
+
+        expect(response.status).toBe(423);
+        expect(response.body.retryAfterSeconds).toBeGreaterThan(0);
+        expect(bcrypt.compare).not.toHaveBeenCalled();
+    });
+
+    test('returns 403 and skips OTP comparison when the account is suspended/banned', async () => {
+        const user = buildUser({
+            hashedPassword: 'old-hash',
+            otpHash: '5555',
+            otpPurpose: 'PASSWORD_RESET',
+            otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
+            accountStatus: 'SUSPENDED'
+        });
+
+        UserAccount.findOne.mockResolvedValue(user);
+
+        const response = await request(app)
+            .post('/api/auth/forgot-password/reset')
+            .send({
+                phoneNumber: '+254711000001',
+                otp: '5555',
+                newPassword: 'NewStrongPass!123'
+            });
+
+        expect(response.status).toBe(403);
+        expect(bcrypt.compare).not.toHaveBeenCalled();
+    });
+
+    // Bug fix: completeSignup now wraps the password write, profile creation, and
+    // channel provisioning in one transaction, so a failure partway through rolls
+    // back instead of stranding a password-set account with no SurvivorProfile.
+    test('rolls back the signup transaction (not committed) when profile creation fails', async () => {
+        const user = buildUser({
+            hashedPassword: null,
+            isOtpVerified: true,
+            otpHash: 'hashed-ticket',
+            otpPurpose: 'SIGNUP_TICKET',
+            otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000)
+        });
+
+        UserAccount.findOne.mockResolvedValue(user);
+        SurvivorProfile.create.mockRejectedValue(new Error('DB write failed'));
+
+        const response = await request(app)
+            .post('/api/auth/complete-signup')
+            .send({
+                phoneNumber: '+254711000001',
+                signupTicket: 'some-ticket',
+                password: 'StrongPass!123'
+            });
+
+        expect(response.status).toBe(500);
+        expect(mockSignupTransaction.rollback).toHaveBeenCalled();
+        expect(mockSignupTransaction.commit).not.toHaveBeenCalled();
+    });
+
+    test('set-password requires currentPassword for non-forced-reset accounts', async () => {
+        const user = buildUser({
+            status: 'active',
+            hashedPassword: 'stored-hash'
+        });
+        UserAccount.findByPk.mockResolvedValue(user);
+
+        const response = await request(app)
+            .post('/api/auth/set-password')
+            .send({ password: 'NewStrongPass!123' });
+
+        expect(response.status).toBe(401);
+        expect(response.body.error).toMatch(/current password is required/i);
+    });
+
+    test('set-password rejects wrong currentPassword for non-forced-reset accounts', async () => {
+        const user = buildUser({
+            status: 'active',
+            hashedPassword: 'stored-hash'
+        });
+        UserAccount.findByPk.mockResolvedValue(user);
+        bcrypt.compare.mockResolvedValueOnce(false);
+
+        const response = await request(app)
+            .post('/api/auth/set-password')
+            .send({ password: 'NewStrongPass!123', currentPassword: 'WrongPass!123' });
+
+        expect(response.status).toBe(401);
+        expect(response.body.error).toMatch(/current password is incorrect/i);
+    });
+
+    test('set-password accepts correct currentPassword for non-forced-reset accounts', async () => {
+        const user = buildUser({
+            status: 'active',
+            hashedPassword: 'stored-hash'
+        });
+        UserAccount.findByPk.mockResolvedValue(user);
+        bcrypt.compare.mockResolvedValueOnce(true);
+
+        const response = await request(app)
+            .post('/api/auth/set-password')
+            .send({ password: 'NewStrongPass!123', currentPassword: 'CurrentPass!123' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.message).toMatch(/password set successfully/i);
+        expect(bcrypt.hash).toHaveBeenCalledWith('NewStrongPass!123', 10);
+    });
+
+    test('set-password allows forced-reset flow without currentPassword', async () => {
+        const user = buildUser({
+            status: 'password_reset_required',
+            hashedPassword: 'stored-hash'
+        });
+        UserAccount.findByPk.mockResolvedValue(user);
+
+        const response = await request(app)
+            .post('/api/auth/set-password')
+            .send({ password: 'NewStrongPass!123' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.message).toMatch(/password set successfully/i);
+        expect(user.status).toBe('active');
     });
 });

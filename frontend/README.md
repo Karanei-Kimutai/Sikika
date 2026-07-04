@@ -75,7 +75,7 @@ Route layers:
 
 - public routes for unauthenticated users
 - role-aware mappings for NGO admin
-- role-aware mappings for system admin
+- role-aware mappings for moderator
 
 Protected route behavior:
 
@@ -120,7 +120,7 @@ Main implementation: src/App.jsx
 Behavior:
 
 - app polls GET /api/system/public-status every 15 seconds
-- if maintenance is enabled, non-system-admin users see maintenance screen
+- if maintenance is enabled, non-NGO-admin users see maintenance screen
 - maintenance screen shows:
 	- reason
 	- last update timestamp
@@ -133,9 +133,9 @@ Main implementation: src/pages/AuthPage.jsx
 
 Supported flows:
 
-1. password sign-in
-2. OTP sign-in
-3. OTP signup + password setup
+1. password sign-in (step 1)
+2. mandatory OTP 2FA verification after password match (step 2)
+3. 3-step signup: request OTP -> verify OTP (signup ticket) -> complete signup details
 4. forgot password reset by OTP
 5. forced first-login password reset for staff
 
@@ -192,7 +192,7 @@ Key capabilities:
 - does **not** have access to Team Capacity, Command Center, Staff Directory, USSD
   Callbacks, or the maintenance-mode toggle — those remain NGO_ADMIN-only
 
-Maintenance mode (the one System Admin capability still needed) now lives as a toggle
+Maintenance mode now lives as a toggle
 bar inside the NGO Admin dashboard, wired to the same `/api/admin/system/maintenance-mode`
 endpoint, re-gated to `NGO_ADMIN`.
 
@@ -294,7 +294,7 @@ Behavior:
 ## Service Layer Reference
 
 Admin service functions: src/services/admin.js (NGO_ADMIN is the only admin role —
-System Admin's infra/logs/runtime-action calls were removed along with that role)
+Legacy infra/logs/runtime-action calls were removed with the old role model)
 
 - getNgoAdminDashboard
 - runAdminSearch
@@ -334,5 +334,5 @@ Seeded users:
 - 403 login on staff: account may be suspended/deactivated
 - maintenance screen always visible: verify backend maintenance mode status
 - empty API lists: verify VITE_API_BASE_URL and backend process state
-- missing live logs: confirm system admin token and /api/admin/system/logs reachability
+- missing maintenance updates: confirm NGO admin token and /api/system/public-status reachability
 - resource View/Download fails: backend proxies the file — confirm backend is running and Cloudinary env vars are set; see [docs/cloudinary.md](../docs/cloudinary.md)

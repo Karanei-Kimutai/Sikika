@@ -149,6 +149,13 @@ function roleForbidden(res, allowedRoles) {
 }
 
 /**
+ * Treat user search text literally by escaping SQL LIKE wildcards.
+ */
+function escapeLikePattern(term) {
+  return String(term).replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
+/**
  * Formats a date value into a UTC "YYYY-MM-DD" string for use as a
  * time-series bucket key in analytics aggregations.
  *
@@ -381,7 +388,7 @@ async function getReassignmentSuggestions(req, res) {
  * - ensures direct-chat channels match new assignment topology
  * - refreshes workload scores for staff dashboards
  */
-async function applySurvivorReassignment({ survivorId, counsellorId = null, legalCounselId = null, reason }) {
+async function applySurvivorReassignment({ survivorId, counsellorId, legalCounselId, reason }) {
   const survivor = await SurvivorProfile.findByPk(survivorId);
   if (!survivor) {
     const error = new Error('Survivor profile not found.');
@@ -389,7 +396,7 @@ async function applySurvivorReassignment({ survivorId, counsellorId = null, lega
     throw error;
   }
 
-  if (counsellorId) {
+  if (counsellorId !== undefined && counsellorId !== null) {
     const counsellor = await CounsellorProfile.findByPk(counsellorId);
     if (!counsellor) {
       const error = new Error('Counsellor profile not found.');
@@ -398,7 +405,7 @@ async function applySurvivorReassignment({ survivorId, counsellorId = null, lega
     }
   }
 
-  if (legalCounselId) {
+  if (legalCounselId !== undefined && legalCounselId !== null) {
     const legalCounsel = await LegalCounselProfile.findByPk(legalCounselId);
     if (!legalCounsel) {
       const error = new Error('Legal counsel profile not found.');
@@ -407,16 +414,20 @@ async function applySurvivorReassignment({ survivorId, counsellorId = null, lega
     }
   }
 
+  // Undefined means "preserve current value" while null means "clear assignment".
+  const nextCounsellorId = counsellorId === undefined ? survivor.assignedCounsellorId : counsellorId;
+  const nextLegalCounselId = legalCounselId === undefined ? survivor.assignedLegalCounselId : legalCounselId;
+
   await survivor.update({
-    assignedCounsellorId: counsellorId || null,
-    assignedLegalCounselId: legalCounselId || null
+    assignedCounsellorId: nextCounsellorId || null,
+    assignedLegalCounselId: nextLegalCounselId || null
   });
 
   await StaffAssignmentHistory.create({
     assignmentHistoryId: randomUUID(),
     survivorId: survivor.survivorId,
-    counsellorId: survivor.assignedCounsellorId,
-    legalCounselId: survivor.assignedLegalCounselId,
+    counsellorId: nextCounsellorId || null,
+    legalCounselId: nextLegalCounselId || null,
     assignmentReason: String(reason || '').trim() || 'Manual reassignment by NGO Admin'
   });
 
@@ -427,8 +438,8 @@ async function applySurvivorReassignment({ survivorId, counsellorId = null, lega
 
   return {
     survivorId: survivor.survivorId,
-    counsellorId: survivor.assignedCounsellorId,
-    legalCounselId: survivor.assignedLegalCounselId
+    counsellorId: nextCounsellorId || null,
+    legalCounselId: nextLegalCounselId || null
   };
 }
 
@@ -1079,13 +1090,14 @@ async function globalSearch(req, res) {
     if (!q) {
       return res.json({ results: [] });
     }
+    const pattern = `%${escapeLikePattern(q)}%`;
 
     const [reportMatches, userMatches] = await Promise.all([
       IncidentReport.findAll({
         attributes: ['reportId', 'currentReportStatus', 'severityLevel', 'reportCreationTimestamp'],
         where: {
           reportId: {
-            [Op.like]: `%${q}%`
+            [Op.like]: pattern
           }
         },
         limit: 8,
@@ -1096,8 +1108,8 @@ async function globalSearch(req, res) {
         attributes: ['userId', 'phoneNumber', 'userRole', 'accountStatus'],
         where: {
           [Op.or]: [
-            { userId: { [Op.like]: `%${q}%` } },
-            { phoneNumber: { [Op.like]: `%${q}%` } }
+            { userId: { [Op.like]: pattern } },
+            { phoneNumber: { [Op.like]: pattern } }
           ]
         },
         limit: 8,
@@ -1404,9 +1416,10 @@ async function updateStaffAccountStatus(req, res) {
  *  - ModerationActionLog (type: 'BAN') for moderation review workflows.
  *  - AuditLog (type: 'ACCOUNT_BANNED') for the general platform audit trail.
  *
- * Known limitation: banning a COUNSELLOR or LEGAL_COUNSEL does NOT
- * automatically reassign their active survivor caseload. NGO admins should
- * use the staff reassignment workflow after banning a staff member.
+ * Staff-ban continuity: banning a COUNSELLOR or LEGAL_COUNSEL triggers
+ * an asynchronous cascade reassignment attempt for impacted survivors.
+ * If no replacement candidate exists, those survivors remain assigned to the
+ * banned staff member until an NGO admin performs manual reassignment.
  *
  * @param {import('express').Request}  req
  * @param {import('express').Response} res
@@ -1711,16 +1724,19 @@ async function cascadeReassignOnStaffBan(bannedUserId, targetRole, reason) {
 
       const affectedSurvivors = await SurvivorProfile.findAll({
         where: { assignedCounsellorId: bannedProfile.counsellorId },
-        attributes: ['survivorId', 'assignedCounsellorId']
+        attributes: ['survivorId', 'assignedCounsellorId', 'assignedLegalCounselId']
       });
 
       if (affectedSurvivors.length === 0) return;
 
-      // Pick replacement: AVAILABLE counsellor with lowest workload, excluding the banned one.
-      const replacement = await getLeastLoadedStaff(CounsellorProfile, 'counsellorId', bannedProfile.counsellorId);
-      const replacementId = replacement?.counsellorId || null;
-
       for (const survivor of affectedSurvivors) {
+        // Re-picked fresh per survivor (not hoisted before the loop) so a caseload
+        // of many survivors is spread across staff instead of dumped on whichever
+        // counsellor happened to be least-loaded before any reassignment happened.
+        // applySurvivorReassignment awaits refreshWorkloadScores() internally, so
+        // each iteration sees the updated currentWorkloadScore from the prior one.
+        const replacement = await getLeastLoadedStaff(CounsellorProfile, 'counsellorId', bannedProfile.counsellorId);
+        const replacementId = replacement?.counsellorId || null;
         if (!replacementId) {
           console.warn('[banCascade] No replacement counsellor found for survivor', survivor.survivorId);
           continue;
@@ -1728,7 +1744,6 @@ async function cascadeReassignOnStaffBan(bannedUserId, targetRole, reason) {
         await applySurvivorReassignment({
           survivorId: survivor.survivorId,
           counsellorId: replacementId,
-          legalCounselId: null,
           reason: `Auto-reassigned: assigned counsellor was banned. ${reason}`
         }).catch((err) =>
           console.error('[banCascade] counsellor reassignment failed for survivor', survivor.survivorId, err)
@@ -1743,22 +1758,21 @@ async function cascadeReassignOnStaffBan(bannedUserId, targetRole, reason) {
 
       const affectedSurvivors = await SurvivorProfile.findAll({
         where: { assignedLegalCounselId: bannedProfile.legalCounselId },
-        attributes: ['survivorId', 'assignedLegalCounselId']
+        attributes: ['survivorId', 'assignedCounsellorId', 'assignedLegalCounselId']
       });
 
       if (affectedSurvivors.length === 0) return;
 
-      const replacement = await getLeastLoadedStaff(LegalCounselProfile, 'legalCounselId', bannedProfile.legalCounselId);
-      const replacementId = replacement?.legalCounselId || null;
-
       for (const survivor of affectedSurvivors) {
+        // Re-picked fresh per survivor — see matching comment in the COUNSELLOR branch above.
+        const replacement = await getLeastLoadedStaff(LegalCounselProfile, 'legalCounselId', bannedProfile.legalCounselId);
+        const replacementId = replacement?.legalCounselId || null;
         if (!replacementId) {
           console.warn('[banCascade] No replacement legal counsel found for survivor', survivor.survivorId);
           continue;
         }
         await applySurvivorReassignment({
           survivorId: survivor.survivorId,
-          counsellorId: null,
           legalCounselId: replacementId,
           reason: `Auto-reassigned: assigned legal counsel was banned. ${reason}`
         }).catch((err) =>

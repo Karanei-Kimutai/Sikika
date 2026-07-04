@@ -1,32 +1,19 @@
-import axios from "axios";
-import { getToken } from "../utils/auth";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+import apiClient from "./apiClient";
 
 /**
  * resources.js
  * ------------
  * Thin API client for the public support-resource library and the staff/NGO-admin
- * resource management endpoints. Public read endpoints omit the auth header;
- * write endpoints (create, update, delete) require COUNSELLOR, LEGAL_COUNSEL, or
- * NGO_ADMIN credentials.
+ * resource management endpoints. Public read endpoints get no Authorization header
+ * since there's no session; write endpoints (create, update, delete) require
+ * COUNSELLOR, LEGAL_COUNSEL, or NGO_ADMIN credentials, attached automatically by
+ * apiClient when a session token is present.
  *
  * Cloudinary note: resource files are stored as `type: authenticated` private
  * assets and delivered through a backend streaming proxy. This service never
  * constructs or exposes Cloudinary URLs — the file download flow goes through
  * GET /api/resources/:id/file, not a signed URL returned here.
  */
-
-/**
- * Returns the Authorization header for authenticated write requests.
- * Returns an empty object for unauthenticated calls (read endpoints).
- *
- * @returns {{ Authorization: string } | {}}
- */
-function getAuthHeaders() {
-  const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
 
 /**
  * Fetches the public list of support resources. No auth header is sent —
@@ -39,7 +26,7 @@ function getAuthHeaders() {
  * @returns {Promise<{ resources: object[], categories: { value: string, label: string }[] }>}
  */
 export async function getResources({ search = "", category = "all" } = {}) {
-  const response = await axios.get(`${API_BASE_URL}/api/resources`, {
+  const response = await apiClient.get("/api/resources", {
     params: {
       search: search || undefined,
       category: category === "all" ? undefined : category
@@ -68,11 +55,8 @@ export async function createResource({ title, description, category, file }) {
   formData.append("category", category);
   formData.append("file", file);
 
-  const response = await axios.post(`${API_BASE_URL}/api/resources`, formData, {
-    headers: {
-      ...getAuthHeaders(),
-      "Content-Type": "multipart/form-data"
-    }
+  const response = await apiClient.post("/api/resources", formData, {
+    headers: { "Content-Type": "multipart/form-data" }
   });
 
   return response.data;
@@ -100,11 +84,8 @@ export async function updateResource(resourceId, { title, description, category,
   if (category !== undefined) formData.append("category", category);
   if (file) formData.append("file", file);
 
-  const response = await axios.patch(`${API_BASE_URL}/api/resources/${resourceId}`, formData, {
-    headers: {
-      ...getAuthHeaders(),
-      "Content-Type": "multipart/form-data"
-    }
+  const response = await apiClient.patch(`/api/resources/${resourceId}`, formData, {
+    headers: { "Content-Type": "multipart/form-data" }
   });
 
   return response.data;
@@ -118,9 +99,7 @@ export async function updateResource(resourceId, { title, description, category,
  * @returns {Promise<void>}
  */
 export async function deleteResource(resourceId) {
-  await axios.delete(`${API_BASE_URL}/api/resources/${resourceId}`, {
-    headers: getAuthHeaders()
-  });
+  await apiClient.delete(`/api/resources/${resourceId}`);
 }
 
 /**
@@ -133,8 +112,5 @@ export async function deleteResource(resourceId) {
  * @returns {Promise<void>}
  */
 export async function trackResourceAccess(resourceId) {
-  const token = getToken();
-  const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-
-  await axios.post(`${API_BASE_URL}/api/resources/${resourceId}/track-access`, {}, { headers });
+  await apiClient.post(`/api/resources/${resourceId}/track-access`, {});
 }

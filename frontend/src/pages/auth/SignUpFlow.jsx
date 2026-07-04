@@ -1,7 +1,5 @@
 import { useMemo, useState } from "react";
-import axios from "axios";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+import apiClient from "../../services/apiClient";
 
 /**
  * Auth intent discriminator sent in OTP requests so the backend can apply the
@@ -61,7 +59,7 @@ export default function SignUpFlow({
     clearMessages();
     setLoading(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/auth/request-otp`, {
+      const response = await apiClient.post(`/api/auth/request-otp`, {
         phoneNumber: signupPhone.trim(),
         authIntent: AUTH_INTENTS.SIGNUP_OTP
       });
@@ -98,7 +96,7 @@ export default function SignUpFlow({
     clearMessages();
     setLoading(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/auth/verify-otp`, {
+      const response = await apiClient.post(`/api/auth/verify-otp`, {
         phoneNumber: signupPhone.trim(),
         otp: signupOtp.trim()
       });
@@ -131,7 +129,7 @@ export default function SignUpFlow({
     clearMessages();
     setLoading(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/auth/complete-signup`, {
+      const response = await apiClient.post(`/api/auth/complete-signup`, {
         phoneNumber: signupPhone.trim(),
         signupTicket,
         password: signupPassword.trim(),

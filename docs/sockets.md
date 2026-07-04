@@ -13,7 +13,7 @@ There is no dedicated Socket.io namespace (`/chat`, `/community`, etc.) — ever
 
 ## Authentication Model
 
-Every WebSocket connection must carry a valid JWT. Both socket handlers extract the token using the same helper pattern:
+Every WebSocket connection must carry a valid JWT. Both socket handlers extract the token and check account status using the same shared helper module, `backend/src/services/socketAuthService.js` — this was previously duplicated byte-for-byte in `chatSocket.js` and `communitySocket.js`; it now exports `getTokenFromHandshake`, `resolveUserIdFromTokenClaims`, and `isUserAccountActive`, and both handlers `require` it instead of defining their own copies:
 
 1. `socket.handshake.auth.token` (preferred — set by socket.io-client `auth` option)
 2. `Authorization: Bearer <token>` HTTP upgrade header (fallback for non-browser clients)
@@ -22,9 +22,11 @@ If no token is present or the JWT signature is invalid, the connection is **disc
 
 ### Account status re-check
 
-JWTs are long-lived. To enforce bans and suspensions applied after token issuance, both handlers query `UserAccount.accountStatus` from the database at connection time and reject any account that is not `ACTIVE`.
+JWTs are long-lived. To enforce bans and suspensions applied after token issuance, both handlers query `UserAccount.accountStatus` from the database (via `isUserAccountActive`, which fails closed on any DB error) at connection time and reject any account that is not `ACTIVE`.
 
-`chatSocket.js` additionally re-checks `accountStatus` on **every `sendEncryptedMessage` event** (not just connection) so a ban applied mid-session takes effect on the next message attempt without requiring a reconnect.
+`chatSocket.js` additionally re-checks `accountStatus` on **every `sendEncryptedMessage` event** (not just connection) so a ban applied mid-session takes effect on the next message attempt without requiring a reconnect. It also re-reads `presenceRegistry.isOnline(recipientUserId)` a second time, immediately before deciding whether to emit `message:delivered` — the DB write for `deliveredAt` still uses the earlier presence snapshot taken before `DirectChatMessage.create()`, but the live emit uses a fresh read taken after it, so a recipient who disconnects during that DB round-trip doesn't get a `message:delivered` event sent to a now-empty room (they still catch up via `runDeliveryCatchUp` on reconnect).
+
+`communitySocket.js` re-checks `accountStatus` the same way, per-event, on **both** `joinCommunityRoom` and `joinModerationFeed` (not just at connection) — a ban applied mid-session now also blocks a community-room or moderation-feed join without waiting for the socket to reconnect. On failure it emits `community:error` and disconnects the socket, matching `chatSocket.js`'s pattern.
 
 ---
 
@@ -53,6 +55,7 @@ Handles private direct-chat between a survivor and a support staff member.
 |---|---|---|
 | `joinChannel` | `chatId: string` | Joins the socket.io room for a specific direct-chat channel. Membership is verified via `canUserAccessChannel` before the join is accepted. |
 | `sendEncryptedMessage` | `{ chatId, encryptedPayload }` | Persists an encrypted message and broadcasts it to the channel room. Account status and channel access are re-checked on every call. The server stores and relays only ciphertext — plaintext is never seen. |
+| `editEncryptedMessage` | `{ chatId, messageId, encryptedPayload }` | Overwrites an existing message's ciphertext and sets `editedAt`. Only the original sender may edit (checked server-side against `senderUserId`); rejected with `messageError` otherwise. No edit history is kept. |
 
 **Server → Client events:**
 
@@ -60,6 +63,7 @@ Handles private direct-chat between a survivor and a support staff member.
 |---|---|---|
 | `receiveMessage` | Saved `DirectChatMessage` row | Broadcast to everyone in the `chatId` room when a new message is persisted. |
 | `message:delivered` | `{ chatId, messageIds[], deliveredAt }` | Sent to the channel room and the sender's personal `user:<userId>` room when delivery is confirmed. |
+| `message:edited` | `{ chatId, messageId, encryptedPayload, editedAt }` | Broadcast to the channel room when a message is edited. Clients decrypt the new ciphertext and replace the displayed text. |
 | `presence:update` | `{ staffUserId, chatId, presence }` | Sent to a survivor's `user:<userId>` room when their staff member's online/offline status changes. |
 | `messageError` | `{ error: string }` | Sent to the emitting socket when auth fails, channel access is denied, or a message cannot be saved. |
 
@@ -92,8 +96,8 @@ Note: the actual `community:new-message`, `community:message-updated`, and `comm
 
 | Event | Payload | Description |
 |---|---|---|
-| `joinCommunityRoom` | `roomId: string` | Joins `community-room:<roomId>`. Rejected with `community:error` if the user does not have an existing `RoomMembership` row (i.e., must first join via the REST API). |
-| `joinModerationFeed` | _(none)_ | Joins `community-moderation`. Only allowed for `NGO_ADMIN` role. |
+| `joinCommunityRoom` | `roomId: string` | Re-checks `accountStatus` first (see above), then joins `community-room:<roomId>`. Rejected with `community:error` if the account is no longer `ACTIVE`, or if the user does not have an existing `RoomMembership` row (i.e., must first join via the REST API). |
+| `joinModerationFeed` | _(none)_ | Re-checks `accountStatus` first, then joins `community-moderation`. Only allowed for `NGO_ADMIN` role — this role check is against connection-time `socket.data.role`, so it won't catch a mid-session role change, only a ban/suspension. |
 
 **Server → Client events (broadcast from communityController.js):**
 

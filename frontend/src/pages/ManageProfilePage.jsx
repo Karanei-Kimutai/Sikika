@@ -1,18 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import axios from "axios";
+import apiClient from "../services/apiClient";
 import { User, Phone, ShieldCheck } from "lucide-react";
-import { getToken } from "../utils/auth";
 import { fadeInUp } from "../utils/motion";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
-
-/**
- * @returns {{ Authorization: string } | {}}
- */
-function getAuthHeaders() {
-  const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
 
 /**
  * ManageProfilePage
@@ -57,9 +46,7 @@ function ManageProfilePage() {
       setErrorMessage("");
 
       try {
-        const response = await axios.get(`${API_BASE_URL}/api/profile/me`, {
-          headers: getAuthHeaders()
-        });
+        const response = await apiClient.get(`/api/profile/me`);
 
         const data = response.data;
         setProfileData(data);
@@ -123,9 +110,7 @@ function ManageProfilePage() {
         };
       }
 
-      await axios.patch(`${API_BASE_URL}/api/profile/me`, payload, {
-        headers: getAuthHeaders()
-      });
+      await apiClient.patch(`/api/profile/me`, payload);
 
       setSuccessMessage("Profile updated successfully.");
     } catch (error) {

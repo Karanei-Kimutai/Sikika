@@ -38,6 +38,8 @@ import { staggerIn } from "../../utils/motion";
  * @param {Function} props.onStaffCreate          - (event) → void (form submit handler).
  * @param {Function} props.onOpenBanModal         - (userId, label) → void.
  * @param {Function} props.onUnban                - (userId, label) → void.
+ * @param {string|null} props.unbanningId          - userId currently being unbanned, for
+ *                                                   disabling the Lift Ban button while in flight.
  * @param {Function} props.onReviewRequest        - (requestId, status) → void.
  */
 export default function TeamCapacitySection({
@@ -61,6 +63,7 @@ export default function TeamCapacitySection({
   onStaffCreate,
   onOpenBanModal,
   onUnban,
+  unbanningId,
   onReviewRequest
 }) {
   const workloadRef = useRef(null);
@@ -205,9 +208,11 @@ export default function TeamCapacitySection({
                         <button
                           type="button"
                           className="admin-action-btn"
+                          disabled={Boolean(unbanningId)}
                           onClick={() => onUnban(staff.userId, staff.label)}
                         >
-                          <UserCheck size={13} aria-hidden="true" /> Lift Ban
+                          <UserCheck size={13} aria-hidden="true" />
+                          {unbanningId === staff.userId ? "Lifting…" : "Lift Ban"}
                         </button>
                       ) : staff.userId && status !== "DEACTIVATED" && (
                         <>
@@ -440,7 +445,7 @@ export default function TeamCapacitySection({
                         <button
                           type="button"
                           className="admin-action-btn"
-                          disabled={reviewingRequestId === request.requestId}
+                          disabled={Boolean(reviewingRequestId)}
                           onClick={() => onReviewRequest(request.requestId, "APPROVED")}
                         >
                           {reviewingRequestId === request.requestId ? "Working..." : "Approve"}
@@ -448,7 +453,7 @@ export default function TeamCapacitySection({
                         <button
                           type="button"
                           className="secondary-btn"
-                          disabled={reviewingRequestId === request.requestId}
+                          disabled={Boolean(reviewingRequestId)}
                           onClick={() => onReviewRequest(request.requestId, "REJECTED")}
                         >
                           Reject

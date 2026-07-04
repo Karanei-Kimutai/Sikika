@@ -26,6 +26,12 @@ import { staggerIn } from "../../utils/motion";
  * @param {Function}  props.onModerationAction        - (reportId, action) → void.
  * @param {Function}  props.onOpenBanModal            - (userId, label, reportId) → void.
  * @param {Function}  props.onUnban                   - (userId, label) → void.
+ * @param {string|null} props.unbanningId             - userId currently being unbanned via
+ *                                                      onUnban (Staff Directory / Reports Queue
+ *                                                      path), for disabling the Lift Ban button
+ *                                                      while in flight. Distinct from
+ *                                                      liftingBanId, which guards the separate
+ *                                                      Banned Users registry path (onLiftBan).
  * @param {Array}     props.bannedUsers               - Banned-accounts list for the registry tab.
  * @param {boolean}   props.bannedUsersLoading        - Loading state for the registry.
  * @param {string}    props.bannedUsersFilter         - Current role filter value.
@@ -40,8 +46,10 @@ export default function ModerationDeskSection({
   selectedModerationRow,
   setSelectedModerationRow,
   onModerationAction,
+  reviewingModerationReportId,
   onOpenBanModal,
   onUnban,
+  unbanningId,
   bannedUsers,
   bannedUsersLoading,
   bannedUsersFilter,
@@ -86,18 +94,22 @@ export default function ModerationDeskSection({
       {/* ── Internal tab bar ─────────────────────────────────────────────── */}
       <div className="moderation-tab-bar" role="tablist" aria-label="Moderation sub-sections">
         <button
+          id="moderation-reports-tab"
           type="button"
           role="tab"
           aria-selected={activeTab === "reports"}
+          aria-controls="moderation-reports-panel"
           className={`moderation-tab-btn${activeTab === "reports" ? " active" : ""}`}
           onClick={() => handleTabSwitch("reports")}
         >
           Reports Queue
         </button>
         <button
+          id="moderation-banned-tab"
           type="button"
           role="tab"
           aria-selected={activeTab === "banned"}
+          aria-controls="moderation-banned-panel"
           className={`moderation-tab-btn${activeTab === "banned" ? " active" : ""}`}
           onClick={() => handleTabSwitch("banned")}
         >
@@ -107,7 +119,13 @@ export default function ModerationDeskSection({
 
       {/* ── Reports Queue tab ────────────────────────────────────────────── */}
       {activeTab === "reports" && (
-        <section className="admin-module-grid" aria-label="Moderation desk">
+        <section
+          id="moderation-reports-panel"
+          role="tabpanel"
+          aria-labelledby="moderation-reports-tab"
+          className="admin-module-grid"
+          aria-label="Moderation desk"
+        >
           <article className="admin-panel full-span">
             <h2>Community Moderation Queue</h2>
             <div className="admin-table-wrap" ref={tableRef}>
@@ -138,6 +156,7 @@ export default function ModerationDeskSection({
                         <button
                           type="button"
                           className="admin-action-btn"
+                          disabled={Boolean(reviewingModerationReportId)}
                           onClick={() => onModerationAction(row.reportId, "remove_message")}
                         >
                           <Trash2 size={13} aria-hidden="true" /> Delete Message
@@ -145,6 +164,7 @@ export default function ModerationDeskSection({
                         <button
                           type="button"
                           className="admin-action-btn"
+                          disabled={Boolean(reviewingModerationReportId)}
                           onClick={() => onModerationAction(row.reportId, "issue_warning")}
                         >
                           Issue Warning
@@ -157,14 +177,17 @@ export default function ModerationDeskSection({
                             <button
                               type="button"
                               className="admin-action-btn"
+                              disabled={Boolean(unbanningId)}
                               onClick={() => onUnban(row.senderUserId, `Community Member ${row.senderUserId.slice(0, 8)}`)}
                             >
-                              <UserCheck size={13} aria-hidden="true" /> Lift Ban
+                              <UserCheck size={13} aria-hidden="true" />
+                              {unbanningId === row.senderUserId ? "Lifting…" : "Lift Ban"}
                             </button>
                           ) : (
                             <button
                               type="button"
                               className="admin-action-btn danger"
+                              disabled={Boolean(reviewingModerationReportId)}
                               onClick={() => onOpenBanModal(
                                 row.senderUserId,
                                 `Community Member ${row.senderUserId.slice(0, 8)}`,
@@ -187,14 +210,20 @@ export default function ModerationDeskSection({
 
       {/* ── Banned Users tab ─────────────────────────────────────────────── */}
       {activeTab === "banned" && (
-        <BannedUsersSection
-          bannedUsers={bannedUsers}
-          bannedUsersLoading={bannedUsersLoading}
-          bannedUsersFilter={bannedUsersFilter}
-          setBannedUsersFilter={setBannedUsersFilter}
-          liftingBanId={liftingBanId}
-          onLiftBan={onLiftBan}
-        />
+        <section
+          id="moderation-banned-panel"
+          role="tabpanel"
+          aria-labelledby="moderation-banned-tab"
+        >
+          <BannedUsersSection
+            bannedUsers={bannedUsers}
+            bannedUsersLoading={bannedUsersLoading}
+            bannedUsersFilter={bannedUsersFilter}
+            setBannedUsersFilter={setBannedUsersFilter}
+            liftingBanId={liftingBanId}
+            onLiftBan={onLiftBan}
+          />
+        </section>
       )}
 
       {/* ── Moderation detail dialog (mounted here, visible on top of table) ── */}

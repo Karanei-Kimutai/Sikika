@@ -31,6 +31,18 @@ const HarmfulContentReport = sequelize.define('harmfulContentReport', {
     allowNull: false,
     comment:   'FK to userAccount — the user who flagged the message'
   },
+
+  reportedSenderUserId: {
+    type:      DataTypes.STRING(36),
+    allowNull: true,
+    comment:   'Snapshot of the reported message sender userId for moderation fallback when message is deleted'
+  },
+
+  reportedRoomId: {
+    type:      DataTypes.STRING(36),
+    allowNull: true,
+    comment:   'Snapshot of roomId for moderation/event context fallback when message is deleted'
+  },
  
   reportReasonText: {
     type:      DataTypes.TEXT,
