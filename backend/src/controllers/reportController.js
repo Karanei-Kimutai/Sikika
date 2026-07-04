@@ -576,6 +576,24 @@ async function updateOwnReport(req, res) {
   return res.json({ report: toApiReport(report) });
 }
 
+/**
+ * POST /api/reports/:reportId/withdraw
+ * -------------------------------------
+ * Lets a survivor withdraw their own report, subject to explicit confirmation
+ * and the same status-transition rules staff-facing updates go through.
+ *
+ * - Requires the caller to be the survivor who owns the report.
+ * - Requires `confirmWithdraw: true` in the body (a one-way action, so the
+ *   frontend must show a confirmation step before calling this).
+ * - Rejects (409) if WITHDRAWN is not a valid transition from the report's
+ *   current status per STATUS_TRANSITIONS — e.g. a report already RESOLVED,
+ *   WITHDRAWN, or ESCALATED_TO_LEGAL_CASE cannot be withdrawn, since that
+ *   would leave a dangling legal case or contradict a terminal state.
+ *
+ * @param {import('express').Request}  req - Params: { reportId }. Body: { confirmWithdraw }.
+ * @param {import('express').Response} res
+ * @returns {Promise<void>}
+ */
 async function withdrawReport(req, res) {
   const actor = await getActorContext(req);
 
@@ -597,6 +615,16 @@ async function withdrawReport(req, res) {
 
   if (report.survivorId !== actor.survivorId) {
     return res.status(403).json({ error: "You can only withdraw your own reports." });
+  }
+
+  // Enforce the same transition guard as updateReportStatus — a report already
+  // escalated to a legal case or resolved/withdrawn cannot be withdrawn, since
+  // doing so would leave a dangling legal case or contradict a terminal state.
+  const allowedTransitions = STATUS_TRANSITIONS[report.currentReportStatus] || [];
+  if (!allowedTransitions.includes(REPORT_STATUS.WITHDRAWN)) {
+    return res.status(409).json({
+      error: `Invalid status transition from ${report.currentReportStatus} to ${REPORT_STATUS.WITHDRAWN}.`
+    });
   }
 
   report.currentReportStatus = REPORT_STATUS.WITHDRAWN;
