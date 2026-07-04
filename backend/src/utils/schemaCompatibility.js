@@ -165,6 +165,44 @@ async function ensureUserRoleEnum(sequelize) {
 }
 
 /**
+ * Ensures the incidentReport.currentReportStatus ENUM includes the full
+ * current 10-member workflow set (ACTIVE_SUPPORT, UNDER_INVESTIGATION,
+ * LEGAL_REVIEW, ESCALATED_TO_LEGAL_CASE were added after the column's
+ * original 6-member definition).
+ *
+ * This is a widen-only change — the new set is a strict superset of the
+ * original, so existing row values are never rejected by the MODIFY and no
+ * data-backfill step is required (contrast with ensureAccountStatusEnum /
+ * ensureUserRoleEnum, which narrow their ENUMs and must normalize stale
+ * values first).
+ *
+ * @param {import('sequelize').Sequelize} sequelize
+ * @returns {Promise<"applied"|"skipped">}
+ */
+async function ensureIncidentReportStatusEnum(sequelize) {
+  const metadata = await getColumnMetadata(sequelize, "incidentReport", "currentReportStatus");
+  const enumDefinition = String(metadata?.columnType || "").toUpperCase();
+
+  // Already includes the newest member — the full target set is present.
+  if (enumDefinition.includes("'ESCALATED_TO_LEGAL_CASE'")) return "skipped";
+
+  await sequelize.query(
+    `
+      ALTER TABLE ${quoteIdentifier("incidentReport")}
+      MODIFY COLUMN ${quoteIdentifier("currentReportStatus")}
+      ENUM(
+        'SUBMITTED','UNDER_REVIEW','ACTIVE_SUPPORT','UNDER_INVESTIGATION',
+        'LEGAL_REVIEW','ESCALATED_TO_LEGAL_CASE','IN_PROGRESS','ESCALATED',
+        'RESOLVED','WITHDRAWN'
+      )
+      NOT NULL DEFAULT 'SUBMITTED'
+    `
+  );
+
+  return "applied";
+}
+
+/**
  * Reconciles known compatibility columns and enum definitions on every startup.
  * Safe to run after sequelize.sync() — all checks are guarded by INFORMATION_SCHEMA
  * lookups and are idempotent (no-op when schema is already up-to-date).
@@ -226,6 +264,10 @@ async function ensureSchemaCompatibility(sequelize) {
   // ── ENUM: userAccount.userRole must include MODERATOR ─────────────────────
   const userRoleEnum = await ensureUserRoleEnum(sequelize);
   results.push(`userRole.ENUM=${userRoleEnum}`);
+
+  // ── ENUM: incidentReport.currentReportStatus must include the full workflow set ──
+  const currentReportStatusEnum = await ensureIncidentReportStatusEnum(sequelize);
+  results.push(`currentReportStatus.ENUM=${currentReportStatusEnum}`);
 
   // ── Column: ussdCallbackRequest.assignedCounsellorId ──────────────────────
   const assignedCounsellorId = await ensureColumnExists(
