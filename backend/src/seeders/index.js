@@ -353,6 +353,16 @@ async function seed() {
         legalCounselId:      assignedLegalCounsel.legalCounselId,
         assignmentReason:    'Initial auto-assignment at registration'
       });
+
+      // Mirror ensureSurvivorStaffAutoAssignment's workload increment
+      // (authController.js) so seeded staff show a currentWorkloadScore that
+      // matches their actual assigned-survivor count instead of staying at 0.
+      await CounsellorProfile.increment('currentWorkloadScore', {
+        where: { counsellorId: assignedCounsellor.counsellorId }
+      });
+      await LegalCounselProfile.increment('currentWorkloadScore', {
+        where: { legalCounselId: assignedLegalCounsel.legalCounselId }
+      });
     }
 
 
@@ -436,7 +446,11 @@ async function seed() {
     const legalCaseDraftA = {
       legalCaseId:         legalCaseId2,
       reportId:            reportId2,
-      currentCaseStatus:   'UNDER_INVESTIGATION',
+      // The companion report is seeded at ESCALATED_TO_LEGAL_CASE; the real
+      // ensureLegalCaseForWorkflow() (reportController.js) unconditionally
+      // forces the case to READY_FOR_SUBMISSION on that transition, so
+      // UNDER_INVESTIGATION here would be a status pairing the app can't produce.
+      currentCaseStatus:   'READY_FOR_SUBMISSION',
       escalationTimestamp: daysAgo(25),
       caseSummary:
         'Survivor reported a sexual violence incident in Nairobi CBD on 2026-05-01. ' +
@@ -547,7 +561,11 @@ async function seed() {
     await LegalCaseFile.create({
       legalCaseId:         id(),
       reportId:            legalReviewReportId,
-      currentCaseStatus:   'OPEN',
+      // The companion report is seeded at LEGAL_REVIEW; the real
+      // ensureLegalCaseForWorkflow() (reportController.js) always corrects
+      // OPEN -> UNDER_INVESTIGATION the moment a report enters LEGAL_REVIEW,
+      // so a case left at OPEN here is a state the app can't produce.
+      currentCaseStatus:   'UNDER_INVESTIGATION',
       escalationTimestamp: daysAgo(2)
     });
 
@@ -625,6 +643,10 @@ async function seed() {
     await RoomMembership.create({ membershipId: id(), roomId: roomId2, userId: survivorUserIds[0] });
     await RoomMembership.create({ membershipId: id(), roomId: roomId2, userId: survivorUserIds[3] });
     await RoomMembership.create({ membershipId: id(), roomId: roomId2, userId: survivorUserIds[4] });
+    // counsellorUserIds[1] posts into roomId1 below (additionalCommunityMessages);
+    // real postMessage() (communityController.js) always findOrCreates a
+    // RoomMembership before creating a message, so seed one here too.
+    await RoomMembership.create({ membershipId: id(), roomId: roomId1, userId: counsellorUserIds[1] });
 
     // Community messages
     await CommunityMessage.create({
@@ -742,7 +764,10 @@ async function seed() {
           chatId:                  counsellorChatId,
           senderUserId:            survivorUserIds[i],
           encryptedMessageContent: '[ENCRYPTED: Hello, I would like to talk about what happened.]',
-          messageReadStatus:       'READ'
+          messageReadStatus:       'READ',
+          // markChannelRead (chatController.js) always sets seenAt atomically
+          // with READ — the tick display relies on seenAt being present.
+          seenAt:                  new Date()
         });
         await DirectChatMessage.create({
           messageId:               id(),
@@ -786,7 +811,10 @@ async function seed() {
           chatId:                  legalChatId,
           senderUserId:            survivorUserIds[i],
           encryptedMessageContent: '[ENCRYPTED: I would like legal advice on the next steps I can take.]',
-          messageReadStatus:       'READ'
+          messageReadStatus:       'READ',
+          // markChannelRead (chatController.js) always sets seenAt atomically
+          // with READ — the tick display relies on seenAt being present.
+          seenAt:                  new Date()
         });
         await DirectChatMessage.create({
           messageId:               id(),
