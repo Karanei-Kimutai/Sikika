@@ -1729,11 +1729,14 @@ async function cascadeReassignOnStaffBan(bannedUserId, targetRole, reason) {
 
       if (affectedSurvivors.length === 0) return;
 
-      // Pick replacement: AVAILABLE counsellor with lowest workload, excluding the banned one.
-      const replacement = await getLeastLoadedStaff(CounsellorProfile, 'counsellorId', bannedProfile.counsellorId);
-      const replacementId = replacement?.counsellorId || null;
-
       for (const survivor of affectedSurvivors) {
+        // Re-picked fresh per survivor (not hoisted before the loop) so a caseload
+        // of many survivors is spread across staff instead of dumped on whichever
+        // counsellor happened to be least-loaded before any reassignment happened.
+        // applySurvivorReassignment awaits refreshWorkloadScores() internally, so
+        // each iteration sees the updated currentWorkloadScore from the prior one.
+        const replacement = await getLeastLoadedStaff(CounsellorProfile, 'counsellorId', bannedProfile.counsellorId);
+        const replacementId = replacement?.counsellorId || null;
         if (!replacementId) {
           console.warn('[banCascade] No replacement counsellor found for survivor', survivor.survivorId);
           continue;
@@ -1760,10 +1763,10 @@ async function cascadeReassignOnStaffBan(bannedUserId, targetRole, reason) {
 
       if (affectedSurvivors.length === 0) return;
 
-      const replacement = await getLeastLoadedStaff(LegalCounselProfile, 'legalCounselId', bannedProfile.legalCounselId);
-      const replacementId = replacement?.legalCounselId || null;
-
       for (const survivor of affectedSurvivors) {
+        // Re-picked fresh per survivor — see matching comment in the COUNSELLOR branch above.
+        const replacement = await getLeastLoadedStaff(LegalCounselProfile, 'legalCounselId', bannedProfile.legalCounselId);
+        const replacementId = replacement?.legalCounselId || null;
         if (!replacementId) {
           console.warn('[banCascade] No replacement legal counsel found for survivor', survivor.survivorId);
           continue;
