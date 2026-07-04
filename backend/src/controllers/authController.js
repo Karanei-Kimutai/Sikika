@@ -443,14 +443,17 @@ async function setOtpForUser(user, otpCode, purpose) {
  * be replayed after first use.
  *
  * @param {UserAccount} user - UserAccount instance (mutated and saved).
+ * @param {import('sequelize').Transaction} [transaction] - An existing transaction to save
+ *   within, e.g. so the signup-ticket clear commits/rolls back with the rest of signup
+ *   completion. When omitted, the save runs outside any transaction.
  * @returns {Promise<void>}
  */
-async function clearOtpForUser(user) {
+async function clearOtpForUser(user, transaction) {
     user.otpHash = null;
     user.otpPurpose = null;
     user.otpExpiresAt = null;
     user.otpAttemptCount = 0;
-    await user.save();
+    await user.save({ transaction });
 }
 
 /**
@@ -707,10 +710,13 @@ async function pickLeastLoadedStaff(ProfileModel, idField, transaction) {
  *
  * @param {UserAccount} user              - The verified UserAccount.
  * @param {object|null} profileOverrides  - Sanitized profile fields from signup form (may be null).
+ * @param {import('sequelize').Transaction|null} [transaction] - An existing transaction to
+ *   run inside (e.g. so the caller can commit/rollback this together with other signup-completion
+ *   writes such as the password set). When omitted, a new transaction is opened and managed here.
  * @returns {Promise<SurvivorProfile>} The created (or existing) SurvivorProfile instance.
  */
-async function ensureSurvivorStaffAutoAssignment(user, profileOverrides = null) {
-    return sequelize.transaction(async (transaction) => {
+async function ensureSurvivorStaffAutoAssignment(user, profileOverrides = null, transaction = null) {
+    const runAssignment = async (transaction) => {
         const existingProfile = await SurvivorProfile.findOne({
             where: { userId: user.userId },
             transaction
@@ -754,7 +760,10 @@ async function ensureSurvivorStaffAutoAssignment(user, profileOverrides = null) 
         }, { transaction });
 
         return survivorProfile;
-    });
+    };
+
+    if (transaction) return runAssignment(transaction);
+    return sequelize.transaction(runAssignment);
 }
 
 // ---------------------------------------------------------------------------
@@ -1018,16 +1027,29 @@ const completeSignup = async (req, res) => {
             return res.status(401).json({ error: 'Invalid signup ticket.' });
         }
 
-        user.hashedPassword = await bcrypt.hash(password, 10);
-        await clearOtpForUser(user); // also calls user.save()
+        // Signup completion bundles four writes (password, OTP-ticket clear, profile
+        // creation, channel provisioning) in one transaction so a failure partway
+        // through can never strand a password-set account with no SurvivorProfile,
+        // or a profile with no chat channels.
+        const signupTransaction = await sequelize.transaction();
+        let survivorProfile;
+        try {
+            user.hashedPassword = await bcrypt.hash(password, 10);
+            await clearOtpForUser(user, signupTransaction); // also calls user.save()
 
-        // Signup completion bundles three side effects:
-        // 1) sanitize/persist survivor profile fields from the onboarding UI
-        // 2) auto-assign least-loaded counsellor and legal counsel
-        // 3) pre-create direct chat channels for immediate visibility on the chat page
-        const sanitizedProfileInput = sanitizeSignupSurvivorProfileInput(profileDetails, user);
-        const survivorProfile = await ensureSurvivorStaffAutoAssignment(user, sanitizedProfileInput);
-        await ensureAutoChannelsForSurvivor(survivorProfile);
+            // Signup completion bundles three side effects:
+            // 1) sanitize/persist survivor profile fields from the onboarding UI
+            // 2) auto-assign least-loaded counsellor and legal counsel
+            // 3) pre-create direct chat channels for immediate visibility on the chat page
+            const sanitizedProfileInput = sanitizeSignupSurvivorProfileInput(profileDetails, user);
+            survivorProfile = await ensureSurvivorStaffAutoAssignment(user, sanitizedProfileInput, signupTransaction);
+            await ensureAutoChannelsForSurvivor(survivorProfile, signupTransaction);
+
+            await signupTransaction.commit();
+        } catch (err) {
+            await signupTransaction.rollback();
+            throw err;
+        }
 
         const token = issueAuthToken(user);
 
@@ -1327,6 +1349,22 @@ const resetPasswordWithOtp = async (req, res) => {
         const user = await UserAccount.findOne({ where: { phoneNumber: normalizedPhone } });
         if (!user || !user.hashedPassword) {
             return res.status(401).json({ error: 'Invalid reset request.' });
+        }
+
+        // Enforce the same ban/lockout gates every other OTP-verification entry
+        // point applies before comparing the OTP, so a locked-out or banned
+        // account can't have OTPs brute-forced against it via this endpoint.
+        await liftExpiredBan(user);
+
+        if (!isAccountActive(user)) {
+            return res.status(403).json({ error: 'This account is suspended or deactivated.' });
+        }
+
+        if (isLocked(user)) {
+            return res.status(423).json({
+                error: 'Account temporarily locked due to repeated failed attempts.',
+                retryAfterSeconds: getLockoutSecondsRemaining(user)
+            });
         }
 
         // OTP must exist and must have been issued for the PASSWORD_RESET flow specifically.

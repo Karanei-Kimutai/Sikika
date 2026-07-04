@@ -80,16 +80,19 @@ async function getActorContextByUserId(userId) {
  *
  * @param {import('../models/survivorProfile')} survivorProfile - A SurvivorProfile instance
  *   with at least survivorId, assignedCounsellorId, and assignedLegalCounselId.
+ * @param {import('sequelize').Transaction} [transaction] - An existing transaction to run
+ *   inside (e.g. so signup completion can commit/rollback channel provisioning together with
+ *   the password write and profile creation). When omitted, calls run outside any transaction.
  * @returns {Promise<import('../models/directChatChannel')[]>} Array of found-or-created channels.
  */
-async function ensureAutoChannelsForSurvivor(survivorProfile) {
+async function ensureAutoChannelsForSurvivor(survivorProfile, transaction) {
   if (!survivorProfile?.survivorId) return [];
 
   const createdOrFound = [];
 
   if (survivorProfile.assignedCounsellorId) {
     // Auto-provision counsellor channel from assignment if missing.
-    const assignedCounsellor = await CounsellorProfile.findByPk(survivorProfile.assignedCounsellorId);
+    const assignedCounsellor = await CounsellorProfile.findByPk(survivorProfile.assignedCounsellorId, { transaction });
     if (assignedCounsellor?.userId) {
       const [channel] = await DirectChatChannel.findOrCreate({
         where: {
@@ -103,7 +106,8 @@ async function ensureAutoChannelsForSurvivor(survivorProfile) {
           supportStaffCounterpartId: assignedCounsellor.userId,
           chatChannelType: "counsellor_channel",
           chatChannelStatus: "active"
-        }
+        },
+        transaction
       });
       createdOrFound.push(channel);
     }
@@ -112,7 +116,7 @@ async function ensureAutoChannelsForSurvivor(survivorProfile) {
   if (survivorProfile.assignedLegalCounselId) {
     // Auto-provision legal counsel channel from assignment if missing.
     // Note: channel type must be "legal_counsel_channel" to match model/frontend convention.
-    const assignedLegal = await LegalCounselProfile.findByPk(survivorProfile.assignedLegalCounselId);
+    const assignedLegal = await LegalCounselProfile.findByPk(survivorProfile.assignedLegalCounselId, { transaction });
     if (assignedLegal?.userId) {
       const [channel] = await DirectChatChannel.findOrCreate({
         where: {
@@ -126,7 +130,8 @@ async function ensureAutoChannelsForSurvivor(survivorProfile) {
           supportStaffCounterpartId: assignedLegal.userId,
           chatChannelType: "legal_counsel_channel",
           chatChannelStatus: "active"
-        }
+        },
+        transaction
       });
       createdOrFound.push(channel);
     }
