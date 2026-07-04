@@ -1,27 +1,14 @@
-import axios from "axios";
-import { getToken } from "../utils/auth";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+import apiClient from "./apiClient";
 
 /**
  * admin.js
  * --------
- * Centralized axios wrappers for NGO admin features (the only admin role —
+ * Centralized apiClient wrappers for NGO admin features (the only admin role —
  * System Admin and its infrastructure dashboard have been removed).
- * Each request attaches the Bearer token from sessionStorage via getToken().
- * All functions return raw response.data to keep page-level composition flexible.
+ * Each request attaches the Bearer token from sessionStorage automatically
+ * (apiClient's request interceptor). All functions return raw response.data
+ * to keep page-level composition flexible.
  */
-
-/**
- * Returns the Authorization header for authenticated requests, or an empty
- * object when no token is present.
- *
- * @returns {{ Authorization: string } | {}}
- */
-function getAuthHeaders() {
-  const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
 
 /**
  * Fetches the NGO admin dashboard aggregate payload:
@@ -31,9 +18,7 @@ function getAuthHeaders() {
  * @returns {Promise<object>} Dashboard aggregate data from the backend.
  */
 export async function getNgoAdminDashboard() {
-  const response = await axios.get(`${API_BASE_URL}/api/admin/ngo/dashboard`, {
-    headers: getAuthHeaders()
-  });
+  const response = await apiClient.get("/api/admin/ngo/dashboard");
   return response.data;
 }
 
@@ -45,8 +30,7 @@ export async function getNgoAdminDashboard() {
  * @returns {Promise<{ results: object[] }>}
  */
 export async function runAdminSearch(query) {
-  const response = await axios.get(`${API_BASE_URL}/api/admin/search`, {
-    headers: getAuthHeaders(),
+  const response = await apiClient.get("/api/admin/search", {
     params: { q: query }
   });
   return response.data;
@@ -71,11 +55,7 @@ export async function setMaintenanceMode(enabled, options = {}) {
     expectedUntil: options.expectedUntil
   };
 
-  const response = await axios.post(
-    `${API_BASE_URL}/api/admin/system/maintenance-mode`,
-    payload,
-    { headers: getAuthHeaders() }
-  );
+  const response = await apiClient.post("/api/admin/system/maintenance-mode", payload);
   return response.data;
 }
 
@@ -96,11 +76,7 @@ export async function setMaintenanceMode(enabled, options = {}) {
  * @returns {Promise<{ message: string, staff: object }>}
  */
 export async function createNgoStaffAccount(payload) {
-  const response = await axios.post(
-    `${API_BASE_URL}/api/admin/ngo/staff`,
-    payload,
-    { headers: getAuthHeaders() }
-  );
+  const response = await apiClient.post("/api/admin/ngo/staff", payload);
   return response.data;
 }
 
@@ -115,11 +91,7 @@ export async function createNgoStaffAccount(payload) {
  * @returns {Promise<{ message: string, user: object }>}
  */
 export async function updateNgoStaffStatus(userId, status) {
-  const response = await axios.patch(
-    `${API_BASE_URL}/api/admin/ngo/staff/${userId}/status`,
-    { status },
-    { headers: getAuthHeaders() }
-  );
+  const response = await apiClient.patch(`/api/admin/ngo/staff/${userId}/status`, { status });
   return response.data;
 }
 
@@ -135,11 +107,7 @@ export async function updateNgoStaffStatus(userId, status) {
  * @returns {Promise<object>} Updated user account status data from the backend.
  */
 export async function banUser(userId, { reason, expiresAt = null } = {}) {
-  const response = await axios.patch(
-    `${API_BASE_URL}/api/admin/ngo/users/${userId}/ban`,
-    { reason, expiresAt },
-    { headers: getAuthHeaders() }
-  );
+  const response = await apiClient.patch(`/api/admin/ngo/users/${userId}/ban`, { reason, expiresAt });
   return response.data;
 }
 
@@ -152,11 +120,7 @@ export async function banUser(userId, { reason, expiresAt = null } = {}) {
  * @returns {Promise<object>} Updated user account status data from the backend.
  */
 export async function unbanUser(userId) {
-  const response = await axios.patch(
-    `${API_BASE_URL}/api/admin/ngo/users/${userId}/unban`,
-    {},
-    { headers: getAuthHeaders() }
-  );
+  const response = await apiClient.patch(`/api/admin/ngo/users/${userId}/unban`, {});
   return response.data;
 }
 
@@ -175,11 +139,7 @@ export async function unbanUser(userId) {
  * @returns {Promise<object>}
  */
 export async function reviewModerationReport(reportId, reviewStatus, action = "none", options = {}) {
-  const response = await axios.patch(
-    `${API_BASE_URL}/api/community/moderation/reports/${reportId}`,
-    { reviewStatus, action, ...options },
-    { headers: getAuthHeaders() }
-  );
+  const response = await apiClient.patch(`/api/community/moderation/reports/${reportId}`, { reviewStatus, action, ...options });
   return response.data;
 }
 
@@ -191,9 +151,7 @@ export async function reviewModerationReport(reportId, reviewStatus, action = "n
  * @returns {Promise<{ message: string, resource: object }>}
  */
 export async function createNgoResource(payload) {
-  const response = await axios.post(`${API_BASE_URL}/api/admin/ngo/resources`, payload, {
-    headers: getAuthHeaders()
-  });
+  const response = await apiClient.post("/api/admin/ngo/resources", payload);
   return response.data;
 }
 
@@ -206,11 +164,7 @@ export async function createNgoResource(payload) {
  * @returns {Promise<{ message: string, resource: object }>}
  */
 export async function updateNgoResource(resourceId, payload) {
-  const response = await axios.patch(
-    `${API_BASE_URL}/api/admin/ngo/resources/${resourceId}`,
-    payload,
-    { headers: getAuthHeaders() }
-  );
+  const response = await apiClient.patch(`/api/admin/ngo/resources/${resourceId}`, payload);
   return response.data;
 }
 
@@ -222,9 +176,7 @@ export async function updateNgoResource(resourceId, payload) {
  * @returns {Promise<{ message: string, survivor: object }>}
  */
 export async function reassignSurvivorCase(payload) {
-  const response = await axios.patch(`${API_BASE_URL}/api/admin/ngo/reassignments`, payload, {
-    headers: getAuthHeaders()
-  });
+  const response = await apiClient.patch("/api/admin/ngo/reassignments", payload);
   return response.data;
 }
 
@@ -237,8 +189,7 @@ export async function reassignSurvivorCase(payload) {
  * @returns {Promise<{ suggestedCounsellor: object|null, suggestedLegalCounsel: object|null }>}
  */
 export async function getReassignmentSuggestions(survivorId) {
-  const response = await axios.get(`${API_BASE_URL}/api/admin/ngo/reassignments/suggestions`, {
-    headers: getAuthHeaders(),
+  const response = await apiClient.get("/api/admin/ngo/reassignments/suggestions", {
     params: { survivorId }
   });
   return response.data;
@@ -250,9 +201,7 @@ export async function getReassignmentSuggestions(survivorId) {
  * @returns {Promise<{ requests: object[] }>}
  */
 export async function getMyReassignmentRequests() {
-  const response = await axios.get(`${API_BASE_URL}/api/reassignment-requests/me`, {
-    headers: getAuthHeaders()
-  });
+  const response = await apiClient.get("/api/reassignment-requests/me");
   return response.data;
 }
 
@@ -263,9 +212,7 @@ export async function getMyReassignmentRequests() {
  * @returns {Promise<{ message: string, request: object }>}
  */
 export async function createMyReassignmentRequest(payload) {
-  const response = await axios.post(`${API_BASE_URL}/api/reassignment-requests/me`, payload, {
-    headers: getAuthHeaders()
-  });
+  const response = await apiClient.post("/api/reassignment-requests/me", payload);
   return response.data;
 }
 
@@ -276,11 +223,7 @@ export async function createMyReassignmentRequest(payload) {
  * @returns {Promise<{ message: string, request: object }>}
  */
 export async function cancelMyReassignmentRequest(requestId) {
-  const response = await axios.patch(
-    `${API_BASE_URL}/api/reassignment-requests/me/${requestId}/cancel`,
-    {},
-    { headers: getAuthHeaders() }
-  );
+  const response = await apiClient.patch(`/api/reassignment-requests/me/${requestId}/cancel`, {});
   return response.data;
 }
 
@@ -292,8 +235,7 @@ export async function cancelMyReassignmentRequest(requestId) {
  * @returns {Promise<{ requests: object[] }>}
  */
 export async function getNgoReassignmentRequests(status = "PENDING") {
-  const response = await axios.get(`${API_BASE_URL}/api/reassignment-requests/ngo`, {
-    headers: getAuthHeaders(),
+  const response = await apiClient.get("/api/reassignment-requests/ngo", {
     params: { status }
   });
   return response.data;
@@ -308,11 +250,7 @@ export async function getNgoReassignmentRequests(status = "PENDING") {
  * @returns {Promise<{ message: string, request: object }>}
  */
 export async function reviewNgoReassignmentRequest(requestId, payload) {
-  const response = await axios.patch(
-    `${API_BASE_URL}/api/reassignment-requests/ngo/${requestId}/review`,
-    payload,
-    { headers: getAuthHeaders() }
-  );
+  const response = await apiClient.patch(`/api/reassignment-requests/ngo/${requestId}/review`, payload);
   return response.data;
 }
 
@@ -323,9 +261,7 @@ export async function reviewNgoReassignmentRequest(requestId, payload) {
  * @returns {Promise<{requests: Array}>}
  */
 export async function getUssdCallbackRequests() {
-  const response = await axios.get(`${API_BASE_URL}/api/ussd/callback-requests`, {
-    headers: getAuthHeaders()
-  });
+  const response = await apiClient.get("/api/ussd/callback-requests");
   return response.data;
 }
 
@@ -336,9 +272,7 @@ export async function getUssdCallbackRequests() {
  * @returns {Promise<{requests: Array}>}
  */
 export async function getMyCallbackRequests() {
-  const response = await axios.get(`${API_BASE_URL}/api/ussd/my-callback-requests`, {
-    headers: getAuthHeaders()
-  });
+  const response = await apiClient.get("/api/ussd/my-callback-requests");
   return response.data;
 }
 
@@ -352,11 +286,7 @@ export async function getMyCallbackRequests() {
  * @returns {Promise<{message: string, request: object}>}
  */
 export async function updateUssdCallbackRequest(requestId, status) {
-  const response = await axios.patch(
-    `${API_BASE_URL}/api/ussd/callback-requests/${requestId}`,
-    { callbackFulfillmentStatus: status },
-    { headers: getAuthHeaders() }
-  );
+  const response = await apiClient.patch(`/api/ussd/callback-requests/${requestId}`, { callbackFulfillmentStatus: status });
   return response.data;
 }
 
@@ -371,10 +301,7 @@ export async function updateUssdCallbackRequest(requestId, status) {
  */
 export async function listBannedUsers(role) {
   const params = role ? { role } : undefined;
-  const response = await axios.get(`${API_BASE_URL}/api/admin/ngo/banned-users`, {
-    headers: getAuthHeaders(),
-    params
-  });
+  const response = await apiClient.get("/api/admin/ngo/banned-users", { params });
   return response.data;
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import axios from "axios";
+import apiClient from "../services/apiClient";
 import { io } from "socket.io-client";
 import { getToken } from "../utils/auth";
 import { staggerIn } from "../utils/motion";
@@ -21,14 +21,6 @@ import { staggerIn } from "../utils/motion";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 const moderationSocket = io(API_BASE_URL, { autoConnect: false });
-
-/**
- * @returns {{ Authorization: string } | {}}
- */
-function getAuthHeaders() {
-  const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
 
 /**
  * Maps the stored reviewedAction value to a display label.
@@ -118,9 +110,7 @@ function ModerationDashboardPage() {
     setErrorMessage("");
 
     try {
-      const response = await axios.get(`${API_BASE_URL}/api/community/moderation/reports`, {
-        headers: getAuthHeaders()
-      });
+      const response = await apiClient.get(`/api/community/moderation/reports`);
       setReports(response.data.reports || []);
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Failed to load moderation reports.");
@@ -176,11 +166,7 @@ function ModerationDashboardPage() {
     setReviewingReportId(reportId);
 
     try {
-      await axios.patch(
-        `${API_BASE_URL}/api/community/moderation/reports/${reportId}`,
-        { reviewStatus, action },
-        { headers: getAuthHeaders() }
-      );
+      await apiClient.patch(`/api/community/moderation/reports/${reportId}`, { reviewStatus, action });
       setSuccessMessage("Moderation action saved.");
       await loadReports();
     } catch (error) {
