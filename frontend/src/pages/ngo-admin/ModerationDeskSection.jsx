@@ -26,6 +26,12 @@ import { staggerIn } from "../../utils/motion";
  * @param {Function}  props.onModerationAction        - (reportId, action) → void.
  * @param {Function}  props.onOpenBanModal            - (userId, label, reportId) → void.
  * @param {Function}  props.onUnban                   - (userId, label) → void.
+ * @param {string|null} props.unbanningId             - userId currently being unbanned via
+ *                                                      onUnban (Staff Directory / Reports Queue
+ *                                                      path), for disabling the Lift Ban button
+ *                                                      while in flight. Distinct from
+ *                                                      liftingBanId, which guards the separate
+ *                                                      Banned Users registry path (onLiftBan).
  * @param {Array}     props.bannedUsers               - Banned-accounts list for the registry tab.
  * @param {boolean}   props.bannedUsersLoading        - Loading state for the registry.
  * @param {string}    props.bannedUsersFilter         - Current role filter value.
@@ -43,6 +49,7 @@ export default function ModerationDeskSection({
   reviewingModerationReportId,
   onOpenBanModal,
   onUnban,
+  unbanningId,
   bannedUsers,
   bannedUsersLoading,
   bannedUsersFilter,
@@ -170,9 +177,11 @@ export default function ModerationDeskSection({
                             <button
                               type="button"
                               className="admin-action-btn"
+                              disabled={Boolean(unbanningId)}
                               onClick={() => onUnban(row.senderUserId, `Community Member ${row.senderUserId.slice(0, 8)}`)}
                             >
-                              <UserCheck size={13} aria-hidden="true" /> Lift Ban
+                              <UserCheck size={13} aria-hidden="true" />
+                              {unbanningId === row.senderUserId ? "Lifting…" : "Lift Ban"}
                             </button>
                           ) : (
                             <button

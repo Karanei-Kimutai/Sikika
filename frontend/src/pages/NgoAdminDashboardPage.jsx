@@ -132,6 +132,11 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
   const [bannedUsersFilter, setBannedUsersFilter] = useState("");
   const [bannedUsersLoading, setBannedUsersLoading] = useState(false);
   const [liftingBanId, setLiftingBanId] = useState(null);
+  // In-flight guard for the Staff Directory / Moderation Desk "Lift Ban" button
+  // (handleUnban), kept separate from liftingBanId (the Banned Users registry's
+  // own in-flight guard for handleUnbanFromRegistry) since the two surfaces call
+  // different handlers against different row sources.
+  const [unbanningId, setUnbanningId] = useState(null);
 
   // ── Maintenance mode state ────────────────────────────────────────────────
   // The one System-Admin capability retained after that role's removal —
@@ -291,12 +296,15 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
   async function handleUnban(userId, label) {
     setErrorMessage("");
     setSuccessMessage("");
+    setUnbanningId(userId);
     try {
       await unbanUser(userId);
       setSuccessMessage(`Ban lifted for ${label}.`);
       await loadDashboard();
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Failed to lift ban.");
+    } finally {
+      setUnbanningId(null);
     }
   }
 
@@ -717,6 +725,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
   }
 
   async function handleReviewReassignmentRequest(requestId, requestStatus) {
+    if (reviewingRequestId) return;
     setReviewingRequestId(requestId);
     setErrorMessage("");
     setSuccessMessage("");
@@ -740,6 +749,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
    * @param {'COMPLETED'|'CANCELLED'} status
    */
   async function handleUpdateCallback(requestId, status) {
+    if (updatingCallbackId) return;
     setUpdatingCallbackId(requestId);
     setErrorMessage("");
     setSuccessMessage("");
@@ -929,6 +939,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
           onStaffCreate={handleStaffCreate}
           onOpenBanModal={handleOpenBanModal}
           onUnban={handleUnban}
+          unbanningId={unbanningId}
           onReviewRequest={handleReviewReassignmentRequest}
         />
       )}
@@ -942,6 +953,7 @@ function NgoAdminDashboardPage({ onNavigate, onSignOut, initialSection = "comman
           reviewingModerationReportId={reviewingModerationReportId}
           onOpenBanModal={handleOpenBanModal}
           onUnban={handleUnban}
+          unbanningId={unbanningId}
           bannedUsers={bannedUsers}
           bannedUsersLoading={bannedUsersLoading}
           bannedUsersFilter={bannedUsersFilter}
