@@ -119,6 +119,9 @@ function CommunityPage() {
   const [submittingReport, setSubmittingReport] = useState(false);
   const [submittingRoom, setSubmittingRoom] = useState(false);
   const [joiningRoom, setJoiningRoom] = useState(false);
+  // Guards handleSendMessage against a double-click/double-submit firing two
+  // concurrent identical POSTs before the first request's newMessage clear lands.
+  const [isSending, setIsSending] = useState(false);
   const [roomQuery, setRoomQuery] = useState("");
   const activeRoomIdRef = useRef("");
   // Read once on mount — a deep-linked room should only win the very first
@@ -437,12 +440,24 @@ function CommunityPage() {
     }
   }
 
+  /**
+   * Posts the composer's current message to the active room.
+   *
+   * Guarded by `isSending` so a fast double-click/double-submit can't fire
+   * two concurrent identical POSTs — the guard short-circuits any call that
+   * arrives while a prior submit is still in flight, and the Send button is
+   * also disabled for the same window.
+   *
+   * @param {React.FormEvent} event - The form submit event.
+   * @returns {Promise<void>}
+   */
   async function handleSendMessage(event) {
     event.preventDefault();
-    if (!activeRoomId || !newMessage.trim()) return;
+    if (!activeRoomId || !newMessage.trim() || isSending) return;
 
     setErrorMessage("");
     setSuccessMessage("");
+    setIsSending(true);
 
     try {
       await axios.post(
@@ -455,6 +470,8 @@ function CommunityPage() {
       setSuccessMessage("Message posted.");
     } catch (error) {
       setErrorMessage(error.response?.data?.error || "Failed to post message.");
+    } finally {
+      setIsSending(false);
     }
   }
 
@@ -687,7 +704,7 @@ function CommunityPage() {
                 value={newMessage}
                 onChange={(event) => setNewMessage(event.target.value)}
               />
-              <button type="submit" className="wa-send-btn" aria-label="Post message" disabled={!newMessage.trim()}>
+              <button type="submit" className="wa-send-btn" aria-label="Post message" disabled={!newMessage.trim() || isSending}>
                 <Send size={14} aria-hidden="true" />
               </button>
             </form>
