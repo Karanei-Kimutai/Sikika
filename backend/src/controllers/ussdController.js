@@ -1,5 +1,4 @@
 const { randomUUID } = require('crypto');
-const { Op } = require('sequelize');
 const db = require('../models');
 const { UssdCallbackRequest, UserAccount, CounsellorProfile } = db;
 const { createNotification, createNotificationsBulk } = require('../services/notificationService');
@@ -8,25 +7,31 @@ const { createNotification, createNotificationsBulk } = require('../services/not
  * pickLeastLoadedCounsellor
  * --------------------------
  * Selects the counsellor with the lowest currentWorkloadScore, preferring
- * AVAILABLE staff, for auto-routing incoming USSD callback requests.
+ * AVAILABLE/BUSY staff, for auto-routing incoming USSD callback requests.
  *
  * Local to this controller (rather than reusing authController's
  * pickLeastLoadedStaff) to keep the unauthenticated USSD webhook path free
  * of authController's heavier module graph (JWT/bcrypt/Africa's Talking SDK
  * init) — this is the only staff-assignment logic this controller needs.
  *
+ * Joins UserAccount and requires accountStatus = 'ACTIVE', mirroring
+ * adminController.js's getLeastLoadedStaff: suspending/banning a staff member
+ * only flips UserAccount.accountStatus, leaving CounsellorProfile.availabilityStatus
+ * untouched, so without this check a suspended/banned counsellor could still be
+ * auto-assigned new USSD callbacks.
+ *
  * @returns {Promise<import('sequelize').Model|null>}
  */
 async function pickLeastLoadedCounsellor() {
-  const preferred = await CounsellorProfile.findOne({
-    where: { availabilityStatus: { [Op.in]: ['AVAILABLE', 'BUSY'] } },
+  const candidates = await CounsellorProfile.findAll({
+    include: [{ model: UserAccount, attributes: ['accountStatus'] }],
     order: [['currentWorkloadScore', 'ASC'], ['counsellorId', 'ASC']]
   });
-  if (preferred) return preferred;
 
-  return CounsellorProfile.findOne({
-    order: [['currentWorkloadScore', 'ASC'], ['counsellorId', 'ASC']]
-  });
+  const activeOnly = candidates.filter((c) => c.userAccount?.accountStatus === 'ACTIVE');
+  const preferred = activeOnly.filter((c) => ['AVAILABLE', 'BUSY'].includes(c.availabilityStatus));
+
+  return preferred[0] || activeOnly[0] || null;
 }
 
 /**
@@ -137,7 +142,7 @@ async function handleCallback(req, res) {
         // Notify all active NGO admins of the new callback request in real time.
         // Best-effort — notification failure must not break the USSD flow.
         UserAccount.findAll({
-          where: { role: 'NGO_ADMIN', accountStatus: 'ACTIVE' },
+          where: { userRole: 'NGO_ADMIN', accountStatus: 'ACTIVE' },
           attributes: ['userId']
         }).then((admins) => {
           if (!admins.length) return;

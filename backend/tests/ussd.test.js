@@ -23,7 +23,7 @@ jest.mock("../src/models", () => ({
     create: jest.fn().mockResolvedValue({})
   },
   CounsellorProfile: {
-    findOne: jest.fn().mockResolvedValue(null)
+    findAll: jest.fn().mockResolvedValue([])
   },
   UserAccount: {
     findByPk: jest.fn().mockResolvedValue({
@@ -143,6 +143,44 @@ describe("USSD webhook (POST /api/ussd/callback)", () => {
     // Verify the persistence call was made with the caller's phone number
     expect(UssdCallbackRequest.create).toHaveBeenCalledWith(
       expect.objectContaining({ requesterPhoneNumber: "+254711000005" })
+    );
+  });
+
+  test("routes a confirmed callback to the least-loaded ACTIVE counsellor, skipping a lower-workload BANNED one", async () => {
+    const { CounsellorProfile } = require("../src/models");
+    // The BANNED counsellor has the lowest currentWorkloadScore and would be picked
+    // by a naive lowest-score query, but suspending/banning only flips
+    // UserAccount.accountStatus (CounsellorProfile.availabilityStatus is untouched),
+    // so the ACTIVE-account join must exclude them in favor of the next lowest score.
+    CounsellorProfile.findAll.mockResolvedValueOnce([
+      {
+        counsellorId: "counsellor-banned",
+        availabilityStatus: "AVAILABLE",
+        currentWorkloadScore: 1,
+        userAccount: { accountStatus: "BANNED" }
+      },
+      {
+        counsellorId: "counsellor-active",
+        availabilityStatus: "AVAILABLE",
+        currentWorkloadScore: 5,
+        userAccount: { accountStatus: "ACTIVE" }
+      }
+    ]);
+
+    const app = buildApp();
+    const response = await request(app)
+      .post("/api/ussd/callback")
+      .send({
+        sessionId: "ATUid_test_005b",
+        serviceCode: "*384*100#",
+        phoneNumber: "+254711000010",
+        text: "1*1"
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.text.startsWith("END ")).toBe(true);
+    expect(UssdCallbackRequest.create).toHaveBeenCalledWith(
+      expect.objectContaining({ assignedCounsellorId: "counsellor-active" })
     );
   });
 
