@@ -27,73 +27,27 @@ const { Op } = require('sequelize');
 const {
   DirectChatMessage,
   DirectChatChannel,
-  UserAccount,
   SurvivorProfile
 } = require('../models');
 const { canUserAccessChannel, getChannelParticipantUserIds } = require('../services/chatAccessService');
 const presenceRegistry = require('../services/presenceRegistry');
 const { createNotificationsBulk } = require('../services/notificationService');
+const {
+  getTokenFromHandshake,
+  resolveUserIdFromTokenClaims,
+  isUserAccountActive
+} = require('../services/socketAuthService');
 
 /**
  * Trust boundary notes:
  * - Token signature verification is required before socket joins are accepted.
  * - Channel membership is checked on both join and send events.
  * - Server persists opaque encrypted payloads without decrypting message content.
- */
-
-/**
- * Extracts the JWT from either the socket.io auth object or the Authorization header.
  *
- * @param {import('socket.io').Socket} socket
- * @returns {string|null}
+ * getTokenFromHandshake/resolveUserIdFromTokenClaims/isUserAccountActive live in
+ * socketAuthService.js so communitySocket.js can share the same mid-session
+ * accountStatus recheck instead of duplicating it.
  */
-function getTokenFromHandshake(socket) {
-  const authToken = socket.handshake?.auth?.token;
-  if (authToken) return authToken;
-
-  const header = socket.handshake?.headers?.authorization;
-  if (header && header.startsWith('Bearer ')) {
-    return header.slice('Bearer '.length).trim();
-  }
-
-  return null;
-}
-
-/**
- * Resolves the canonical userId from either JWT claim shape (legacy `id` or current `userId`).
- *
- * @param {object} claims - Decoded JWT payload.
- * @returns {string|null}
- */
-function resolveUserIdFromTokenClaims(claims) {
-  return claims?.userId || claims?.id || null;
-}
-
-/**
- * isUserAccountActive
- * -------------------
- * Looks up the user's current accountStatus in the database.
- * Used to enforce bans and suspensions mid-session for sockets,
- * where JWT-based auth alone cannot reflect post-issue status changes.
- *
- * Returns true only for ACTIVE accounts. Returns false (and should
- * disconnect/reject the socket) for any other status.
- *
- * @param {string} userId - The user's UUID from the verified JWT.
- * @returns {Promise<boolean>}
- */
-async function isUserAccountActive(userId) {
-  try {
-    const user = await UserAccount.findByPk(userId, {
-      attributes: ['accountStatus']
-    });
-    // Only ACTIVE accounts may send messages. BANNED/SUSPENDED/DEACTIVATED are all rejected.
-    return user && String(user.accountStatus || '').toUpperCase() === 'ACTIVE';
-  } catch {
-    // Fail closed: if we can't check, deny access.
-    return false;
-  }
-}
 
 /**
  * createDiscreetNotifications
@@ -383,9 +337,15 @@ module.exports = (io) => {
         // Broadcast to all clients in the channel room.
         io.to(chatId).emit('receiveMessage', savedMessage);
 
-        // If immediately delivered, push a delivery event to the sender's personal
-        // room so all their open tabs show the delivered tick straight away.
-        if (recipientOnline) {
+        // Re-check presence immediately before emitting the delivery tick — the
+        // recipient may have disconnected during the DirectChatMessage.create()
+        // round-trip above, so the `recipientOnline` snapshot taken before that
+        // write can be stale by now. The deliveredAt DB write above intentionally
+        // keeps using the original snapshot (this is a display-only tick; the
+        // recipient still gets the message via the delivery catch-up on reconnect
+        // either way), but the live emit should reflect current state.
+        const recipientStillOnline = recipientUserId ? presenceRegistry.isOnline(recipientUserId) : false;
+        if (recipientStillOnline) {
           io.to(`user:${socket.data.userId}`).emit('message:delivered', {
             chatId,
             messageIds: [savedMessage.messageId],
