@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { getToken, getUserId, removeToken, removeUserId } from "./utils/auth";
 import { deleteKeyPair, getOrCreateKeyPair } from "./utils/keyStorage";
+import { purgeAllPending } from "./utils/pendingMessageQueue";
 import { exportPublicKeyJwk } from "./utils/cryptoUtils";
 import { registerPublicKey } from "./services/chatKeys";
 import { fadeInUp } from "./utils/motion";
@@ -329,9 +330,12 @@ function App() {
   /**
    * Clears the session and redirects to the sign-in page.
    * Used by the sign-out button in `SiteHeader` and the maintenance screen.
+   * Purges any queued (unsent, plaintext) E2EE messages first so they don't
+   * outlive the session that typed them in localStorage.
    * @returns {void}
    */
   const handleSignOut = () => {
+    purgeAllPending();
     removeToken();
     removeUserId();
     navigate("/join");
@@ -363,6 +367,7 @@ function App() {
       }
     }
 
+    purgeAllPending();
     removeToken();
     removeUserId();
     window.location.replace(QUICK_EXIT_URL);

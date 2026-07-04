@@ -69,3 +69,16 @@ export function enqueuePending(chatId, plaintext) {
 export function removePending(chatId, localId) {
   savePending(chatId, getPending(chatId).filter((entry) => entry.localId !== localId));
 }
+
+/**
+ * Deletes every channel's pending-message queue from localStorage.
+ * Called on sign-out and Quick Exit so queued plaintext never outlives the
+ * session that typed it, regardless of whether it was ever encrypted/sent.
+ *
+ * @returns {void}
+ */
+export function purgeAllPending() {
+  Object.keys(localStorage)
+    .filter((key) => key.startsWith(KEY_PREFIX))
+    .forEach((key) => localStorage.removeItem(key));
+}
