@@ -359,6 +359,64 @@ function fetchPrivateAssetStream({ publicId, resourceType }) {
   });
 }
 
+/**
+ * Deletes every asset the app has ever uploaded to Cloudinary, across all
+ * three storage folders. Used exclusively by the database seeder so each
+ * seed run starts from a clean cloud — without this, every run uploads
+ * fresh UUID-named assets and orphans the previous run's files.
+ *
+ * Sweeps the full matrix of folder prefix × resource_type × delivery type:
+ * the app always uploads as `type: "authenticated"`, but `type: "upload"`
+ * is included to also catch older junk uploaded before that convention.
+ * Cloudinary's Admin API treats a prefix with no matches as a successful
+ * empty deletion, so the sweep is idempotent.
+ *
+ * @returns {Promise<{ deletedCount: number, byPrefix: Object<string, number> }>}
+ *   Total number of deleted assets and a per-prefix breakdown.
+ * @throws {Error} If Cloudinary credentials are missing or the Admin API
+ *   returns an unexpected error (rate limiting, auth failure).
+ */
+async function purgeSeededAppAssets() {
+  assertCloudinaryConfigured();
+
+  const prefixes = ["incident-reports/", "support-resources/", "legal-cases/"];
+  const resourceTypes = ["image", "video", "raw"];
+  const deliveryTypes = ["authenticated", "upload"];
+
+  const byPrefix = {};
+  let deletedCount = 0;
+
+  for (const prefix of prefixes) {
+    byPrefix[prefix] = 0;
+
+    for (const resourceType of resourceTypes) {
+      for (const deliveryType of deliveryTypes) {
+        const result = await cloudinary.api.delete_resources_by_prefix(prefix, {
+          resource_type: resourceType,
+          type: deliveryType,
+          invalidate: true
+        });
+
+        // result.deleted maps public_id -> "deleted" | "not_found";
+        // count only the ones actually removed.
+        const removed = Object.values(result.deleted || {})
+          .filter((status) => status === "deleted").length;
+        byPrefix[prefix] += removed;
+        deletedCount += removed;
+      }
+    }
+  }
+
+  console.log(
+    `🧹 Cloudinary purge: removed ${deletedCount} asset(s) ` +
+    `(incident-reports: ${byPrefix["incident-reports/"]}, ` +
+    `support-resources: ${byPrefix["support-resources/"]}, ` +
+    `legal-cases: ${byPrefix["legal-cases/"]}).`
+  );
+
+  return { deletedCount, byPrefix };
+}
+
 module.exports = {
   isCloudinaryConfigured,
   uploadEvidenceBuffer,
@@ -368,5 +426,6 @@ module.exports = {
   generateLegalDocumentSignedUrl,
   uploadSupportResourceBuffer,
   deleteSupportResourceAsset,
+  purgeSeededAppAssets,
   fetchPrivateAssetStream
 };

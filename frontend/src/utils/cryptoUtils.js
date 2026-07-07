@@ -63,11 +63,34 @@ export const encryptMessage = async (plaintext, cryptoKey) => {
 
 /**
  * Decrypts a stored Base64 payload back into plaintext.
+ *
+ * Payloads that are not a valid `{ ciphertext, iv }` envelope are returned
+ * verbatim: seeded/legacy demo messages are stored as plaintext (the seeder
+ * cannot produce real ciphertext — private keys never leave each browser),
+ * and this display-only passthrough lets them render as readable text.
+ * Real messages always carry the envelope and still go through AES-GCM;
+ * a genuine decryption failure keeps the unreadable marker.
  */
 export const decryptMessage = async (encryptedPayload, cryptoKey) => {
+  // Plaintext passthrough: anything that isn't the {ciphertext, iv} envelope
+  // is seeded/legacy plaintext, not ciphertext — show it as-is.
+  let envelope;
   try {
-    const { ciphertext, iv } = JSON.parse(encryptedPayload);
-    
+    envelope = JSON.parse(encryptedPayload);
+  } catch {
+    return encryptedPayload;
+  }
+  if (
+    !envelope ||
+    typeof envelope.ciphertext !== "string" ||
+    typeof envelope.iv !== "string"
+  ) {
+    return encryptedPayload;
+  }
+
+  try {
+    const { ciphertext, iv } = envelope;
+
     const ciphertextBuffer = new Uint8Array(atob(ciphertext).split("").map(c => c.charCodeAt(0)));
     const ivBuffer = new Uint8Array(atob(iv).split("").map(c => c.charCodeAt(0)));
 

@@ -77,6 +77,10 @@ Messages typed while the counterpart's public key isn't registered yet are held 
 
 The composer stays enabled in this state (`DirectChatPage.jsx`), and the message renders with a "Pending" tag instead of the normal delivery ticks. Once the counterpart registers their public key — either pushed in real time via the `chatKey:available` Socket.io event (`backend/src/controllers/chatController.js` `setPublicKey` notifies every channel counterpart after a successful key registration) or picked up by a 30s polling fallback — the queued messages are encrypted and sent automatically, in order, exactly as a normal send would be.
 
+## Seeded/legacy plaintext passthrough
+
+`decryptMessage` (`frontend/src/utils/cryptoUtils.js`) first checks that the stored payload is a valid `{ ciphertext, iv }` JSON envelope. Anything else is returned verbatim as display text. This exists for seeded demo conversations: the seeder cannot produce real ciphertext (private keys are non-extractable and never leave each user's browser), so it stores demo transcripts as plaintext, and this display-only fallback renders them readably. Real messages always carry the envelope and always go through AES-GCM — the passthrough never applies to them, and a genuine decryption failure still renders the unreadable marker below.
+
 ## Migration note
 
 Switching key-derivation schemes means any message ciphertext encrypted under the old PBKDF2-from-`chatId` key can no longer be decrypted with the new ECDH-derived key — `decryptMessage` already degrades gracefully to `"[Encrypted Message - Unreadable]"` rather than throwing. For local development, reseed for a clean slate:
