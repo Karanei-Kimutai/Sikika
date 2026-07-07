@@ -337,6 +337,21 @@ module.exports = (io) => {
         // Broadcast to all clients in the channel room.
         io.to(chatId).emit('receiveMessage', savedMessage);
 
+        // Sidebar recency signal: clients only join the channel room they are
+        // currently viewing, so a message in any other channel would otherwise
+        // reach them only on the next full channel-list fetch. Emitting a
+        // light activity event (no message content) to both participants'
+        // personal rooms lets channel lists re-sort in real time.
+        const activityPayload = {
+          chatId,
+          lastMessageAt: savedMessage.messageDispatchTimestamp || new Date(),
+          senderUserId: socket.data.userId
+        };
+        io.to(`user:${socket.data.userId}`).emit('channel:activity', activityPayload);
+        if (recipientUserId) {
+          io.to(`user:${recipientUserId}`).emit('channel:activity', activityPayload);
+        }
+
         // Re-check presence immediately before emitting the delivery tick — the
         // recipient may have disconnected during the DirectChatMessage.create()
         // round-trip above, so the `recipientOnline` snapshot taken before that

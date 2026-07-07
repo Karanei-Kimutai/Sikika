@@ -35,6 +35,22 @@ function presenceLabel(value) {
 }
 
 /**
+ * Returns the channel list sorted most-recently-active first, matching the
+ * ordering the channels API applies on load. Channels with no messages yet
+ * fall back to their creation time.
+ *
+ * @param {Array<object>} channelList - Channel objects from the channels API.
+ * @returns {Array<object>} New sorted array (input is not mutated).
+ */
+function sortChannelsByActivity(channelList) {
+  return [...channelList].sort(
+    (a, b) =>
+      new Date(b.lastMessageAt || b.chatCreationTimestamp || 0) -
+      new Date(a.lastMessageAt || a.chatCreationTimestamp || 0)
+  );
+}
+
+/**
  * Returns a CSS class name for the presence status dot.
  * Maps to .presence-dot--available / .presence-dot--busy / .presence-dot--offline
  * defined in App.css.
@@ -438,7 +454,9 @@ const DirectChatPage = () => {
    *
    * Leaves cryptoKey null (with a non-blocking keyBanner explanation, not a
    * hard error) when the counterpart hasn't completed one-time key setup
-   * yet; the composer stays usable and queues messages locally in that case.
+   * yet; the composer stays usable and queues messages locally in that case,
+   * and history still loads — seeded/legacy plaintext renders through
+   * decryptMessage's passthrough even without a derived key.
    */
   const establishSecureChannelRef = useRef(async () => {});
 
@@ -477,22 +495,26 @@ const DirectChatPage = () => {
 
         const peerPublicKeyJwk = await fetchPublicKey(counterpartUserId);
         if (isStale()) return;
+
+        // With no peer key yet, history still loads below with a null key:
+        // seeded/legacy plaintext renders via decryptMessage's passthrough,
+        // and any real ciphertext degrades to the unreadable marker (correct —
+        // no shared key can exist until the counterpart's first login).
+        // The banner + null cryptoKey keep the composer in queue mode.
+        let key = null;
         if (!peerPublicKeyJwk) {
           setCryptoKey(null);
-          setMessages([]);
-          setDerivedForChannelId(channelId);
           setKeyBanner('Secure messaging setup is still pending on the other side — you can keep typing. Your messages will be sent automatically as soon as they log in for the first time.');
-          return;
+        } else {
+          const { privateKey } = await getOrCreateKeyPair(currentUserId);
+          key = await deriveSharedKey(privateKey, peerPublicKeyJwk);
+          if (isStale()) return;
+          // Not paired with setDerivedForChannelId yet — history is still
+          // loading, so effectiveCryptoKey (gated on derivedForChannelId)
+          // stays null until the final setMessages below lands alongside it.
+          setCryptoKey(key);
+          setKeyBanner('');
         }
-
-        const { privateKey } = await getOrCreateKeyPair(currentUserId);
-        const key = await deriveSharedKey(privateKey, peerPublicKeyJwk);
-        if (isStale()) return;
-        // Not paired with setDerivedForChannelId yet — history is still
-        // loading, so effectiveCryptoKey (gated on derivedForChannelId)
-        // stays null until the final setMessages below lands alongside it.
-        setCryptoKey(key);
-        setKeyBanner('');
 
         // History endpoint returns ciphertext; decrypt client-side only.
         const response = await axios.get(`${API_BASE_URL}/api/chat/${channelId}/messages`, {
@@ -687,6 +709,18 @@ const DirectChatPage = () => {
       }
     };
 
+    // ── channel:activity — a message landed in one of my channels ─────────────
+    // Emitted to the personal user room for BOTH participants on every send,
+    // including channels not currently joined — this is what moves the most
+    // recently active conversation to the top of the sidebar in real time.
+    const handleChannelActivity = ({ chatId, lastMessageAt }) => {
+      setChannels((prev) =>
+        sortChannelsByActivity(
+          prev.map((ch) => (ch.chatId === chatId ? { ...ch, lastMessageAt } : ch))
+        )
+      );
+    };
+
     // ── presence:update — staff came online or went offline ───────────────────
     const handlePresenceUpdate = ({ chatId, presence }) => {
       setChannels((prev) =>
@@ -745,6 +779,7 @@ const DirectChatPage = () => {
     };
 
     socketRef.current?.on('receiveMessage', handleNewMessage);
+    socketRef.current?.on('channel:activity', handleChannelActivity);
     socketRef.current?.on('presence:update', handlePresenceUpdate);
     socketRef.current?.on('message:delivered', handleMessageDelivered);
     socketRef.current?.on('message:seen', handleMessageSeen);
@@ -753,6 +788,7 @@ const DirectChatPage = () => {
     // Cleanup listeners to prevent duplicates on re-register
     return () => {
       socketRef.current?.off('receiveMessage', handleNewMessage);
+      socketRef.current?.off('channel:activity', handleChannelActivity);
       socketRef.current?.off('presence:update', handlePresenceUpdate);
       socketRef.current?.off('message:delivered', handleMessageDelivered);
       socketRef.current?.off('message:seen', handleMessageSeen);

@@ -1013,6 +1013,10 @@ async function seed() {
 
     const roomId1 = id();
     const roomId2 = id();
+    const roomId3 = id();
+    const roomId4 = id();
+    const roomId5 = id();
+    const roomId6 = id();
 
     await CommunityRoom.create({
       roomId:              roomId1,
@@ -1028,7 +1032,43 @@ async function seed() {
       createdByAdminId:    ngoAdminId2
     });
 
-    // ── Room memberships: every user joins both rooms ────────────────────
+    // The next four rooms mirror ensureGeneralRoomExists() in
+    // communityController.js, which auto-creates rooms with EXACTLY these
+    // names on every rooms-list request (and a dev helper then drops canned
+    // starter lines into any empty room). Seeding them here — same names,
+    // real timelines below — makes that bootstrap a no-op, so the app never
+    // spawns thin, member-less duplicates after a reseed.
+    await CommunityRoom.create({
+      roomId:              roomId3,
+      roomName:            'General Support',
+      roomDescriptionText: 'A moderated peer-support room for day-to-day discussion.',
+      createdByAdminId:    ngoAdminId1
+    });
+
+    await CommunityRoom.create({
+      roomId:              roomId4,
+      roomName:            'Legal Guidance',
+      roomDescriptionText: 'Ask legal process questions and share verified legal resources.',
+      createdByAdminId:    ngoAdminId2
+    });
+
+    await CommunityRoom.create({
+      roomId:              roomId5,
+      roomName:            'Emotional Support',
+      roomDescriptionText: 'Check-ins, coping tips, and encouragement from the community.',
+      createdByAdminId:    ngoAdminId1
+    });
+
+    await CommunityRoom.create({
+      roomId:              roomId6,
+      roomName:            'Safety Planning',
+      roomDescriptionText: 'Discuss practical safety planning ideas in a moderated space.',
+      createdByAdminId:    ngoAdminId2
+    });
+
+    const allRoomIds = [roomId1, roomId2, roomId3, roomId4, roomId5, roomId6];
+
+    // ── Room memberships: every user joins every room ────────────────────
     // Real postMessage() (communityController.js) findOrCreates a membership
     // before creating a message, so full enrollment is app-consistent and
     // guarantees every scripted sender below has a membership row. Joins are
@@ -1043,7 +1083,7 @@ async function seed() {
     ];
 
     const membershipRows = [];
-    for (const roomId of [roomId1, roomId2]) {
+    for (const roomId of allRoomIds) {
       allUserIds.forEach((userId, index) => {
         membershipRows.push({
           membershipId:  id(),
@@ -1209,9 +1249,152 @@ async function seed() {
       ['L0',  'Step one is exactly where you are: talk to your assigned counsel in your private legal chat. We map your situation, your options, and your pace — nothing is filed until you say so.']
     ];
 
-    const room1MessageCount = await seedRoomTimeline(roomId1, generalSupportScript);
-    const room2MessageCount = await seedRoomTimeline(roomId2, legalRightsScript);
-    const communityMessageCount = room1MessageCount + room2MessageCount;
+    // ── Room 3: General Support — everyday check-ins and encouragement ──────
+    const generalDailyScript = [
+      ['C3',  'Good morning, everyone. This room is for the everyday things — the small wins, the ordinary struggles, and everything in between. How is everyone starting the week?'],
+      ['S6',  'Managed to get the kids to school on time and made myself breakfast. Counting it as a win.'],
+      ['S11', 'That IS a win. Monday breakfasts are undefeated in my house — usually by chaos.'],
+      ['S2',  'Starting the week tired but hopeful. New job interview on Thursday!'],
+      ['S9',  'Rooting for you Thursday! What kind of work is it?'],
+      ['S2',  'Front desk at a clinic in town. Fingers crossed.'],
+      ['C0',  'Wishing you calm nerves and a fair panel on Thursday. Preparation beats worry — practise your introduction out loud once or twice.'],
+      ['S15', 'Random question: does anyone else find evenings the hardest part of the day? Mornings I am fine, but 7 PM hits different.'],
+      ['S8',  'Evenings are hardest for me too. I started evening walks and it changed a lot.'],
+      ['S18', 'Same here. I schedule a phone call with my sister most evenings so the quiet is not so loud.'],
+      ['C2',  'This is a very common pattern — evenings remove the distractions that carry us through the day. Planning something small and kind for that hour (a walk, a call, a series episode) genuinely helps.'],
+      ['S15', 'Adding an evening walk to the plan. Thank you both.'],
+      ['M0',  'Housekeeping note: this room stays anonymous — nicknames only, and please avoid naming specific places you can be found. Flag anything that worries you.'],
+      ['S13', 'Made ugali without burning the bottom for the first time in my life. Small wins thread continues.'],
+      ['S5',  'The bottom layer is the cook\'s tax, everyone knows this. Congratulations though!'],
+      ['S19', 'This thread is making my day better. Keep them coming.'],
+      ['S10', 'Win from me: I unpacked the last box in the new place. It finally feels like mine.'],
+      ['S1',  'From a box-life veteran: that last box is the heaviest one emotionally. So happy for you.'],
+      ['C1',  'Lovely energy in here today. A reminder that rest counts as productivity too — if your win this week is that you rested, post it proudly.'],
+      ['S4',  'Then my win is three naps on Sunday. Not ashamed.'],
+      ['S16', 'Three naps is elite performance, honestly.'],
+      ['S7',  'Thursday interview person — how did it go?? We need updates.'],
+      ['S2',  'I GOT IT. I start on the first of the month!!'],
+      ['S9',  'YES!! Congratulations!!'],
+      ['S6',  'Amazing news! First-day outfit planning starts now.'],
+      ['C0',  'Wonderful news — congratulations! A steady income and a new routine are powerful things. We are all celebrating with you.'],
+      ['S2',  'Thank you all. This room believed in me before I did.'],
+      ['S12', 'Rainy day here and my mood dipped with it. Just checking in as promised instead of disappearing.'],
+      ['C4',  'Checking in on a low day instead of withdrawing is exactly the skill — well done. Low days pass more gently when they are not spent alone.'],
+      ['S12', 'Feeling a bit lighter already. Thanks for holding space.'],
+      ['S17', 'Sunday evening gratitude: this week I laughed properly, twice. Writing it down like my counsellor said.'],
+      ['S3',  'Twice is twice more than some weeks. Beautiful.'],
+      ['S14', 'Grateful for this room and everyone in it. See you all in the new week.'],
+      ['C3',  'See you in the new week, everyone. Rest well — you have all carried a lot, and you are all still here. That matters.']
+    ];
+
+    // ── Room 4: Legal Guidance — process questions and resources ────────────
+    const legalGuidanceScript = [
+      ['L2',  'Welcome to Legal Guidance. This room is for process questions — forms, timelines, courts, documents. For anything about your specific case, use your private legal chat.'],
+      ['S8',  'What is the difference between an OB number and a police abstract? I keep hearing both.'],
+      ['L0',  'Good question. The OB (Occurrence Book) number is your reference from the moment you report — free, immediate. The abstract is a formal certificate summarising that report, which you may need for insurance, court, or records. Ask for the OB first, always.'],
+      ['S8',  'So OB first, abstract later if needed. Got it, thank you.'],
+      ['S14', 'How long after an incident can I still report? Is there a deadline?'],
+      ['L1',  'For serious offences there is effectively no time bar in Kenya — you can report months or years later. Sooner preserves more evidence, but later is never "too late" legally. Your dated records (photos, medical notes, your own log) bridge the gap.'],
+      ['S5',  'Where do I actually get a P3 form? I was sent back and forth last year and gave up.'],
+      ['L3',  'You get the P3 from the police (free), and it is completed at a public health facility or by the police surgeon. If a station turns you away or asks for payment, note the officer\'s name and raise it in your legal chat — we follow up directly.'],
+      ['S5',  'I wish I had known this room existed last year. Thank you.'],
+      ['S10', 'What does "mention" mean in court language? My cousin\'s case keeps having mentions.'],
+      ['L4',  'A mention is a brief procedural appearance — checking readiness, setting dates, confirming documents. No testimony happens at a mention. Hearings are where evidence is presented. Most mentions do not need the complainant present.'],
+      ['S10', 'That explains so much. My cousin was panicking over every single mention date.'],
+      ['M0',  'Reminder: keep questions general in this room — specific case details belong in your private legal chat, where they are privileged.'],
+      ['S16', 'Is a chief\'s letter useful for anything in these processes? My village elder keeps mentioning it.'],
+      ['L1',  'It can support civil matters (like land or family issues) as background documentation, but it is not a substitute for a police report in criminal matters. Report to the police first; community documentation can supplement, not replace.'],
+      ['S1',  'Can someone else report on my behalf if I am not ready to walk into a station myself?'],
+      ['L0',  'Yes — any person with knowledge of an offence can report it, and hospitals report certain injuries themselves. You can also send a trusted person to establish the OB entry, though your own statement will be needed for the case to progress.'],
+      ['S1',  'That lowers the mountain a bit. Thank you.'],
+      ['S18', 'What is the deal with witness protection? Is it real for ordinary people or just big cases?'],
+      ['L2',  'The Witness Protection Agency is real and not just for headline cases — but the more common protections are practical: in-camera hearings, screens, intermediaries for vulnerable witnesses, and protective orders. Raise safety concerns early so they are built into the case plan.'],
+      ['S13', 'If I have a protection order from one county, does it work in another county?'],
+      ['L3',  'Yes — a protection order is valid throughout Kenya. Keep a certified copy with you, leave one with someone you trust, and report any breach at the nearest station wherever you are.'],
+      ['S13', 'Certified copy — noted. I only have the original.'],
+      ['L3',  'The court that issued it can certify copies for a small fee, often waived. Your legal counsel can arrange it — ask in your private chat.'],
+      ['S7',  'General thanks to the counsel in this room. Knowing the process kills half the fear.'],
+      ['L4',  'That is the purpose of this room in one sentence. Keep the questions coming — no question is too small when the process is unfamiliar.'],
+      ['S19', 'Last one tonight: if I lose my OB number, is my report gone?'],
+      ['L1',  'No — the Occurrence Book entry exists at the station regardless. The date and station name are enough to trace it. Your legal counsel can retrieve the reference for you.'],
+      ['S19', 'Phew. Sleeping easier tonight. Thank you.']
+    ];
+
+    // ── Room 5: Emotional Support — check-ins, coping, encouragement ────────
+    const emotionalSupportScript = [
+      ['C1',  'Welcome to Emotional Support. This is the room for feelings — the heavy ones, the confusing ones, and the good ones that surprise you. Check in as you are.'],
+      ['S9',  'Checking in: heavy today. No particular reason, which somehow makes it worse.'],
+      ['C4',  'Heavy without a reason is still heavy — it does not need to justify itself. Be gentle with yourself today: lower the bar, keep warm, keep fed. That is enough.'],
+      ['S9',  'Lowering the bar to "shower and soup". Thank you.'],
+      ['S3',  'Shower and soup is a complete day sometimes. Solidarity.'],
+      ['S12', 'I laughed at something yesterday and then immediately felt guilty for laughing. Is that... a thing?'],
+      ['C0',  'It is very much a thing — many survivors describe it. Joy after pain can feel like betrayal, but it is not. Laughter is your mind healing out loud. Let it happen.'],
+      ['S12', '"Healing out loud." I am keeping that forever.'],
+      ['S17', 'Nightmares were bad this week. Three nights in a row.'],
+      ['C2',  'I am sorry — runs of bad nights are exhausting. Two things that help: no screens in the last hour, and if you wake from one, get up briefly, touch something cold, name the room out loud, then return to bed. And please mention the pattern to your counsellor.'],
+      ['S17', 'Told my counsellor this morning. The cold-water trick actually helped last night.'],
+      ['S6',  'Today marks one year since I left. I did not think I would make it a week.'],
+      ['S11', 'One YEAR. Look at you. Thank you for showing the rest of us the road exists.'],
+      ['S15', 'This gave me chills. Congratulations on your year.'],
+      ['C1',  'A whole year of choosing yourself, day after day. We honour it with you. Anniversaries can also stir things up — be extra kind to yourself this week.'],
+      ['S6',  'It did stir things up, honestly. But reading these replies... I am okay. Better than okay.'],
+      ['M0',  'This room continues to be the gentlest corner of the platform. Keep looking after each other — and flag anything that does not belong here.'],
+      ['S4',  'Checking in: numb more than sad lately. Is numb normal?'],
+      ['C3',  'Numbness is one of the mind\'s oldest protections — it steps in when feelings would be too much at once. It usually softens as safety grows. If it persists or worries you, bring it to your sessions; it responds well to gentle, paced work.'],
+      ['S4',  'That makes sense of a lot. Thank you for never making anything sound broken.'],
+      ['S2',  'Positive check-in for balance: I sang along to the radio today. Whole song. Windows down.'],
+      ['S8',  'This is the content I am here for.'],
+      ['S19', 'Checking in from a hard evening. Not looking for advice, just company.'],
+      ['S13', 'Company present. You are not alone tonight.'],
+      ['S16', 'Also here. No advice, just sitting with you.'],
+      ['C4',  'Beautiful. Sometimes the whole therapy is "you are not alone tonight." Rest well, everyone who is finding tonight long.'],
+      ['S19', 'Made it to morning. Thank you both — it mattered more than you know.'],
+      ['S10', 'Question for the group: what is one small thing that always lifts you a little?'],
+      ['S7',  'Tea in my one nice cup. The ritual of it.'],
+      ['S18', 'Sitting outside for ten minutes, even in town. Sky helps.'],
+      ['S5',  'My neighbour\'s ridiculous cat. He has no idea he is doing community service.'],
+      ['C0',  'Tea, sky, and a neighbourhood cat — that is a fine toolkit. Small anchors, used often, hold better than big ones used rarely. Lovely thread to end the week on.']
+    ];
+
+    // ── Room 6: Safety Planning — practical, moderated safety discussion ────
+    const safetyPlanningScript = [
+      ['C2',  'Welcome to Safety Planning. This room is for practical ideas — routines, preparations, and habits that add safety. Please keep locations and identifying details out of your posts.'],
+      ['S7',  'The safety plan template in the library mentions a code word. How do people actually use theirs?'],
+      ['S1',  'Mine is a normal shopping word. If I text it to my sister, she calls me with a loud fake emergency that gives me a reason to leave wherever I am.'],
+      ['S16', 'Ours is a question about a relative. Asking it means "come now, bring someone."'],
+      ['C0',  'Both excellent examples — the best code words are boring, deniable, and rehearsed once with the person who receives them. Practise the whole loop, not just the word.'],
+      ['S14', 'What goes in the emergency bag that people forget most often?'],
+      ['S3',  'Phone charger. Learned that one the hard way.'],
+      ['S10', 'Copies of documents. I photographed everything and emailed it to a new private address — the bag can be lost, the email cannot.'],
+      ['C2',  'Chargers, documents, and medication are the big three people forget. Small cash in small notes matters too — and one comfort item per child makes a hard night much softer.'],
+      ['S9',  'Is it paranoid to memorise numbers in case I lose my phone? It feels very old-fashioned.'],
+      ['L0',  'It is not paranoid, it is professional-grade planning. Memorise two: one trusted person and 1195. Phones are lost or taken precisely in the moments you need them most.'],
+      ['S9',  'Two numbers memorised tonight then. Old-fashioned it is.'],
+      ['M0',  'Reminder for this room in particular: general strategies are welcome, but never post your actual routes, addresses, or schedules. Keep the specifics for your counsellor.'],
+      ['S18', 'Digital question: how do I check if my location is being shared without making it obvious I checked?'],
+      ['S12', 'The Digital Safety guide in the library walks through it settings-by-settings. It specifically says to change things gradually, not all at once.'],
+      ['C4',  'Correct — and that gradual pacing is important. If you suspect monitoring, ask your counsellor to help you sequence the changes safely rather than springing them all in one day.'],
+      ['S18', 'Downloaded the guide. Going slowly as advised.'],
+      ['S5',  'Workplace angle: is it wise to tell someone at work? I keep going back and forth.'],
+      ['S15', 'I told one trusted supervisor. She moved my desk away from the entrance and knows who is never to be let up. No one else knows anything.'],
+      ['C1',  'One well-chosen person at work is usually the sweet spot — reception or security awareness where possible, full privacy everywhere else. Your comfort decides; there is no obligation either way.'],
+      ['S11', 'For parents: how much do you tell the children? I do not want to frighten mine.'],
+      ['C3',  'Age-appropriate and action-focused: not "we are in danger", but "if X happens, you go to auntie\'s and wait for me". Children carry instructions better than explanations. One rehearsal, framed like a fire drill, is enough.'],
+      ['S11', 'Framed like a fire drill — that is the piece I was missing. Thank you.'],
+      ['S8',  'Small habit I built: I keep the car fuelled above half and parked facing the road. Costs nothing, ready always.'],
+      ['S2',  'Adding this one. Also: spare house key with a neighbour I trust, not under anything in the compound.'],
+      ['C2',  'Both are textbook — readiness that costs nothing day-to-day. This room could write the next edition of the safety guide, honestly.'],
+      ['S13', 'Reading this whole room in one sitting. I came in anxious and I am leaving with a checklist. Thank you all.'],
+      ['C0',  'That is the transformation we are here for: fear into steps. Review your plan monthly, everyone — plans age faster than we expect. Stay safe out there.']
+    ];
+
+    const communityMessageCount =
+      (await seedRoomTimeline(roomId1, generalSupportScript)) +
+      (await seedRoomTimeline(roomId2, legalRightsScript)) +
+      (await seedRoomTimeline(roomId3, generalDailyScript)) +
+      (await seedRoomTimeline(roomId4, legalGuidanceScript)) +
+      (await seedRoomTimeline(roomId5, emotionalSupportScript)) +
+      (await seedRoomTimeline(roomId6, safetyPlanningScript));
 
     // Flagged message #1 — for moderation queue testing
     const flaggedMsgId1 = id();
@@ -2069,7 +2252,7 @@ async function seed() {
     console.log(`  Legal Counsel:         ${legalData.length}`);
     console.log(`  Survivors:             ${survivorData.length}`);
     console.log('  Reports:               24 (1 escalated to legal case)');
-    console.log(`  Community Rooms:       2 (all ${allUserIds.length} users enrolled in both)`);
+    console.log(`  Community Rooms:       ${allRoomIds.length} (all ${allUserIds.length} users enrolled in every room)`);
     console.log(`  Community Messages:    ${communityMessageCount + 2} (incl. 2 flagged for moderation)`);
     console.log(`  Direct Chat Channels:  ${seededChannels.length} (2 per survivor: 1 counsellor + 1 legal)`);
     console.log('    ↳ 1 archived  (Survivor[2] ↔ counsellor)  — Archive/Restore test');
