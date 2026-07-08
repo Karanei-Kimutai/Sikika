@@ -31,7 +31,7 @@ npm start            # production start
 npm test             # Jest (runs serially with --runInBand)
 npm run test:auth    # single file: tests/authController.test.js
 npm run test:watch   # Jest watch mode
-node src/seeders/index.js  # DESTRUCTIVE: drops + recreates all tables then seeds demo data
+node src/seeders/index.js  # DESTRUCTIVE: drops + recreates all tables, purges the app's Cloudinary folders, then seeds demo data
 ```
 
 ### Frontend (`cd frontend`)

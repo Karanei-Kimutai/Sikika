@@ -183,6 +183,14 @@ const getChannels = async (req, res) => {
           }
         });
 
+        // Latest activity drives sidebar ordering (most recent conversation
+        // first); channels with no messages yet fall back to creation time.
+        const latestMessage = await DirectChatMessage.findOne({
+          where: { chatId: channel.chatId },
+          order: [['messageDispatchTimestamp', 'DESC']],
+          attributes: ['messageDispatchTimestamp']
+        });
+
         const counterpart = await UserAccount.findByPk(channel.supportStaffCounterpartId, {
           attributes: ['userId', 'userRole']
         });
@@ -203,6 +211,9 @@ const getChannels = async (req, res) => {
         return {
           ...channel.toJSON(),
           unreadCount,
+          // Timestamp of the newest message in this channel (null when empty);
+          // clients keep this fresh via the `channel:activity` socket event.
+          lastMessageAt: latestMessage?.messageDispatchTimestamp || null,
           counterpartRole: counterpart?.userRole || null,
           // UserAccount.userId of the other participant, used by the frontend to
           // fetch their ECDH public key and derive the per-channel E2EE key.
@@ -216,6 +227,15 @@ const getChannels = async (req, res) => {
               : null
         };
       })
+    );
+
+    // Most recently active conversation first — mirrors messenger-style
+    // sidebars. The SQL-level chatCreationTimestamp ordering above is only
+    // the tiebreak for channels that have no messages yet.
+    enriched.sort(
+      (a, b) =>
+        new Date(b.lastMessageAt || b.chatCreationTimestamp) -
+        new Date(a.lastMessageAt || a.chatCreationTimestamp)
     );
 
     res.status(200).json(enriched);

@@ -64,6 +64,7 @@ Handles private direct-chat between a survivor and a support staff member.
 | `receiveMessage` | Saved `DirectChatMessage` row | Broadcast to everyone in the `chatId` room when a new message is persisted. |
 | `message:delivered` | `{ chatId, messageIds[], deliveredAt }` | Sent to the channel room and the sender's personal `user:<userId>` room when delivery is confirmed. |
 | `message:edited` | `{ chatId, messageId, encryptedPayload, editedAt }` | Broadcast to the channel room when a message is edited. Clients decrypt the new ciphertext and replace the displayed text. |
+| `channel:activity` | `{ chatId, lastMessageAt, senderUserId }` | Sent to **both participants' personal `user:<userId>` rooms** on every send. Clients only join the channel room they are viewing, so this is the recency signal for channels not currently open — `DirectChatPage` uses it to bump `lastMessageAt` and re-sort the sidebar most-recently-active first (matching the `GET /api/chat/channels` ordering). Carries no message content. |
 | `presence:update` | `{ staffUserId, chatId, presence }` | Sent to a survivor's `user:<userId>` room when their staff member's online/offline status changes. |
 | `messageError` | `{ error: string }` | Sent to the emitting socket when auth fails, channel access is denied, or a message cannot be saved. |
 
