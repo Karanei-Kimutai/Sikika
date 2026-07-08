@@ -100,6 +100,13 @@ function SiteHeader({ currentPath, onNavigate, isAuthenticated, role, onSignOut 
     return () => mm.revert();
   }, []);
 
+  // Discard the cached profile summary whenever the signed-in identity
+  // changes (sign-out/sign-in as a different account, or role change)
+  // so the popover re-fetches instead of showing the previous user's data.
+  useEffect(() => {
+    setProfileSummary(null);
+  }, [isAuthenticated, role]);
+
   /** Fade + lift the account popover in each time it opens. */
   useEffect(() => {
     if (!menuOpen || !menuRef.current) return;
